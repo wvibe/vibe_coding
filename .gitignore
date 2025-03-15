@@ -1,0 +1,13 @@
+# Python essentials
+__pycache__/
+*.py[cod]
+.env
+.venv
+env/
+venv/
+
+# IDE
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
