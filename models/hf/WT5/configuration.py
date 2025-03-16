@@ -1,46 +1,42 @@
-from copy import deepcopy
-from typing import Optional
+import copy
 
-from transformers import T5Config
+from transformers.configuration_utils import PretrainedConfig
+from transformers.utils import logging
+
+logger = logging.get_logger(__name__)
 
 
-class WT5Config(T5Config):
+class WT5Config(PretrainedConfig):
     """
-    Configuration class for WT5, a customizable implementation of T5 model.
-    This class extends HuggingFace's T5Config to allow for easier experimentation with
-    different model configurations while maintaining compatibility with the HF ecosystem.
+    Configuration class for WT5 model.
+    This class is a subclass of PretrainedConfig and contains all the parameters required to
+    build a WT5 model.
     """
 
     model_type = "wt5"
 
-    def copy(self):
-        """
-        Create a copy of the configuration.
-        Returns:
-            WT5Config: A copy of the configuration.
-        """
-        return deepcopy(self)
-
     def __init__(
         self,
-        vocab_size: int = 32128,
-        d_model: int = 512,  # Reduced from standard T5-base (768)
-        d_kv: int = 64,
-        d_ff: int = 1024,  # Reduced from standard T5-base (2048)
-        num_layers: int = 6,  # Reduced from standard T5-base (12)
-        num_decoder_layers: Optional[int] = None,
-        num_heads: int = 8,
-        relative_attention_num_buckets: int = 32,
-        relative_attention_max_distance: int = 128,
-        dropout_rate: float = 0.1,
-        layer_norm_epsilon: float = 1e-6,
-        initializer_factor: float = 1.0,
-        feed_forward_proj: str = "relu",
-        is_encoder_decoder: bool = True,
-        use_cache: bool = True,
-        pad_token_id: int = 0,
-        eos_token_id: int = 1,
-        bos_token_id: int = 0,
+        vocab_size=32128,
+        d_model=512,
+        d_kv=64,
+        d_ff=2048,
+        num_layers=8,
+        num_decoder_layers=None,
+        num_heads=8,
+        relative_attention_num_buckets=32,
+        relative_attention_max_distance=128,
+        dropout_rate=0.1,
+        layer_norm_epsilon=1e-6,
+        initializer_factor=1.0,
+        feed_forward_proj="relu",
+        is_encoder_decoder=True,
+        use_cache=True,
+        pad_token_id=0,
+        eos_token_id=1,
+        is_gated_act=False,
+        dense_act_fn="relu",
+        decoder_start_token_id=0,
         **kwargs,
     ):
         """
@@ -52,38 +48,55 @@ class WT5Config(T5Config):
             d_kv: Size of the key, query, value projections per attention head
             d_ff: Size of the intermediate feed forward layer
             num_layers: Number of encoder layers
-            num_decoder_layers: Number of decoder layers (if different from encoder)
+            num_decoder_layers: Number of decoder layers (if different from num_layers)
             num_heads: Number of attention heads
             relative_attention_num_buckets: Number of buckets for relative attention
             relative_attention_max_distance: Maximum distance for relative attention
-            dropout_rate: Dropout rate
-            layer_norm_epsilon: Epsilon value for layer normalization
-            initializer_factor: Factor for initializing weights
-            feed_forward_proj: Non-linear activation for feed forward layer
-            is_encoder_decoder: Whether the model is an encoder-decoder model
+            dropout_rate: Dropout probability
+            layer_norm_epsilon: Epsilon for layer normalization
+            initializer_factor: Factor for initializer scaling
+            feed_forward_proj: Activation function for feed forward layer
+            is_encoder_decoder: Whether this is an encoder-decoder model
             use_cache: Whether to use cache for decoding
-            pad_token_id: ID of padding token
-            eos_token_id: ID of EOS token
-            bos_token_id: ID of BOS token
+            pad_token_id: ID of the padding token
+            eos_token_id: ID of the end-of-sequence token
+            is_gated_act: Whether to use gated activation function
+            dense_act_fn: Activation function for dense layers
+            decoder_start_token_id: ID of the decoder start token (usually set to
+                pad_token_id in T5)
+            **kwargs: Additional arguments
         """
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.d_kv = d_kv
+        self.d_ff = d_ff
+        self.num_layers = num_layers
+        self.num_decoder_layers = num_decoder_layers or num_layers
+        self.num_heads = num_heads
+        self.relative_attention_num_buckets = relative_attention_num_buckets
+        self.relative_attention_max_distance = relative_attention_max_distance
+        self.dropout_rate = dropout_rate
+        self.layer_norm_epsilon = layer_norm_epsilon
+        self.initializer_factor = initializer_factor
+        self.feed_forward_proj = feed_forward_proj
+        self.use_cache = use_cache
+        self.is_gated_act = is_gated_act
+        self.dense_act_fn = dense_act_fn
+        self.decoder_start_token_id = decoder_start_token_id
+
         super().__init__(
-            vocab_size=vocab_size,
-            d_model=d_model,
-            d_kv=d_kv,
-            d_ff=d_ff,
-            num_layers=num_layers,
-            num_decoder_layers=num_decoder_layers,
-            num_heads=num_heads,
-            relative_attention_num_buckets=relative_attention_num_buckets,
-            relative_attention_max_distance=relative_attention_max_distance,
-            dropout_rate=dropout_rate,
-            layer_norm_epsilon=layer_norm_epsilon,
-            initializer_factor=initializer_factor,
-            feed_forward_proj=feed_forward_proj,
-            is_encoder_decoder=is_encoder_decoder,
-            use_cache=use_cache,
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
+            is_encoder_decoder=is_encoder_decoder,
+            decoder_start_token_id=decoder_start_token_id,
             **kwargs,
         )
-        self.bos_token_id = bos_token_id
+
+    def copy(self):
+        """
+        Create a copy of the config.
+
+        Returns:
+            WT5Config: A copy of the current configuration.
+        """
+        return copy.deepcopy(self)
