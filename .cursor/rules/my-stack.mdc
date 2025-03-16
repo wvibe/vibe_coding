@@ -1,0 +1,14 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Technology Stack
+
+- Python for the backend
+- HTML/JS/Gradio for the frontend
+- Pytorch for Machine Learning, and prefer Huggingface libraries
+- SQL databases, never JSON file storage
+- Separate databases for dev, test, and prod
+- Python tests, prefer pytest
