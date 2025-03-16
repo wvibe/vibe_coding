@@ -2,15 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Simple inference script to load and test a T5-small model from Hugging Face.
+Simple inference script to test a WT5 model with pre-trained T5 weights.
 """
 
+from configuration import WT5Config
+from modeling import WT5ForConditionalGeneration
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 
 
 def load_pretrained_model(model_name="t5-small"):
     """
-    Load a pre-trained T5 model and tokenizer from Hugging Face.
+    Create a WT5 model and initialize it with T5 pre-trained weights.
 
     Args:
         model_name (str): Name of the model to load from Hugging Face.
@@ -18,10 +20,36 @@ def load_pretrained_model(model_name="t5-small"):
     Returns:
         tuple: (model, tokenizer)
     """
-    print(f"Loading model: {model_name}")
-    model = T5ForConditionalGeneration.from_pretrained(model_name)
+    print(f"Loading pre-trained weights from {model_name}")
+
+    # First load the original T5 model to get its weights
+    t5_model = T5ForConditionalGeneration.from_pretrained(model_name)
+
+    # Create our WT5 model with matching configuration
+    config = WT5Config(
+        vocab_size=t5_model.config.vocab_size,
+        d_model=t5_model.config.d_model,
+        d_kv=t5_model.config.d_kv,
+        d_ff=t5_model.config.d_ff,
+        num_layers=t5_model.config.num_layers,
+        num_decoder_layers=t5_model.config.num_decoder_layers,
+        num_heads=t5_model.config.num_heads,
+        relative_attention_num_buckets=t5_model.config.relative_attention_num_buckets,
+        dropout_rate=t5_model.config.dropout_rate,
+        layer_norm_epsilon=t5_model.config.layer_norm_epsilon,
+        initializer_factor=t5_model.config.initializer_factor,
+        feed_forward_proj=t5_model.config.feed_forward_proj,
+    )
+
+    # Create WT5 model with this config
+    wt5_model = WT5ForConditionalGeneration(config)
+
+    # Load the state dict from T5 model
+    wt5_model.load_state_dict(t5_model.state_dict(), strict=False)
+
+    # Load tokenizer
     tokenizer = T5Tokenizer.from_pretrained(model_name)
-    return model, tokenizer
+    return wt5_model, tokenizer
 
 
 def generate_text(model, tokenizer, input_text, max_length=50):
@@ -29,8 +57,8 @@ def generate_text(model, tokenizer, input_text, max_length=50):
     Generate text using the given model and tokenizer.
 
     Args:
-        model: The T5 model
-        tokenizer: The T5 tokenizer
+        model: The WT5 model
+        tokenizer: The WT5 tokenizer
         input_text (str): Input text to transform
         max_length (int): Maximum output length
 

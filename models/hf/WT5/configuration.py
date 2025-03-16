@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import Optional
 
 from transformers import T5Config
@@ -11,6 +12,14 @@ class WT5Config(T5Config):
     """
 
     model_type = "wt5"
+
+    def copy(self):
+        """
+        Create a copy of the configuration.
+        Returns:
+            WT5Config: A copy of the configuration.
+        """
+        return deepcopy(self)
 
     def __init__(
         self,

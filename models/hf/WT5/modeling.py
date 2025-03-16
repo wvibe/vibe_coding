@@ -2,12 +2,12 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from configuration import WT5Config
 from torch.nn import CrossEntropyLoss
+from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput, Seq2SeqModelOutput
 from transformers.models.t5.modeling_t5 import T5PreTrainedModel, T5Stack
 from transformers.utils import logging
-
-from .configuration import WT5Config
 
 logger = logging.get_logger(__name__)
 
@@ -167,7 +167,7 @@ class WT5Model(T5PreTrainedModel):
         )
 
 
-class WT5ForConditionalGeneration(T5PreTrainedModel):
+class WT5ForConditionalGeneration(T5PreTrainedModel, GenerationMixin):
     """
     WT5 model with a language modeling head on top for conditional generation tasks.
     This is an implementation that leverages HuggingFace's ecosystem but allows for experimentation
@@ -183,6 +183,7 @@ class WT5ForConditionalGeneration(T5PreTrainedModel):
     _keys_to_ignore_on_load_unexpected = [
         r"decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight",
     ]
+    supports_gradient_checkpointing = True
 
     def __init__(self, config: WT5Config):
         """
@@ -255,6 +256,8 @@ class WT5ForConditionalGeneration(T5PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
         """
         Forward pass of the model.
@@ -336,7 +339,7 @@ class WT5ForConditionalGeneration(T5PreTrainedModel):
         if self.config.tie_word_embeddings:
             # Rescale output before projecting on vocab
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
-            sequence_output = sequence_output * (self.model_dim ** -0.5)
+            sequence_output = sequence_output * (self.model_dim**-0.5)
 
         lm_logits = self.lm_head(sequence_output)
 
@@ -361,3 +364,8 @@ class WT5ForConditionalGeneration(T5PreTrainedModel):
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
         )
+
+    @staticmethod
+    def can_generate():
+        """Whether this model can generate text."""
+        return True
