@@ -12,3 +12,4 @@ alwaysApply: true
 - SQL databases, never JSON file storage
 - Separate databases for dev, test, and prod
 - Python tests, prefer pytest
+- When missing packages, check if the conda env vbl is activated correctly first

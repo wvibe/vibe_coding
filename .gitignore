@@ -11,3 +11,10 @@ venv/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Model output directories
+**/output/
+**/model_outputs/
+*.pt
+*.bin
+*.safetensors
