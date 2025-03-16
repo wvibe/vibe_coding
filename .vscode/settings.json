@@ -1,0 +1,27 @@
+{
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.wordWrapColumn": 100,
+        "editor.rulers": [100]
+    },
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    },
+    "flake8.args": [
+        "--max-line-length=100",
+        "--ignore=E203,W503"
+    ],
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./models",
+        "-p",
+        "*test*.py"
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+        "models"
+    ]
+}
