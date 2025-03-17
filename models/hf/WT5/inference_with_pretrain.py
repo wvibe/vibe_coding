@@ -5,9 +5,10 @@
 Simple inference script to test a WT5 model with pre-trained T5 weights.
 """
 
-from configuration import WT5Config
-from modeling import WT5ForConditionalGeneration
 from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+from .configuration import WT5Config
+from .modeling import WT5ForConditionalGeneration
 
 
 def load_pretrained_model(model_name="t5-small"):

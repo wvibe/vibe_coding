@@ -2,13 +2,14 @@ import argparse
 import os
 
 import torch
-from configuration import WT5Config
 from datasets import load_dataset
-from modeling import WT5ForConditionalGeneration
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AdamW, T5Tokenizer, get_linear_schedule_with_warmup
+
+from .configuration import WT5Config
+from .modeling import WT5ForConditionalGeneration
 
 
 class IMDBDataset(Dataset):
@@ -66,12 +67,17 @@ class WT5Trainer:
     def __init__(
         self,
         model_config,
-        tokenizer_name="t5-base",
+        tokenizer_name="t5-small",
         output_dir="./output",
         device=None,
     ):
         self.model_config = model_config
-        self.tokenizer = T5Tokenizer.from_pretrained(tokenizer_name)
+        # Add cache directory and handle possible network errors
+        try:
+            self.tokenizer = T5Tokenizer.from_pretrained(tokenizer_name, local_files_only=False)
+        except OSError:
+            print(f"Unable to load tokenizer '{tokenizer_name}' online, trying 't5-small'...")
+            self.tokenizer = T5Tokenizer.from_pretrained("t5-small", local_files_only=False)
         self.output_dir = output_dir
         self.device = device or (
             "cuda"

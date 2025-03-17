@@ -2,14 +2,12 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from configuration import WT5Config
 from torch.nn import CrossEntropyLoss
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput, Seq2SeqModelOutput
 from transformers.models.t5.modeling_t5 import T5PreTrainedModel, T5Stack
-from transformers.utils import logging
 
-logger = logging.get_logger(__name__)
+from .configuration import WT5Config
 
 
 class WT5Model(T5PreTrainedModel):
