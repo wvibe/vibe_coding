@@ -3,8 +3,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .config import TransformerConfig
-from .layers import TransformerLayer
+from models.vanilla.transformer.config import TransformerConfig
+from models.vanilla.transformer.layers import TransformerLayer
 
 
 class TransformerEmbeddings(nn.Module):

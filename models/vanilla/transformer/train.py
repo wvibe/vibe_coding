@@ -3,11 +3,11 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .config import TransformerConfig
-from .transformer import Transformer
+from models.vanilla.transformer.transformer import Transformer
 
 
 class TransformerTrainer:

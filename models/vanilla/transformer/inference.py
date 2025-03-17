@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-from .transformer import Transformer
+from models.vanilla.transformer.transformer import Transformer
 
 
 class TransformerPredictor:
