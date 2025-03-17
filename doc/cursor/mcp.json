@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "Github Vibe MCP": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@smithery/cli@latest",
+        "run",
+        "@smithery-ai/github",
+        "--config",
+        "\"{\\\"githubPersonalAccessToken\\\":\\\"<GITHUB_PAT_PLACEHOLDER>\\\"}\""
+      ]
+    },
+    "AgentDesk BrowserTools": {
+      "command": "npx",
+      "args": [
+        "@agentdeskai/browser-tools-mcp@1.2.0"
+      ]
+    }
+  }
+} 
