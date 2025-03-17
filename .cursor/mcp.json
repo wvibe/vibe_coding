@@ -1,0 +1,9 @@
+{
+  "mcps": [
+    {
+      "name": "Smithery Github Vibe",
+      "command": "npx -y @smithery/cli@latest run @smithery-ai/github --config \"{\\\"githubPersonalAccessToken\\\":\\\"YOUR_GITHUB_PAT_HERE\\\"}\"",
+      "enabled": true
+    }
+  ]
+} 

@@ -1,0 +1,21 @@
+{
+    "[python]": {
+        "diffEditor.ignoreTrimWhitespace": false,
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "terminal.integrated.inheritEnv": false,
+    "editor.inlineSuggest.showToolbar": "always",
+    "workbench.editorAssociations": {
+        "*.html": "default"
+    },
+    "python.defaultInterpreterPath": "/opt/conda/envs/vbl/bin/python",
+    "explorer.confirmDelete": false,
+    "explorer.confirmDragAndDrop": false,
+    "python.terminal.activateEnvironment": true,
+    "window.density.editorTabHeight": "compact",
+    "workbench.colorTheme": "Quiet Light",
+    "files.autoSave": "afterDelay",
+    "database-client.autoSync": true,
+    "git.autofetch": true,
+    "workbench.sideBar.location": "right"
+} 
