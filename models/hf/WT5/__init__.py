@@ -1,10 +1,11 @@
 """
-WT5 package initialization.
+WT5 wrapper for the Hugging Face T5 model.
+Modified for our specific needs.
 """
 
-from .configuration import WT5Config
-from .modeling import WT5ForConditionalGeneration, WT5Model
-from .tokenization import WT5Tokenizer
+from models.hf.WT5.configuration import WT5Config
+from models.hf.WT5.modeling import WT5ForConditionalGeneration, WT5Model
+from models.hf.WT5.tokenization import WT5Tokenizer
 
 __all__ = [
     "WT5Config",

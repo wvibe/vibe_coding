@@ -8,8 +8,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AdamW, T5Tokenizer, get_linear_schedule_with_warmup
 
-from .configuration import WT5Config
-from .modeling import WT5ForConditionalGeneration
+from models.hf.WT5.configuration import WT5Config
+from models.hf.WT5.modeling import WT5ForConditionalGeneration
 
 
 class IMDBDataset(Dataset):

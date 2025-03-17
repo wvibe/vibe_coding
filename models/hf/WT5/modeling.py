@@ -7,7 +7,7 @@ from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput, Seq2SeqModelOutput
 from transformers.models.t5.modeling_t5 import T5PreTrainedModel, T5Stack
 
-from .configuration import WT5Config
+from models.hf.WT5.configuration import WT5Config
 
 
 class WT5Model(T5PreTrainedModel):

@@ -7,8 +7,8 @@ This script provides a convenient way to train and evaluate the model with diffe
 import argparse
 import os
 
-from .configuration import WT5Config
-from .trainer import WT5Trainer
+from models.hf.WT5.configuration import WT5Config
+from models.hf.WT5.trainer import WT5Trainer
 
 
 def create_smaller_config():
