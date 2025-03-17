@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from ..config import TransformerConfig
-from ..layers import FeedForward, MultiHeadAttention, TransformerLayer
-from ..transformer import Transformer, TransformerEmbeddings
+from models.vanilla.transformer.config import TransformerConfig
+from models.vanilla.transformer.layers import FeedForward, MultiHeadAttention, TransformerLayer
+from models.vanilla.transformer.transformer import Transformer, TransformerEmbeddings
 
 
 @pytest.fixture
