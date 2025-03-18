@@ -1,15 +1,27 @@
 import argparse
 import os
+import time
 
 import torch
+import wandb
 from datasets import load_dataset
-from sklearn.metrics import accuracy_score, f1_score
+from dotenv import load_dotenv
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+)
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AdamW, T5Tokenizer, get_linear_schedule_with_warmup
 
 from models.hf.WT5.configuration import WT5Config
 from models.hf.WT5.modeling import WT5ForConditionalGeneration
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class IMDBDataset(Dataset):
@@ -70,6 +82,8 @@ class WT5Trainer:
         tokenizer_name="t5-small",
         output_dir="./output",
         device=None,
+        use_wandb=True,
+        wandb_project="wt5-sentiment",
     ):
         self.model_config = model_config
         # Add cache directory and handle possible network errors
@@ -84,6 +98,8 @@ class WT5Trainer:
             if torch.cuda.is_available()
             else "mps" if torch.backends.mps.is_available() else "cpu"
         )
+        self.use_wandb = use_wandb
+        self.wandb_project = wandb_project
 
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
@@ -115,6 +131,18 @@ class WT5Trainer:
 
         return train_loader, val_loader
 
+    def _calculate_perplexity(self, loss):
+        """Calculate perplexity from loss."""
+        return torch.exp(loss).item()
+
+    def _log_gpu_memory_usage(self):
+        """Log GPU memory usage if CUDA is available."""
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / (1024 * 1024)  # MB
+            reserved = torch.cuda.memory_reserved() / (1024 * 1024)  # MB
+            return {"gpu_allocated_memory_mb": allocated, "gpu_reserved_memory_mb": reserved}
+        return {}
+
     def train(
         self,
         batch_size=8,
@@ -130,6 +158,31 @@ class WT5Trainer:
         logging_steps=100,
     ):
         """Train the model."""
+        # Initialize wandb if enabled
+        if self.use_wandb:
+            # Use API key from environment if available
+            api_key = os.getenv("WANDB_API_KEY")
+            if api_key:
+                wandb.login(key=api_key)
+
+            wandb.init(
+                project=self.wandb_project,
+                config={
+                    "architecture": "WT5",
+                    "dataset": "IMDB",
+                    "batch_size": batch_size,
+                    "max_length": max_length,
+                    "learning_rate": learning_rate,
+                    "weight_decay": weight_decay,
+                    "epochs": epochs,
+                    "warmup_steps": warmup_steps,
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
+                    "max_grad_norm": max_grad_norm,
+                    "device": self.device,
+                    "model_config": self.model_config.to_dict(),
+                },
+            )
+
         train_loader, val_loader = self._prepare_data(batch_size, max_length)
 
         # Prepare optimizer and scheduler
@@ -143,10 +196,13 @@ class WT5Trainer:
         # Training loop
         global_step = 0
         best_f1 = 0.0
+        epoch_start_time = time.time()
 
         for epoch in range(epochs):
             self.model.train()
             epoch_loss = 0.0
+            epoch_step_time = []
+            step_start_time = time.time()
 
             # Progress bar for training
             progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
@@ -165,9 +221,49 @@ class WT5Trainer:
 
                 epoch_loss += loss.item()
 
+                # Calculate step time for steps/second metric
+                if step > 0:
+                    step_time = time.time() - step_start_time
+                    epoch_step_time.append(step_time)
+                    steps_per_second = 1.0 / step_time if step_time > 0 else 0
+                step_start_time = time.time()
+
                 # Log training progress
                 if (step + 1) % logging_steps == 0:
-                    progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
+                    # Calculate current learning rate
+                    current_lr = scheduler.get_last_lr()[0]
+
+                    # Calculate perplexity
+                    perplexity = self._calculate_perplexity(loss * gradient_accumulation_steps)
+
+                    # Get gradient norm
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), max_grad_norm
+                    ).item()
+
+                    # Log to wandb
+                    if self.use_wandb:
+                        wandb_log = {
+                            "train/loss": epoch_loss / (step + 1),
+                            "train/perplexity": perplexity,
+                            "train/learning_rate": current_lr,
+                            "train/gradient_norm": grad_norm,
+                            "train/steps_per_second": steps_per_second if step > 0 else 0,
+                            "global_step": global_step,
+                        }
+
+                        # Add GPU memory metrics if available
+                        wandb_log.update(self._log_gpu_memory_usage())
+
+                        wandb.log(wandb_log)
+
+                    progress_bar.set_postfix(
+                        {
+                            "loss": epoch_loss / (step + 1),
+                            "lr": current_lr,
+                            "perplexity": perplexity,
+                        }
+                    )
 
                 # Update weights
                 if (step + 1) % gradient_accumulation_steps == 0:
@@ -186,6 +282,33 @@ class WT5Trainer:
                         metrics = self.evaluate(val_loader)
                         print(f"Eval metrics at step {global_step}: {metrics}")
 
+                        # Log evaluation metrics to wandb
+                        if self.use_wandb:
+                            wandb.log(
+                                {
+                                    "eval/accuracy": metrics["accuracy"],
+                                    "eval/f1": metrics["f1"],
+                                    "eval/precision": metrics["precision"],
+                                    "eval/recall": metrics["recall"],
+                                    "global_step": global_step,
+                                    **self._log_gpu_memory_usage(),
+                                }
+                            )
+
+                            # Log confusion matrix as a visualization
+                            if "confusion_matrix" in metrics:
+                                wandb.log(
+                                    {
+                                        "eval/confusion_matrix": wandb.plot.confusion_matrix(
+                                            probs=None,
+                                            y_true=metrics["true_labels"],
+                                            preds=metrics["pred_labels"],
+                                            class_names=["negative", "positive"],
+                                        ),
+                                        "global_step": global_step,
+                                    }
+                                )
+
                         # Save best model
                         if metrics["f1"] > best_f1:
                             best_f1 = metrics["f1"]
@@ -194,15 +317,56 @@ class WT5Trainer:
                     if global_step % save_steps == 0:
                         self.save_model(os.path.join(self.output_dir, f"checkpoint-{global_step}"))
 
+            # Epoch completed metrics
+            epoch_time = time.time() - epoch_start_time
+            avg_steps_per_second = len(train_loader) / epoch_time if epoch_time > 0 else 0
+
             # Evaluate at the end of each epoch
             metrics = self.evaluate(val_loader)
             print(f"Epoch {epoch+1} metrics: {metrics}")
 
+            # Log epoch summary to wandb
+            if self.use_wandb:
+                wandb.log(
+                    {
+                        "epoch": epoch + 1,
+                        "epoch/training_time_seconds": epoch_time,
+                        "epoch/avg_steps_per_second": avg_steps_per_second,
+                        "epoch/loss": epoch_loss / len(train_loader),
+                        "epoch/accuracy": metrics["accuracy"],
+                        "epoch/f1": metrics["f1"],
+                        "epoch/precision": metrics["precision"],
+                        "epoch/recall": metrics["recall"],
+                        **self._log_gpu_memory_usage(),
+                    }
+                )
+
+                # Log confusion matrix as a visualization
+                if "confusion_matrix" in metrics:
+                    wandb.log(
+                        {
+                            "epoch/confusion_matrix": wandb.plot.confusion_matrix(
+                                probs=None,
+                                y_true=metrics["true_labels"],
+                                preds=metrics["pred_labels"],
+                                class_names=["negative", "positive"],
+                            ),
+                            "epoch": epoch + 1,
+                        }
+                    )
+
             # Save model at the end of each epoch
             self.save_model(os.path.join(self.output_dir, f"epoch-{epoch+1}"))
 
+            # Reset epoch timer for next epoch
+            epoch_start_time = time.time()
+
         # Save final model
         self.save_model(os.path.join(self.output_dir, "final_model"))
+
+        # Close wandb run
+        if self.use_wandb:
+            wandb.finish()
 
         return {"best_f1": best_f1}
 
@@ -211,20 +375,27 @@ class WT5Trainer:
         self.model.eval()
         all_preds = []
         all_labels = []
+        eval_loss = 0.0
+        eval_steps = 0
 
         with torch.no_grad():
             for batch in tqdm(data_loader, desc="Evaluating"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
 
+                # Get loss
+                outputs = self.model(**batch)
+                eval_loss += outputs.loss.item()
+                eval_steps += 1
+
                 # Get model predictions
-                outputs = self.model.generate(
+                gen_outputs = self.model.generate(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
                     max_length=10,
                 )
 
                 # Decode predictions
-                preds = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                preds = self.tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
 
                 # Convert text predictions to labels (0 or 1)
                 pred_labels = [1 if p.strip().lower() == "positive" else 0 for p in preds]
@@ -242,11 +413,28 @@ class WT5Trainer:
                 all_preds.extend(pred_labels)
                 all_labels.extend(true_labels)
 
+        # Calculate average loss and perplexity
+        avg_loss = eval_loss / eval_steps if eval_steps > 0 else 0
+        perplexity = torch.exp(torch.tensor(avg_loss)).item()
+
         # Calculate metrics
         accuracy = accuracy_score(all_labels, all_preds)
         f1 = f1_score(all_labels, all_preds, average="weighted")
+        precision = precision_score(all_labels, all_preds, average="weighted", zero_division=0)
+        recall = recall_score(all_labels, all_preds, average="weighted", zero_division=0)
+        cm = confusion_matrix(all_labels, all_preds).tolist()
 
-        return {"accuracy": accuracy, "f1": f1}
+        return {
+            "accuracy": accuracy,
+            "f1": f1,
+            "precision": precision,
+            "recall": recall,
+            "loss": avg_loss,
+            "perplexity": perplexity,
+            "confusion_matrix": cm,
+            "true_labels": all_labels,
+            "pred_labels": all_preds,
+        }
 
     def save_model(self, path):
         """Save model and configuration."""
@@ -312,6 +500,14 @@ def main():
     parser.add_argument("--eval_steps", type=int, default=1000, help="Steps between evaluations")
     parser.add_argument("--logging_steps", type=int, default=100, help="Steps between logging")
 
+    # Wandb configuration
+    parser.add_argument(
+        "--use_wandb", action="store_true", help="Whether to use Weights & Biases logging"
+    )
+    parser.add_argument(
+        "--wandb_project", type=str, default="wt5-sentiment", help="W&B project name"
+    )
+
     args = parser.parse_args()
 
     # Create model configuration
@@ -326,7 +522,12 @@ def main():
     )
 
     # Create trainer
-    trainer = WT5Trainer(model_config=config, output_dir=args.output_dir)
+    trainer = WT5Trainer(
+        model_config=config,
+        output_dir=args.output_dir,
+        use_wandb=args.use_wandb,
+        wandb_project=args.wandb_project,
+    )
 
     # Train model
     trainer.train(

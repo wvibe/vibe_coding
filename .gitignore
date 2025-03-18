@@ -18,3 +18,5 @@ venv/
 *.pt
 *.bin
 *.safetensors
+# Weights & Biases
+wandb/

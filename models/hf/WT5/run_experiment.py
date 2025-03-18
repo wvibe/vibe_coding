@@ -6,6 +6,7 @@ This script provides a convenient way to train and evaluate the model with diffe
 
 import argparse
 import os
+from datetime import datetime
 
 from models.hf.WT5.configuration import WT5Config
 from models.hf.WT5.trainer import WT5Trainer
@@ -58,6 +59,11 @@ def run_experiment(
     learning_rate,
     max_length,
     gradient_accumulation_steps,
+    use_wandb=False,
+    wandb_project="wt5-sentiment",
+    eval_steps=500,
+    logging_steps=50,
+    save_steps=1000,
 ):
     """
     Run a training experiment with the specified configuration.
@@ -70,6 +76,11 @@ def run_experiment(
         learning_rate: Learning rate
         max_length: Maximum sequence length
         gradient_accumulation_steps: Number of steps to accumulate gradients
+        use_wandb: Whether to use Weights & Biases for logging
+        wandb_project: Name of the wandb project
+        eval_steps: Number of steps between evaluations
+        logging_steps: Number of steps between logging
+        save_steps: Number of steps between saving checkpoints
     """
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -85,7 +96,12 @@ def run_experiment(
         raise ValueError(f"Unknown configuration: {config_name}")
 
     # Create the trainer
-    trainer = WT5Trainer(model_config=config, output_dir=output_dir)
+    trainer = WT5Trainer(
+        model_config=config,
+        output_dir=output_dir,
+        use_wandb=use_wandb,
+        wandb_project=wandb_project,
+    )
 
     # Train the model
     results = trainer.train(
@@ -95,9 +111,9 @@ def run_experiment(
         learning_rate=learning_rate,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=100,
-        eval_steps=500,
-        save_steps=1000,
-        logging_steps=50,
+        eval_steps=eval_steps,
+        save_steps=save_steps,
+        logging_steps=logging_steps,
     )
 
     # Print the results
@@ -137,7 +153,25 @@ def main():
         help="Number of steps to accumulate gradients",
     )
 
+    # Logging and evaluation parameters
+    parser.add_argument("--eval_steps", type=int, default=500, help="Steps between evaluations")
+    parser.add_argument("--logging_steps", type=int, default=50, help="Steps between logging")
+    parser.add_argument(
+        "--save_steps", type=int, default=1000, help="Steps between saving checkpoints"
+    )
+
+    # Wandb parameters
+    parser.add_argument("--use_wandb", action="store_true", help="Use Weights & Biases for logging")
+    parser.add_argument(
+        "--wandb_project", type=str, default="wt5-sentiment", help="Wandb project name"
+    )
+
     args = parser.parse_args()
+
+    # Create a timestamped run name for the output directory
+    if args.output_dir == "./model_outputs":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output_dir = f"./models/hf/WT5/model_outputs/{args.config}_run_{timestamp}"
 
     # Run the experiment
     run_experiment(
@@ -148,6 +182,11 @@ def main():
         learning_rate=args.learning_rate,
         max_length=args.max_length,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        use_wandb=args.use_wandb,
+        wandb_project=args.wandb_project,
+        eval_steps=args.eval_steps,
+        logging_steps=args.logging_steps,
+        save_steps=args.save_steps,
     )
 
 
