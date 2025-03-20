@@ -8,52 +8,57 @@ This document outlines the technical design for implementing YOLOv3 based on the
 
 ```
 project_root/
-├── datasets/                      # Dataset utilities
+├── data_loaders/                   # Dataset utilities (renamed from datasets)
 │   ├── __init__.py
-│   ├── images/                    # Image dataset loaders
+│   ├── images/                     # Image dataset loaders
 │   │   ├── __init__.py
-│   │   ├── voc.py                 # Pascal VOC dataset
-│   │   └── bdd.py                 # BDD100K dataset
-│   ├── object_detection/          # Object detection specific loaders
+│   │   ├── voc.py                  # Pascal VOC dataset
+│   │   └── bdd.py                  # BDD100K dataset
+│   ├── object_detection/           # Object detection specific loaders
 │   │   ├── __init__.py
-│   │   ├── voc.py                 # VOC object detection format
-│   │   └── bdd.py                 # BDD100K detection format
-│   └── utils/                     # Common dataset utilities
+│   │   ├── voc.py                  # VOC object detection format
+│   │   └── bdd.py                  # BDD100K detection format
+│   └── utils/                      # Common dataset utilities
 │       ├── __init__.py
-│       ├── augmentation.py        # Data augmentation functions
-│       └── bbox.py                # Bounding box utilities
+│       ├── augmentation.py         # Data augmentation functions
+│       └── bbox.py                 # Bounding box utilities
 ├── models/
 │   ├── vanilla/
-│   │   ├── yolov3/                # YOLOv3 implementation
+│   │   ├── yolov3/                 # YOLOv3 implementation
 │   │   │   ├── __init__.py
-│   │   │   ├── config.py          # Model configuration
-│   │   │   ├── darknet.py         # Darknet-53 backbone
-│   │   │   ├── neck.py            # Feature pyramid network
-│   │   │   ├── head.py            # Detection heads
-│   │   │   ├── yolov3.py          # Full YOLOv3 model
-│   │   │   ├── loss.py            # Loss functions
-│   │   │   ├── train.py           # Training script
-│   │   │   ├── inference.py       # Inference script
-│   │   │   └── tests/             # Unit tests for YOLOv3
+│   │   │   ├── config.py           # Model configuration
+│   │   │   ├── darknet.py          # Darknet-53 backbone
+│   │   │   ├── neck.py             # Feature pyramid network
+│   │   │   ├── head.py             # Detection heads
+│   │   │   ├── yolov3.py           # Full YOLOv3 model
+│   │   │   ├── loss.py             # Loss functions
+│   │   │   ├── train.py            # Training script
+│   │   │   ├── inference.py        # Inference script
+│   │   │   ├── model_outputs/      # Directory for model checkpoints
+│   │   │   │   └── <run_name>/     # Run-specific subdirectories
+│   │   │   └── tests/              # Unit tests for YOLOv3
 │   │   │       ├── __init__.py
 │   │   │       ├── test_darknet.py
 │   │   │       ├── test_yolov3.py
 │   │   │       └── test_loss.py
-├── notebooks/                     # Jupyter notebooks for verification
+├── wandb/                          # Weights & Biases logging directory
+├── notebooks/                      # Jupyter notebooks for verification
 │   ├── yolov3/
 │   │   ├── model_verification.ipynb   # Testing individual components
 │   │   ├── training_playground.ipynb  # Experimental training
 │   │   ├── inference_demo.ipynb       # Visualization of predictions
 │   │   └── data_exploration.ipynb     # Dataset analysis
-├── utils/                         # Shared utilities
+├── utils/                          # Shared utilities
 │   ├── __init__.py
-│   ├── visualization.py           # Visualization tools
-│   └── metrics.py                 # Evaluation metrics
-└── doc/                           # Documentation
-    └── yolov3/                    # YOLOv3 specific documentation
-        ├── design.md              # This document
-        ├── architecture.md        # Detailed architecture explanation
-        └── experiments.md         # Experiment results
+│   ├── visualization.py            # Visualization tools
+│   └── metrics.py                  # Evaluation metrics
+├── .env                            # Environment variables 
+├── requirements.txt                # Project dependencies
+└── doc/                            # Documentation
+    └── yolov3/                     # YOLOv3 specific documentation
+        ├── design.md               # This document
+        ├── architecture.md         # Detailed architecture explanation
+        └── experiments.md          # Experiment results
 ```
 
 ## 2. YOLOv3 Architecture
@@ -116,6 +121,24 @@ The YOLOv3 loss function consists of three components:
 - **Classes**: 20 object categories
 - **Annotations**: XML format with bounding boxes
 - **Splits**: Standard train/val split (trainval/test)
+- **Data Versions**: 
+  - VOC2007: 2,501 training images, 2,510 validation images
+  - VOC2012: 5,717 training images, 5,823 validation images
+  - Combined: Option to train on both for better performance
+- **Directory Structure**:
+  ```
+  VOCdevkit/
+  ├── VOC2007/
+  │   ├── Annotations/        # XML annotation files
+  │   ├── ImageSets/Main/     # Text files with image IDs for splits
+  │   ├── JPEGImages/         # Image files
+  │   └── ...
+  └── VOC2012/
+      ├── Annotations/
+      ├── ImageSets/Main/
+      ├── JPEGImages/
+      └── ...
+  ```
 
 ### 3.2 BDD100K
 - **Size**: ~7GB for the 10K subset
@@ -126,28 +149,61 @@ The YOLOv3 loss function consists of three components:
 
 ## 4. Implementation Details
 
-### 4.1 Model Implementation
+### 4.1 Environment Configuration
+- Environment variables defined in `.env` file:
+  - `DATA_ROOT`: Root directory for dataset storage
+  - `WANDB_API_KEY`: API key for Weights & Biases integration
+- Using `python-dotenv` to load environment variables
+- Data paths and other configurable parameters centralized for easy management
+
+### 4.2 Model Implementation
 - **Backbone**: Implement Darknet-53 with configurable input size
 - **Feature Pyramid**: Connect features from different scales of the backbone
 - **Detection Heads**: Implement the detection logic for each scale
 - **Forward Pass**: Process an image and output predictions in the required format
 - **Loss Calculation**: Implement the compound loss function
 
-### 4.2 Dataset Implementation
+### 4.3 Dataset Implementation
 - Create dataset classes for Pascal VOC and BDD100K
-- Implement data augmentation techniques
-- Handle anchor box assignment based on IoU
+- Support for both VOC2007 and VOC2012 datasets
+- Option to combine datasets using PyTorch's `ConcatDataset`
+- Implement XML parsing for VOC annotations
+- Convert annotations to YOLOv3 format (normalized [x_center, y_center, width, height])
 - Create data loaders with custom collate functions
 
-### 4.3 Training Process
-- Initialize backbone with pre-trained weights
-- Two-stage training approach:
+### 4.4 Training Infrastructure
+- **Run Management**: 
+  - Each training run has a unique name (user-defined or timestamp-based)
+  - Checkpoints stored in run-specific directories to prevent overwriting
+- **Two-stage training approach**:
   1. Freeze backbone and train detection heads
   2. Fine-tune entire network
-- Learning rate schedule with warmup
-- Regularization techniques (weight decay, dropout if needed)
+- **Learning rate schedule**: 
+  - Cosine annealing from initial LR to LR/100
+  - Lower learning rate after unfreezing backbone
+- **Checkpointing**:
+  - Regular checkpoints at specified intervals
+  - Best model saved based on validation loss
+  - Final model saved at the end of training
 
-### 4.4 Evaluation
+### 4.5 Experiment Tracking
+- **Weights & Biases Integration**:
+  - Track training/validation metrics in real-time
+  - Log hyperparameters and configurations
+  - Monitor model architecture and parameters
+  - Record resource usage (GPU memory, compute time)
+- **Logged Metrics**:
+  - **Batch-level**: Loss, component losses, learning rate, batch time
+  - **Epoch-level**: Average losses, epoch time, validation metrics
+  - **Model**: Model architecture, parameter count, gradient flow
+  - **Validation**: Loss metrics, mAP (TODO)
+- **Visualizations**:
+  - Loss curves and learning rate schedule
+  - Performance metrics over time
+  - Resource utilization
+  - Example predictions (TODO)
+
+### 4.6 Evaluation
 - Implement mAP calculation at IoU=0.5 (PASCAL VOC metric)
 - Implement mAP at IoU=0.5:0.95 (COCO metric)
 - Track precision, recall, and F1 score per class
@@ -187,6 +243,7 @@ The YOLOv3 loss function consists of three components:
 - Effect of input resolution (416×416 vs 608×608)
 - Impact of different data augmentation techniques
 - Analysis of loss components weighting
+- Effect of training on VOC2007, VOC2012, and combined datasets
 
 ### 6.3 Cross-Dataset Validation
 - Train on Pascal VOC, test on BDD100K (domain transfer)
@@ -205,13 +262,17 @@ The YOLOv3 loss function consists of three components:
 2. Comprehensive documentation
 3. Experimental results and analysis
 4. Notebooks for visualization and testing
+5. Trained models with proper evaluation metrics
+6. Experiment tracking dashboards in Weights & Biases
 
 ## 9. Technologies and Dependencies
 
 - Python 3.12
-- PyTorch
+- PyTorch and torchvision
 - Huggingface Datasets
 - OpenCV
 - matplotlib, seaborn for visualization
 - pytest for testing
 - Weights & Biases for experiment tracking 
+- python-dotenv for environment management
+- PIL for image processing 

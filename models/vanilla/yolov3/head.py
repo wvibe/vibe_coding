@@ -64,7 +64,9 @@ class DetectionHead(nn.Module):
 
         # Reshape to (batch_size, num_anchors, prediction_size, grid_size, grid_size)
         grid_size = x.size(2)
-        x = x.view(batch_size, self.num_anchors, self.prediction_size, grid_size, grid_size)
+        x = x.view(
+            batch_size, self.num_anchors, self.prediction_size, grid_size, grid_size
+        )  # noqa: E501
 
         # Permute to (batch_size, num_anchors, grid_size, grid_size, prediction_size)
         x = x.permute(0, 1, 3, 4, 2)

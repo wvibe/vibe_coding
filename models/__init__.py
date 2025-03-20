@@ -3,13 +3,13 @@ Model implementations
 """
 
 # Import specific modules instead of using wildcard imports
-from models.hf import BertModel, GPT2Model, T5Model  # Update with actual model classes
-from models.vanilla import ResNet, YOLOv3  # Update with actual model classes
+from models.hf import WT5Config, WT5ForConditionalGeneration, WT5Model, WT5Tokenizer
+from models.vanilla import YOLOv3  # Keep actual model classes that exist
 
 __all__ = [
-    "BertModel",
-    "GPT2Model",
-    "T5Model",
-    "ResNet",
+    "WT5Config",
+    "WT5Model",
+    "WT5ForConditionalGeneration",
+    "WT5Tokenizer",
     "YOLOv3",
-]  # Update with actual model classes
+]

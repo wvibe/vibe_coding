@@ -10,6 +10,7 @@ alwaysApply: true
 - Use Conda environment 'vbl' for this project, use pip to install python packages
 - Python for the backend, prefer version 3.12 for this project
 - Pytorch for Machine Learning, prefer Huggingface libraries if applicable
+- Use /Users/wmu/vibe/data for the root of ML data storage, create subfolders for different datasets.
 - Use pytest for unittesting, and ruff for linting and formatting
 - HTML/JS/Gradio for the frontend
 - SQL databases, never JSON file storage

@@ -113,21 +113,30 @@ class YOLOv3(nn.Module):
 
             # Process predictions for each scale
             scale_predictions = [pred[batch_idx] for pred in predictions]
-            scale_anchors = [
-                self.config.anchors[0:3],  # Large scale anchors
-                self.config.anchors[3:6],  # Medium scale anchors
-                self.config.anchors[6:9],  # Small scale anchors
-            ]
-            grid_sizes = [13, 26, 52]  # Grid sizes for 416x416 input
 
-            for pred, anchors, grid_size in zip(
-                scale_predictions, scale_anchors, grid_sizes, strict=False
+            # Use grid sizes that match the predictions output for 416x416 input
+            grid_sizes = [13, 26, 52]  # Grid sizes for 416x416 input
+            anchor_indices = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
+
+            # Process each scale
+            for scale_idx, (pred, grid_size) in enumerate(
+                zip(scale_predictions, grid_sizes, strict=False)
             ):
-                # Process each prediction
-                detections = self._process_scale(
-                    pred, anchors, grid_size, self.config.input_size, conf_threshold
+                # Get the anchors for this scale
+                scale_anchors = [self.config.anchors[i] for i in anchor_indices[scale_idx]]
+
+                # Process this scale
+                detections = self._process_scale_batch(
+                    pred,
+                    scale_anchors,
+                    grid_size,
+                    self.config.input_size,
+                    conf_threshold,
+                    batch_idx,
                 )
-                image_detections.append(detections)
+
+                if detections.size(0) > 0:
+                    image_detections.append(detections)
 
             # Combine detections from all scales
             if len(image_detections) > 0:
@@ -144,17 +153,20 @@ class YOLOv3(nn.Module):
 
         return batch_detections
 
-    def _process_scale(self, predictions, anchors, grid_size, input_size, conf_threshold):
+    def _process_scale_batch(
+        self, predictions, anchors, grid_size, input_size, conf_threshold, batch_idx
+    ):
         """
-        Process predictions from a single scale
+        Process predictions from a single scale for a single image in batch
 
         Args:
-            predictions: Predictions from a single scale
+            predictions: Predictions from a single scale (for one image)
                          Shape: (num_anchors, grid_size, grid_size, 5 + num_classes)
             anchors: Anchor boxes for this scale
             grid_size: Grid size for this scale
             input_size: Input image size
             conf_threshold: Confidence threshold for filtering
+            batch_idx: Index of image in the batch
 
         Returns:
             torch.Tensor: Filtered and transformed detections
@@ -163,41 +175,46 @@ class YOLOv3(nn.Module):
         """
         device = predictions.device
         num_anchors = len(anchors)
+        num_classes = predictions.size(-1) - 5
 
-        # Convert to anchor box predictions
+        # Ensure anchors is a tensor
         anchors = torch.tensor(anchors, device=device)
 
-        # Get grid coordinates
+        # Get grid coordinates for this scale
         stride = input_size // grid_size
-        grid_x = (
-            torch.arange(grid_size, device=device)
-            .repeat(grid_size, 1)
-            .view([1, 1, grid_size, grid_size])
-        )
-        grid_y = (
-            torch.arange(grid_size, device=device)
-            .repeat(grid_size, 1)
-            .t()
-            .view([1, 1, grid_size, grid_size])
+
+        # Create grid coordinates
+        grid_x, grid_y = torch.meshgrid(
+            torch.arange(grid_size, device=device),
+            torch.arange(grid_size, device=device),
+            indexing="ij",
         )
 
-        # Reshape predictions
-        pred_boxes = predictions[..., 0:4].clone()
+        # Reshape grid for broadcasting
+        grid_x = grid_x.reshape(grid_size, grid_size, 1).repeat(1, 1, num_anchors)
+        grid_y = grid_y.reshape(grid_size, grid_size, 1).repeat(1, 1, num_anchors)
+
+        # Reshape predictions to [grid_size, grid_size, num_anchors, 5+num_classes]
+        predictions = predictions.permute(1, 2, 0, 3)
+
+        # Extract box coordinates, confidence and class scores
+        pred_boxes = predictions[..., :4].clone()
         pred_conf = predictions[..., 4].clone()
         pred_classes = predictions[..., 5:].clone()
 
         # Apply sigmoid to convert tx, ty to normalized coordinates (0-1)
         pred_boxes[..., 0:2] = torch.sigmoid(pred_boxes[..., 0:2])
-        # Add grid cell offset
+
+        # Add grid cell offsets
         pred_boxes[..., 0] += grid_x
         pred_boxes[..., 1] += grid_y
-        # Convert to actual coordinates
+
+        # Scale to real coordinates
         pred_boxes[..., 0:2] *= stride
 
-        # Apply exponential to tw, th and multiply by anchor dimensions
-        pred_boxes[..., 2:4] = torch.exp(pred_boxes[..., 2:4]) * anchors.view(
-            1, num_anchors, 1, 1, 2
-        )
+        # Apply exp to width and height and multiply by anchors
+        anchors = anchors.reshape(1, 1, num_anchors, 2)
+        pred_boxes[..., 2:4] = torch.exp(pred_boxes[..., 2:4]) * anchors
 
         # Apply sigmoid to confidence and class predictions
         pred_conf = torch.sigmoid(pred_conf)
@@ -211,6 +228,14 @@ class YOLOv3(nn.Module):
 
         # Filter by confidence threshold
         mask = det_confidence > conf_threshold
+
+        # Flatten for filtering
+        pred_boxes = pred_boxes.reshape(-1, 4)
+        det_confidence = det_confidence.reshape(-1)
+        class_ids = class_ids.reshape(-1)
+        mask = mask.reshape(-1)
+
+        # Apply filtering
         filtered_boxes = pred_boxes[mask]
         filtered_confidence = det_confidence[mask]
         filtered_class_ids = class_ids[mask]
@@ -225,10 +250,10 @@ class YOLOv3(nn.Module):
         boxes = torch.cat([x1y1, x2y2], dim=-1)
 
         # Create detections tensor: [batch_idx, x1, y1, x2, y2, confidence, class_id]
-        batch_idx = torch.zeros((filtered_boxes.shape[0], 1), device=device)
+        batch_indices = torch.full((filtered_boxes.shape[0], 1), batch_idx, device=device)
         detections = torch.cat(
             [
-                batch_idx,
+                batch_indices,
                 boxes,
                 filtered_confidence.unsqueeze(-1),
                 filtered_class_ids.float().unsqueeze(-1),
