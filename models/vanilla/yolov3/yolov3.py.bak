@@ -1,0 +1,326 @@
+"""
+YOLOv3 model implementation
+"""
+import torch
+import torch.nn as nn
+
+from .config import DEFAULT_CONFIG
+from .darknet import Darknet53
+from .head import YOLOv3Head
+from .neck import FeaturePyramidNetwork
+
+
+class YOLOv3(nn.Module):
+    """
+    YOLOv3 object detection model
+    
+    Combines Darknet-53 backbone, Feature Pyramid Network, and detection heads
+    """
+    
+    def __init__(self, config=None):
+        """
+        Initialize YOLOv3 model
+        
+        Args:
+            config: YOLOv3Config object with model parameters
+                   (uses default config if None)
+        """
+        super().__init__()
+        self.config = config if config is not None else DEFAULT_CONFIG
+        
+        # Backbone: Darknet-53
+        self.backbone = Darknet53()
+        
+        # Neck: Feature Pyramid Network
+        self.neck = FeaturePyramidNetwork()
+        
+        # Head: Detection heads for different scales
+        self.head = YOLOv3Head(self.config.num_classes)
+        
+        # Initialize weights
+        self._initialize_weights()
+        
+        # Load pretrained backbone weights if specified
+        if self.config.darknet_pretrained:
+            self.backbone.load_pretrained(self.config.darknet_weights_path)
+    
+    def forward(self, x):
+        """
+        Forward pass of YOLOv3
+        
+        Args:
+            x: Input image tensor of shape (batch_size, 3, height, width)
+               where height and width should ideally be equal to config.input_size
+        
+        Returns:
+            tuple: Predictions from all three scales
+                   (large_scale_pred, medium_scale_pred, small_scale_pred)
+                   Each with shape (batch_size, num_anchors, grid_size, grid_size, 5 + num_classes)
+        """
+        # Get backbone features
+        backbone_features = self.backbone(x)
+        
+        # Apply Feature Pyramid Network
+        fpn_features = self.neck(backbone_features)
+        
+        # Get predictions from detection heads
+        predictions = self.head(fpn_features)
+        
+        return predictions
+    
+    def _initialize_weights(self):
+        """Initialize model weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def predict(self, x, conf_threshold=None, nms_threshold=None):
+        """
+        Make predictions with post-processing (confidence thresholding and NMS)
+        
+        Args:
+            x: Input image tensor of shape (batch_size, 3, height, width)
+            conf_threshold: Confidence threshold (uses config value if None)
+            nms_threshold: NMS IoU threshold (uses config value if None)
+        
+        Returns:
+            list: List of detections for each image in the batch
+                  Each detection is [x1, y1, x2, y2, confidence, class_id]
+        """
+        # Set thresholds
+        conf_threshold = conf_threshold if conf_threshold is not None else self.config.conf_threshold
+        nms_threshold = nms_threshold if nms_threshold is not None else self.config.nms_threshold
+        
+        # Get raw predictions
+        with torch.no_grad():
+            predictions = self(x)
+        
+        # Process predictions
+        batch_detections = []
+        batch_size = x.size(0)
+        
+        # Process each image in the batch
+        for batch_idx in range(batch_size):
+            image_detections = []
+            
+            # Process predictions for each scale
+            scale_predictions = [pred[batch_idx] for pred in predictions]
+            scale_anchors = [
+                self.config.anchors[0:3],    # Large scale anchors
+                self.config.anchors[3:6],    # Medium scale anchors
+                self.config.anchors[6:9]     # Small scale anchors
+            ]
+            grid_sizes = [13, 26, 52]  # Grid sizes for 416x416 input
+            
+            for pred, anchors, grid_size in zip(scale_predictions, scale_anchors, grid_sizes):
+                # Process each prediction
+                detections = self._process_scale(
+                    pred, anchors, grid_size, 
+                    self.config.input_size, conf_threshold
+                )
+                image_detections.append(detections)
+            
+            # Combine detections from all scales
+            if len(image_detections) > 0:
+                image_detections = torch.cat(image_detections, dim=0)
+                
+                # Apply Non-Maximum Suppression
+                image_detections = self._non_max_suppression(
+                    image_detections, self.config.num_classes, nms_threshold
+                )
+            else:
+                image_detections = torch.empty((0, 7), device=x.device)
+            
+            batch_detections.append(image_detections)
+        
+        return batch_detections
+    
+    def _process_scale(self, predictions, anchors, grid_size, input_size, conf_threshold):
+        """
+        Process predictions from a single scale
+        
+        Args:
+            predictions: Predictions from a single scale
+                         Shape: (num_anchors, grid_size, grid_size, 5 + num_classes)
+            anchors: Anchor boxes for this scale
+            grid_size: Grid size for this scale
+            input_size: Input image size
+            conf_threshold: Confidence threshold for filtering
+        
+        Returns:
+            torch.Tensor: Filtered and transformed detections
+                          Shape: (n, 7) where n is the number of detections
+                          Each detection is [batch_idx, x1, y1, x2, y2, confidence, class_id]
+        """
+        device = predictions.device
+        num_anchors = len(anchors)
+        num_classes = self.config.num_classes
+        
+        # Convert to anchor box predictions
+        anchors = torch.tensor(anchors, device=device)
+        
+        # Get grid coordinates
+        stride = input_size // grid_size
+        grid_x = torch.arange(grid_size, device=device).repeat(grid_size, 1).view([1, 1, grid_size, grid_size])
+        grid_y = torch.arange(grid_size, device=device).repeat(grid_size, 1).t().view([1, 1, grid_size, grid_size])
+        
+        # Reshape predictions
+        pred_boxes = predictions[..., 0:4].clone()
+        pred_conf = predictions[..., 4].clone()
+        pred_classes = predictions[..., 5:].clone()
+        
+        # Apply sigmoid to convert tx, ty to normalized coordinates (0-1)
+        pred_boxes[..., 0:2] = torch.sigmoid(pred_boxes[..., 0:2])
+        # Add grid cell offset
+        pred_boxes[..., 0] += grid_x
+        pred_boxes[..., 1] += grid_y
+        # Convert to actual coordinates
+        pred_boxes[..., 0:2] *= stride
+        
+        # Apply exponential to tw, th and multiply by anchor dimensions
+        pred_boxes[..., 2:4] = torch.exp(pred_boxes[..., 2:4]) * anchors.view(1, num_anchors, 1, 1, 2)
+        
+        # Apply sigmoid to confidence and class predictions
+        pred_conf = torch.sigmoid(pred_conf)
+        pred_classes = torch.sigmoid(pred_classes)
+        
+        # Get class with highest confidence
+        class_scores, class_ids = torch.max(pred_classes, dim=-1)
+        
+        # Calculate final detection confidence
+        det_confidence = pred_conf * class_scores
+        
+        # Filter by confidence threshold
+        mask = det_confidence > conf_threshold
+        filtered_boxes = pred_boxes[mask]
+        filtered_confidence = det_confidence[mask]
+        filtered_class_ids = class_ids[mask]
+        
+        # If no boxes, return empty tensor
+        if filtered_boxes.shape[0] == 0:
+            return torch.empty((0, 7), device=device)
+        
+        # Convert from center-width-height to top-left, bottom-right
+        x1y1 = filtered_boxes[..., 0:2] - filtered_boxes[..., 2:4] / 2
+        x2y2 = filtered_boxes[..., 0:2] + filtered_boxes[..., 2:4] / 2
+        boxes = torch.cat([x1y1, x2y2], dim=-1)
+        
+        # Create detections tensor: [batch_idx, x1, y1, x2, y2, confidence, class_id]
+        batch_idx = torch.zeros((filtered_boxes.shape[0], 1), device=device)
+        detections = torch.cat([
+            batch_idx,
+            boxes,
+            filtered_confidence.unsqueeze(-1),
+            filtered_class_ids.float().unsqueeze(-1)
+        ], dim=-1)
+        
+        return detections
+    
+    def _non_max_suppression(self, detections, num_classes, nms_threshold):
+        """
+        Apply Non-Maximum Suppression to detections
+        
+        Args:
+            detections: Tensor of detections
+                        Shape: (n, 7) where n is the number of detections
+                        Each detection is [batch_idx, x1, y1, x2, y2, confidence, class_id]
+            num_classes: Number of classes
+            nms_threshold: IoU threshold for NMS
+        
+        Returns:
+            torch.Tensor: Filtered detections after NMS
+        """
+        # If no detections, return empty tensor
+        if detections.shape[0] == 0:
+            return detections
+        
+        # Get coordinates
+        x1 = detections[:, 1]
+        y1 = detections[:, 2]
+        x2 = detections[:, 3]
+        y2 = detections[:, 4]
+        
+        # Calculate area of detections
+        areas = (x2 - x1) * (y2 - y1)
+        
+        # Sort by confidence
+        scores = detections[:, 5]
+        _, order = scores.sort(descending=True)
+        
+        keep = []
+        while order.numel() > 0:
+            # Pick the one with highest confidence
+            i = order[0].item()
+            keep.append(i)
+            
+            # If only one detection left, break
+            if order.numel() == 1:
+                break
+            
+            # Calculate IoU with the rest
+            xx1 = torch.max(x1[i], x1[order[1:]])
+            yy1 = torch.max(y1[i], y1[order[1:]])
+            xx2 = torch.min(x2[i], x2[order[1:]])
+            yy2 = torch.min(y2[i], y2[order[1:]])
+            
+            # Calculate intersection area
+            inter_area = torch.clamp(xx2 - xx1, min=0) * torch.clamp(yy2 - yy1, min=0)
+            
+            # Calculate union area
+            union_area = areas[i] + areas[order[1:]] - inter_area
+            
+            # Calculate IoU
+            iou = inter_area / (union_area + 1e-16)
+            
+            # Keep detections with IoU less than threshold
+            mask = iou <= nms_threshold
+            if not mask.any():
+                break
+            
+            # Update order for next iteration
+            order = order[1:][mask]
+        
+        return detections[keep]
+    
+    def load_state_dict(self, state_dict, strict=True):
+        """
+        Load model state dictionary
+        
+        If strict is False, it will ignore missing keys
+        """
+        super().load_state_dict(state_dict, strict=strict)
+    
+    def save(self, path):
+        """
+        Save model to path
+        
+        Args:
+            path: Path to save model
+        """
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'config': self.config,
+        }, path)
+    
+    @classmethod
+    def load(cls, path, device=None):
+        """
+        Load model from path
+        
+        Args:
+            path: Path to load model from
+            device: Device to load model on
+        
+        Returns:
+            YOLOv3: Loaded model
+        """
+        checkpoint = torch.load(path, map_location=device)
+        config = checkpoint.get('config', DEFAULT_CONFIG)
+        model = cls(config)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        return model         return model 
