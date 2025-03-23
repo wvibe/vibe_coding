@@ -81,7 +81,9 @@ class YOLOv3Loss(nn.Module):
             zip(scale_preds, scale_anchors, grid_sizes, strict=False)
         ):
             # Create targets tensor for this scale
-            target_tensor = self._build_target(targets, anchors, grid_size, scale_idx, batch_size)
+            target_tensor = self._build_target(
+                targets, anchors, grid_size, scale_idx, batch_size
+            )
 
             # Get masks
             obj_mask = target_tensor[..., 4].bool()  # Objectness mask
@@ -169,9 +171,14 @@ class YOLOv3Loss(nn.Module):
                 continue
 
             # For each ground truth box
-            for box_idx, (box, label) in enumerate(zip(gt_boxes, gt_labels, strict=False)):
+            for box_idx, (box, label) in enumerate(
+                zip(gt_boxes, gt_labels, strict=False)
+            ):
                 # Check if this box should be assigned to this scale
-                if "scale_mask" in targets and not targets["scale_mask"][b][box_idx][scale_idx]:
+                if (
+                    "scale_mask" in targets
+                    and not targets["scale_mask"][b][box_idx][scale_idx]
+                ):
                     continue
 
                 # Convert box coordinates to grid cell coordinates

@@ -12,7 +12,8 @@ import numpy as np
 import torch
 import torch.optim as optim
 from dotenv import load_dotenv
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import wandb
 
@@ -21,6 +22,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 
 from data_loaders.object_detection.voc import PascalVOCDataset
 from models.vanilla.yolov3.config import YOLOv3Config
+from models.vanilla.yolov3.evaluate import evaluate_model
 from models.vanilla.yolov3.loss import YOLOv3Loss
 from models.vanilla.yolov3.yolov3 import YOLOv3
 
@@ -37,13 +39,36 @@ def parse_args():
         "--dataset",
         type=str,
         default="voc",
-        choices=["voc", "bdd"],
+        choices=["voc"],
         help="Dataset to use (default: voc)",
     )
     parser.add_argument(
-        "--use-voc-2007",
-        action="store_true",
-        help="Use both VOC2007 and VOC2012 datasets (default: False, use only VOC2012)",
+        "--train-split",
+        type=str,
+        default="train",
+        choices=["train", "trainval"],
+        help="Dataset split to use for training (default: train)",
+    )
+    parser.add_argument(
+        "--val-split",
+        type=str,
+        default="val",
+        choices=["val", "test"],
+        help="Dataset split to use for validation (default: val)",
+    )
+    parser.add_argument(
+        "--test-split",
+        type=str,
+        default=None,
+        choices=[None, "test"],
+        help="Dataset split to use for final testing (default: None)",
+    )
+    parser.add_argument(
+        "--year",
+        type=str,
+        default="2007",
+        choices=["2007"],
+        help="VOC dataset year (default: 2007)",
     )
 
     # Model parameters
@@ -125,8 +150,8 @@ def parse_args():
     parser.add_argument(
         "--eval-interval",
         type=int,
-        default=5,
-        help="Interval for evaluation during training (default: 5 epochs)",
+        default=1,
+        help="Interval for evaluation during training (default: 1 epoch)",
     )
 
     # W&B parameters
@@ -159,7 +184,17 @@ def parse_args():
         help="Number of data loading workers (default: 4)",
     )
     parser.add_argument(
-        "--device", type=str, default="cuda", help="Device to use (default: cuda)"
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cuda", "cpu", "mps"],
+        help="Device to use (default: auto - selects CUDA if available, then MPS, then CPU)",
+    )
+    parser.add_argument(
+        "--iou-threshold",
+        type=float,
+        default=0.5,
+        help="IoU threshold for evaluation (default: 0.5)",
     )
 
     return parser.parse_args()
@@ -291,7 +326,7 @@ def train_epoch(
     return metrics
 
 
-def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
+def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, args=None):
     """
     Validate model on validation set
 
@@ -302,11 +337,13 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
         device: Device to use
         epoch: Current epoch (for logging)
         wandb_run: Weights & Biases run object for logging
+        args: Command line arguments
 
     Returns:
         dict: Validation metrics
     """
     model.eval()
+    start_time = time.time()
 
     # Initialize metrics
     total_loss = 0
@@ -314,13 +351,13 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
     total_obj_loss = 0
     total_cls_loss = 0
 
-    # Initialize metrics for mAP calculation
-    # TODO: Implement mAP calculation
-
-    start_time = time.time()
+    # Evaluate model using the evaluate module
+    print("Running validation" + (f" for epoch {epoch}" if epoch is not None else ""))
 
     with torch.no_grad():
-        for batch_idx, batch in enumerate(dataloader):
+        # Compute loss on validation set
+        progress_bar = tqdm(dataloader, desc="Computing validation loss")
+        for batch_idx, batch in enumerate(progress_bar):
             # Get batch data
             images = batch["images"].to(device)
             targets = {
@@ -341,7 +378,15 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
             total_obj_loss += loss_dict["obj_loss"].item()
             total_cls_loss += loss_dict["cls_loss"].item()
 
-            # TODO: Collect predictions and targets for mAP calculation
+            # Update progress bar
+            progress_bar.set_postfix(
+                {
+                    "loss": loss.item(),
+                    "loc_loss": loss_dict["loc_loss"].item(),
+                    "obj_loss": loss_dict["obj_loss"].item(),
+                    "cls_loss": loss_dict["cls_loss"].item(),
+                }
+            )
 
     # Calculate average losses
     avg_loss = total_loss / len(dataloader)
@@ -349,16 +394,25 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
     avg_obj_loss = total_obj_loss / len(dataloader)
     avg_cls_loss = total_cls_loss / len(dataloader)
 
+    print(
+        f"Validation loss: {avg_loss:.4f} (Loc: {avg_loc_loss:.4f}, Obj: {avg_obj_loss:.4f}, Cls: {avg_cls_loss:.4f})"
+    )
+    print("Evaluating model performance...")
+
+    # Compute metrics using the evaluate module
+    evaluation_metrics = evaluate_model(model, dataloader, device, args.iou_threshold)
+
+    mAP = evaluation_metrics["mAP"]
+    class_APs = evaluation_metrics["class_APs"]
+
     # Calculate elapsed time
     time_elapsed = time.time() - start_time
 
-    # Print validation summary
+    # Print validation summary (keeping it minimal, detailed metrics go to wandb)
     print(
         f"Validation completed in {time_elapsed:.2f}s | "
-        f"Avg Loss: {avg_loss:.4f} | "
-        f"Avg Loc Loss: {avg_loc_loss:.4f} | "
-        f"Avg Obj Loss: {avg_obj_loss:.4f} | "
-        f"Avg Cls Loss: {avg_cls_loss:.4f}"
+        f"Loss: {avg_loss:.4f} | "
+        f"mAP@{args.iou_threshold}: {mAP:.4f}"
     )
 
     # Log validation metrics to W&B
@@ -367,8 +421,13 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
         "val_loc_loss": avg_loc_loss,
         "val_obj_loss": avg_obj_loss,
         "val_cls_loss": avg_cls_loss,
+        "val_mAP": mAP,
         "val_time": time_elapsed,
     }
+
+    # Add per-class AP metrics
+    for c, ap in class_APs.items():
+        metrics[f"val_AP_class_{c}"] = ap
 
     if epoch is not None:
         metrics["epoch"] = epoch
@@ -376,7 +435,7 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None):
     if wandb_run:
         wandb_run.log(metrics)
 
-        # TODO: Log sample predictions as images to W&B
+        # TODO: Add visualization of predictions on sample images
 
     return metrics
 
@@ -420,10 +479,16 @@ def save_checkpoint(
             wandb.save(best_path)
 
 
-def main():
-    """Main training function"""
-    args = parse_args()
+def setup_environment(args):
+    """
+    Set up training environment
 
+    Args:
+        args: Command line arguments
+
+    Returns:
+        tuple: Updated args, device, wandb_run
+    """
     # Set random seed for reproducibility
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -449,32 +514,47 @@ def main():
         )
         print(f"W&B initialized: {wandb.run.name}")
 
-    # Set device
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    # Set device based on availability and user preference
+    if args.device == "auto":
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+    else:
+        device = torch.device(args.device)
+
     print(f"Using device: {device}")
 
-    # Load datasets
+    return args, device, wandb_run
+
+
+def create_datasets(args):
+    """
+    Create datasets and dataloaders
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        tuple: train_loader, val_loader, test_loader (None if not requested)
+    """
     if args.dataset == "voc":
-        if args.use_voc_2007:
-            # Load both VOC2007 and VOC2012 datasets
-            train_dataset_2007 = PascalVOCDataset(split="train", year="2007")
-            val_dataset_2007 = PascalVOCDataset(split="val", year="2007")
-            train_dataset_2012 = PascalVOCDataset(split="train", year="2012")
-            val_dataset_2012 = PascalVOCDataset(split="val", year="2012")
+        # Create train dataset
+        train_dataset = PascalVOCDataset(split=args.train_split, year=args.year)
+        train_collate_fn = train_dataset.collate_fn
 
-            # Combine datasets
-            train_dataset = ConcatDataset([train_dataset_2007, train_dataset_2012])
-            val_dataset = ConcatDataset([val_dataset_2007, val_dataset_2012])
+        # Create validation dataset
+        val_dataset = PascalVOCDataset(split=args.val_split, year=args.year)
+        val_collate_fn = val_dataset.collate_fn
 
-            # Use collate_fn from one of the datasets
-            train_collate_fn = train_dataset_2007.collate_fn
-            val_collate_fn = val_dataset_2007.collate_fn
-        else:
-            # Use only VOC2012
-            train_dataset = PascalVOCDataset(split="train")
-            val_dataset = PascalVOCDataset(split="val")
-            train_collate_fn = train_dataset.collate_fn
-            val_collate_fn = val_dataset.collate_fn
+        # Create test dataset if specified
+        test_dataset = None
+        test_collate_fn = None
+        if args.test_split:
+            test_dataset = PascalVOCDataset(split=args.test_split, year=args.year)
+            test_collate_fn = test_dataset.collate_fn
     else:
         # In future, add BDD100K dataset
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented yet")
@@ -496,6 +576,36 @@ def main():
         collate_fn=val_collate_fn,
     )
 
+    # Create test loader if test dataset exists
+    test_loader = None
+    if test_dataset:
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.workers,
+            collate_fn=test_collate_fn,
+        )
+
+    print(f"Created datasets: Train ({len(train_dataset)}), Val ({len(val_dataset)})")
+    if test_loader:
+        print(f"Test ({len(test_dataset)})")
+
+    return train_loader, val_loader, test_loader
+
+
+def create_model(args, device, wandb_run=None):
+    """
+    Create model, loss function and optimizer
+
+    Args:
+        args: Command line arguments
+        device: Device to use
+        wandb_run: Weights & Biases run object for logging
+
+    Returns:
+        tuple: model, loss_fn, optimizer, lr_scheduler
+    """
     # Create model config
     config = YOLOv3Config(
         input_size=args.input_size,
@@ -527,89 +637,166 @@ def main():
     # Create loss function
     loss_fn = YOLOv3Loss(config)
 
-    # Training with frozen backbone if specified
-    if args.freeze_backbone and args.freeze_epochs > 0:
-        # Freeze backbone parameters
-        for param in model.backbone.parameters():
-            param.requires_grad = False
-
-        # Create optimizer for unfrozen parameters
-        optimizer = optim.Adam(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=args.learning_rate,
-            weight_decay=args.weight_decay,
-        )
-
-        # Train with frozen backbone
-        print(f"Training with frozen backbone for {args.freeze_epochs} epochs")
-        for epoch in range(1, args.freeze_epochs + 1):
-            metrics = train_epoch(
-                model, train_loader, loss_fn, optimizer, device, epoch, args, wandb_run
-            )
-
-            # Validate model
-            if epoch % args.eval_interval == 0:
-                val_metrics = validate(
-                    model, val_loader, loss_fn, device, epoch, wandb_run
-                )
-                metrics.update({"val_" + k: v for k, v in val_metrics.items()})
-
-            # Save checkpoint
-            if epoch % args.checkpoint_interval == 0 or epoch == args.freeze_epochs:
-                save_checkpoint(
-                    model, optimizer, epoch, metrics, args, wandb_run=wandb_run
-                )
-
-        # Unfreeze backbone for full training
-        for param in model.backbone.parameters():
-            param.requires_grad = True
-        print("Unfrozen backbone for full training")
-
-    # Create optimizer for full training
-    if args.freeze_backbone:
-        # Reset learning rate after unfreezing
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=args.learning_rate / 10,  # Use lower learning rate after unfreezing
-            weight_decay=args.weight_decay,
-        )
-    else:
-        optimizer = optim.Adam(
-            model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
-        )
+    # Create optimizer
+    optimizer = optim.Adam(
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+    )
 
     # Learning rate scheduler
     lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=args.epochs - args.freeze_epochs if args.freeze_backbone else args.epochs,
+        T_max=args.epochs,
         eta_min=args.learning_rate / 100,
     )
 
-    # Train model
-    start_epoch = args.freeze_epochs + 1 if args.freeze_backbone else 1
-    best_val_loss = float("inf")
+    return model, loss_fn, optimizer, lr_scheduler
 
-    for epoch in range(start_epoch, args.epochs + 1):
-        # Train one epoch
+
+def train_with_frozen_backbone(
+    model, train_loader, val_loader, loss_fn, args, device, wandb_run=None
+):
+    """
+    Train model with frozen backbone
+
+    Args:
+        model: YOLOv3 model
+        train_loader: DataLoader for training data
+        val_loader: DataLoader for validation data
+        loss_fn: Loss function
+        args: Command line arguments
+        device: Device to use
+        wandb_run: Weights & Biases run object for logging
+
+    Returns:
+        model: Updated model with unfrozen backbone
+    """
+    if not (args.freeze_backbone and args.freeze_epochs > 0):
+        return model
+
+    # Freeze backbone parameters
+    for param in model.backbone.parameters():
+        param.requires_grad = False
+
+    # Create optimizer for unfrozen parameters
+    optimizer = optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+    )
+
+    # Train with frozen backbone
+    print(f"Training with frozen backbone for {args.freeze_epochs} epochs")
+    for epoch in range(1, args.freeze_epochs + 1):
         metrics = train_epoch(
             model, train_loader, loss_fn, optimizer, device, epoch, args, wandb_run
         )
 
         # Validate model
         if epoch % args.eval_interval == 0:
-            val_metrics = validate(model, val_loader, loss_fn, device, epoch, wandb_run)
-            metrics.update({"val_" + k: v for k, v in val_metrics.items()})
+            val_metrics = validate(
+                model, val_loader, loss_fn, device, epoch, wandb_run, args
+            )
+            metrics.update(val_metrics)
 
-            # Check if this is the best model
-            is_best = val_metrics["val_loss"] < best_val_loss
-            if is_best:
-                best_val_loss = val_metrics["val_loss"]
-        else:
-            is_best = False
+        # Save checkpoint
+        if epoch % args.checkpoint_interval == 0 or epoch == args.freeze_epochs:
+            save_checkpoint(model, optimizer, epoch, metrics, args, wandb_run=wandb_run)
+
+    # Unfreeze backbone for full training
+    for param in model.backbone.parameters():
+        param.requires_grad = True
+    print("Unfrozen backbone for full training")
+
+    return model
+
+
+def train_model(
+    model, train_loader, val_loader, test_loader, loss_fn, args, device, wandb_run=None
+):
+    """
+    Train model
+
+    Args:
+        model: YOLOv3 model
+        train_loader: DataLoader for training data
+        val_loader: DataLoader for validation data
+        test_loader: DataLoader for test data
+        loss_fn: Loss function
+        args: Command line arguments
+        device: Device to use
+        wandb_run: Weights & Biases run object for logging
+    """
+    # First, train with frozen backbone if specified
+    model = train_with_frozen_backbone(
+        model, train_loader, val_loader, loss_fn, args, device, wandb_run
+    )
+
+    # Create optimizer for full training
+    if args.freeze_backbone and args.freeze_epochs > 0:
+        # Reset learning rate after unfreezing
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=args.learning_rate / 10,  # Use lower learning rate after unfreezing
+            weight_decay=args.weight_decay,
+        )
+        # Create learning rate scheduler for remaining epochs
+        lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=args.epochs - args.freeze_epochs,
+            eta_min=args.learning_rate / 100,
+        )
+        start_epoch = args.freeze_epochs + 1
+    else:
+        # No frozen training, train everything from scratch
+        optimizer = optim.Adam(
+            model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+        )
+        # Create learning rate scheduler for all epochs
+        lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=args.epochs,
+            eta_min=args.learning_rate / 100,
+        )
+        start_epoch = 1
+
+    # Initialize best validation metrics
+    best_val_loss = float("inf")
+    best_val_mAP = 0.0
+
+    # Main training loop
+    for epoch in range(start_epoch, args.epochs + 1):
+        # Train one epoch
+        train_metrics = train_epoch(
+            model, train_loader, loss_fn, optimizer, device, epoch, args, wandb_run
+        )
+
+        # Validate model
+        val_metrics = validate(
+            model, val_loader, loss_fn, device, epoch, wandb_run, args
+        )
+
+        # Check if this is the best model
+        is_best_loss = val_metrics["val_loss"] < best_val_loss
+        if is_best_loss:
+            best_val_loss = val_metrics["val_loss"]
+
+        is_best_mAP = val_metrics.get("val_mAP", 0) > best_val_mAP
+        if is_best_mAP:
+            best_val_mAP = val_metrics.get("val_mAP", 0)
+
+        is_best = is_best_mAP or is_best_loss
 
         # Save checkpoint
         if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
-            save_checkpoint(model, optimizer, epoch, metrics, args, is_best, wandb_run)
+            save_checkpoint(
+                model,
+                optimizer,
+                epoch,
+                {**train_metrics, **val_metrics},
+                args,
+                is_best,
+                wandb_run,
+            )
 
         # Update learning rate
         lr_scheduler.step()
@@ -621,11 +808,43 @@ def main():
     )
     print(f"Training completed. Saved final model to {final_path}")
 
+    # Run final evaluation on test set if available
+    if test_loader:
+        print("Running final evaluation on test set...")
+        test_metrics = validate(
+            model, test_loader, loss_fn, device, args.epochs, wandb_run, args
+        )
+        print(f"Test set results: mAP: {test_metrics.get('val_mAP', 0):.4f}")
+
+        # Save test results
+        test_results_path = os.path.join(args.output_dir, "test_results.pt")
+        torch.save(test_metrics, test_results_path)
+        print(f"Saved test results to {test_results_path}")
+
+
+def main():
+    """Main training function"""
+    # Parse arguments
+    args = parse_args()
+
+    # Set up environment
+    args, device, wandb_run = setup_environment(args)
+
+    # Create datasets and dataloaders
+    train_loader, val_loader, test_loader = create_datasets(args)
+
+    # Create model, loss function, and optimizer
+    model, loss_fn, optimizer, lr_scheduler = create_model(args, device, wandb_run)
+
+    # Train model
+    train_model(
+        model, train_loader, val_loader, test_loader, loss_fn, args, device, wandb_run
+    )
+
     # Finish W&B run
     if wandb_run:
         wandb_run.finish()
 
 
 if __name__ == "__main__":
-    main()
     main()
