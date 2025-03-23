@@ -2,7 +2,11 @@ import pytest
 import torch
 
 from models.vanilla.transformer.config import TransformerConfig
-from models.vanilla.transformer.layers import FeedForward, MultiHeadAttention, TransformerLayer
+from models.vanilla.transformer.layers import (
+    FeedForward,
+    MultiHeadAttention,
+    TransformerLayer,
+)
 from models.vanilla.transformer.transformer import Transformer, TransformerEmbeddings
 
 
@@ -29,7 +33,9 @@ def seq_length():
 
 def test_embeddings(transformer_config, batch_size, seq_length):
     embeddings = TransformerEmbeddings(transformer_config)
-    input_ids = torch.randint(0, transformer_config.vocab_size, (batch_size, seq_length))
+    input_ids = torch.randint(
+        0, transformer_config.vocab_size, (batch_size, seq_length)
+    )
 
     output = embeddings(input_ids)
 
@@ -81,10 +87,14 @@ def transformer_model(transformer_config):
 
 
 def test_forward(transformer_model, transformer_config, batch_size, seq_length):
-    input_ids = torch.randint(0, transformer_config.vocab_size, (batch_size, seq_length))
+    input_ids = torch.randint(
+        0, transformer_config.vocab_size, (batch_size, seq_length)
+    )
     attention_mask = torch.ones(batch_size, seq_length)
 
-    outputs, attention_probs = transformer_model(input_ids, attention_mask=attention_mask)
+    outputs, attention_probs = transformer_model(
+        input_ids, attention_mask=attention_mask
+    )
 
     assert outputs.shape == (batch_size, seq_length, transformer_config.hidden_size)
     assert len(attention_probs) == transformer_config.num_hidden_layers
@@ -97,13 +107,19 @@ def test_forward(transformer_model, transformer_config, batch_size, seq_length):
 
 
 def test_attention_mask(transformer_model, transformer_config, batch_size, seq_length):
-    input_ids = torch.randint(0, transformer_config.vocab_size, (batch_size, seq_length))
+    input_ids = torch.randint(
+        0, transformer_config.vocab_size, (batch_size, seq_length)
+    )
     attention_mask = torch.zeros(batch_size, seq_length)
     attention_mask[:, :5] = 1  # Only attend to first 5 tokens
 
-    outputs, attention_probs = transformer_model(input_ids, attention_mask=attention_mask)
+    outputs, attention_probs = transformer_model(
+        input_ids, attention_mask=attention_mask
+    )
 
     # Check that attention probabilities are zero for masked positions
     for layer_attention in attention_probs:
         masked_attention = layer_attention[:, :, :, 5:]
-        assert torch.allclose(masked_attention, torch.zeros_like(masked_attention), atol=1e-4)
+        assert torch.allclose(
+            masked_attention, torch.zeros_like(masked_attention), atol=1e-4
+        )

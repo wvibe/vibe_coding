@@ -4,7 +4,11 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers.generation.utils import GenerationMixin
-from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput, Seq2SeqModelOutput
+from transformers.modeling_outputs import (
+    BaseModelOutput,
+    Seq2SeqLMOutput,
+    Seq2SeqModelOutput,
+)
 from transformers.models.t5.modeling_t5 import T5PreTrainedModel, T5Stack
 
 from models.hf.WT5.configuration import WT5Config
@@ -89,7 +93,9 @@ class WT5Model(T5PreTrainedModel):
             A Seq2SeqModelOutput or a tuple of tensors
         """
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
@@ -121,9 +127,9 @@ class WT5Model(T5PreTrainedModel):
             torch.cuda.set_device(self.decoder.first_device)
 
         if past_key_values is not None:
-            assert (
-                decoder_input_ids is not None
-            ), "Decoder input IDs must be provided for decoding with past key values"
+            assert decoder_input_ids is not None, (
+                "Decoder input IDs must be provided for decoding with past key values"
+            )
 
         # If decoding with past key value states, only the last tokens should be given as input
         if past_key_values is not None:
@@ -264,7 +270,9 @@ class WT5ForConditionalGeneration(T5PreTrainedModel, GenerationMixin):
             A Seq2SeqLMOutput or a tuple of tensors
         """
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
@@ -295,7 +303,11 @@ class WT5ForConditionalGeneration(T5PreTrainedModel, GenerationMixin):
         if self.model_parallel:
             torch.cuda.set_device(self.decoder.first_device)
 
-        if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+        if (
+            labels is not None
+            and decoder_input_ids is None
+            and decoder_inputs_embeds is None
+        ):
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
 
@@ -308,7 +320,9 @@ class WT5ForConditionalGeneration(T5PreTrainedModel, GenerationMixin):
             if attention_mask is not None:
                 attention_mask = attention_mask.to(self.decoder.first_device)
             if decoder_attention_mask is not None:
-                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
+                decoder_attention_mask = decoder_attention_mask.to(
+                    self.decoder.first_device
+                )
 
         # Decode
         decoder_outputs = self.decoder(
