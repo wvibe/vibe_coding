@@ -265,7 +265,7 @@ class YOLOv3(nn.Module):
 
     def _non_max_suppression(self, detections, num_classes, nms_threshold):
         """
-        Apply Non-Maximum Suppression to detections
+        Apply class-aware Non-Maximum Suppression to detections using a vectorized approach
 
         Args:
             detections: Tensor of detections
@@ -281,53 +281,82 @@ class YOLOv3(nn.Module):
         if detections.shape[0] == 0:
             return detections
 
-        # Get coordinates
-        x1 = detections[:, 1]
-        y1 = detections[:, 2]
-        x2 = detections[:, 3]
-        y2 = detections[:, 4]
+        # Initialize storage for kept detections
+        kept_detections = []
 
-        # Calculate area of detections
-        areas = (x2 - x1) * (y2 - y1)
+        # Process each class separately to perform class-aware NMS
+        # This avoids comparing boxes across different classes
+        for class_id in range(num_classes):
+            # Get detections for this class
+            class_mask = detections[:, 6] == class_id
+            class_detections = detections[class_mask]
 
-        # Sort by confidence
-        scores = detections[:, 5]
-        _, order = scores.sort(descending=True)
+            if class_detections.shape[0] == 0:
+                continue
 
-        keep = []
-        while order.numel() > 0:
-            # Pick the one with highest confidence
-            i = order[0].item()
-            keep.append(i)
+            # Get coordinates and scores for this class
+            boxes = class_detections[:, 1:5]  # [x1, y1, x2, y2]
+            scores = class_detections[:, 5]   # confidence scores
 
-            # If only one detection left, break
-            if order.numel() == 1:
-                break
+            # Calculate areas once (vectorized)
+            areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
 
-            # Calculate IoU with the rest
-            xx1 = torch.max(x1[i], x1[order[1:]])
-            yy1 = torch.max(y1[i], y1[order[1:]])
-            xx2 = torch.min(x2[i], x2[order[1:]])
-            yy2 = torch.min(y2[i], y2[order[1:]])
+            # Sort by confidence (descending)
+            _, order = scores.sort(descending=True)
 
-            # Calculate intersection area
-            inter_area = torch.clamp(xx2 - xx1, min=0) * torch.clamp(yy2 - yy1, min=0)
+            # Perform NMS
+            keep = []
+            while order.numel() > 0:
+                # Pick the one with highest confidence
+                i = order[0].item()
+                keep.append(i)
 
-            # Calculate union area
-            union_area = areas[i] + areas[order[1:]] - inter_area
+                # If only one detection left, break
+                if order.numel() == 1:
+                    break
 
-            # Calculate IoU
-            iou = inter_area / (union_area + 1e-16)
+                # Calculate IoUs with remaining boxes (vectorized)
+                # Get the current box
+                curr_box = boxes[i]
 
-            # Keep detections with IoU less than threshold
-            mask = iou <= nms_threshold
-            if not mask.any():
-                break
+                # Get remaining boxes
+                rest_boxes = boxes[order[1:]]
 
-            # Update order for next iteration
-            order = order[1:][mask]
+                # Calculate intersection dimensions (vectorized)
+                inter_x1 = torch.max(curr_box[0], rest_boxes[:, 0])
+                inter_y1 = torch.max(curr_box[1], rest_boxes[:, 1])
+                inter_x2 = torch.min(curr_box[2], rest_boxes[:, 2])
+                inter_y2 = torch.min(curr_box[3], rest_boxes[:, 3])
 
-        return detections[keep]
+                # Calculate intersection area (vectorized)
+                w = torch.clamp(inter_x2 - inter_x1, min=0)
+                h = torch.clamp(inter_y2 - inter_y1, min=0)
+                inter_area = w * h
+
+                # Calculate union area (vectorized)
+                curr_area = areas[i]
+                rest_areas = areas[order[1:]]
+                union_area = curr_area + rest_areas - inter_area
+
+                # Calculate IoU (vectorized)
+                iou = inter_area / (union_area + 1e-16)
+
+                # Keep detections with IoU less than threshold (vectorized)
+                mask = iou <= nms_threshold
+                if not mask.any():
+                    break
+
+                order = order[1:][mask]
+
+            # Add kept detections for this class
+            kept_detections.append(class_detections[keep])
+
+        # Combine all kept detections
+        if kept_detections:
+            return torch.cat(kept_detections, dim=0)
+        else:
+            # Return empty tensor with correct shape
+            return torch.zeros((0, 7), device=detections.device)
 
     def load_state_dict(self, state_dict, strict=True):
         """

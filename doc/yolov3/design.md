@@ -34,13 +34,15 @@ project_root/
 │   │   │   ├── loss.py             # Loss functions
 │   │   │   ├── train.py            # Training script
 │   │   │   ├── inference.py        # Inference script
+│   │   │   ├── evaluate.py         # Evaluation metrics and functions
 │   │   │   ├── model_outputs/      # Directory for model checkpoints
 │   │   │   │   └── <run_name>/     # Run-specific subdirectories
 │   │   │   └── tests/              # Unit tests for YOLOv3
 │   │   │       ├── __init__.py
 │   │   │       ├── test_darknet.py
 │   │   │       ├── test_yolov3.py
-│   │   │       └── test_loss.py
+│   │   │       ├── test_loss.py
+│   │   │       └── test_evaluate.py # Tests for evaluation metrics
 ├── wandb/                          # Weights & Biases logging directory
 ├── notebooks/                      # Jupyter notebooks for verification
 │   ├── yolov3/
@@ -52,7 +54,7 @@ project_root/
 │   ├── __init__.py
 │   ├── visualization.py            # Visualization tools
 │   └── metrics.py                  # Evaluation metrics
-├── .env                            # Environment variables 
+├── .env                            # Environment variables
 ├── requirements.txt                # Project dependencies
 └── doc/                            # Documentation
     └── yolov3/                     # YOLOv3 specific documentation
@@ -121,7 +123,7 @@ The YOLOv3 loss function consists of three components:
 - **Classes**: 20 object categories
 - **Annotations**: XML format with bounding boxes
 - **Splits**: Standard train/val split (trainval/test)
-- **Data Versions**: 
+- **Data Versions**:
   - VOC2007: 2,501 training images, 2,510 validation images
   - VOC2012: 5,717 training images, 5,823 validation images
   - Combined: Option to train on both for better performance
@@ -172,13 +174,13 @@ The YOLOv3 loss function consists of three components:
 - Create data loaders with custom collate functions
 
 ### 4.4 Training Infrastructure
-- **Run Management**: 
+- **Run Management**:
   - Each training run has a unique name (user-defined or timestamp-based)
   - Checkpoints stored in run-specific directories to prevent overwriting
 - **Two-stage training approach**:
   1. Freeze backbone and train detection heads
   2. Fine-tune entire network
-- **Learning rate schedule**: 
+- **Learning rate schedule**:
   - Cosine annealing from initial LR to LR/100
   - Lower learning rate after unfreezing backbone
 - **Checkpointing**:
@@ -273,6 +275,51 @@ The YOLOv3 loss function consists of three components:
 - OpenCV
 - matplotlib, seaborn for visualization
 - pytest for testing
-- Weights & Biases for experiment tracking 
+- Weights & Biases for experiment tracking
 - python-dotenv for environment management
-- PIL for image processing 
+- PIL for image processing
+
+## 10. Hardware Support and Optimization
+
+### 10.1 Device Support
+- **CUDA**: Primary GPU acceleration for NVIDIA GPUs
+- **MPS**: Metal Performance Shaders support for Apple Silicon (M1/M2/M3) Macs
+- **CPU**: Fallback for systems without GPU acceleration
+- **Automatic device selection**: Runtime detection of available hardware with priority order (CUDA > MPS > CPU)
+
+### 10.2 Evaluation Module
+- **Implemented in**: `models/vanilla/yolov3/evaluate.py`
+- **Key components**:
+  - `calculate_iou`: Optimized IoU calculation between bounding boxes
+  - `calculate_ap`: 11-point interpolation for Average Precision calculation
+  - `calculate_mean_ap`: mAP calculation across all classes
+  - `collect_predictions`: Efficient batch processing of model predictions
+  - `evaluate_model`: Main evaluation function that orchestrates the process
+
+### 10.3 Optimization Strategies
+- **Efficient Non-Maximum Suppression**:
+  - Class-aware NMS to avoid comparing boxes across different classes
+  - Vectorized operations for faster processing on GPU/MPS
+  - Early returns for edge cases to avoid unnecessary computation
+
+- **Tiered Confidence Thresholds**:
+  - Higher threshold (`conf_threshold=0.5`) for inference to reduce false positives
+  - Lower threshold (`eval_conf_threshold=0.1`) for evaluation to improve recall
+
+- **IoU Calculation Improvements**:
+  - Direct arithmetic operations instead of tensor manipulation where appropriate
+  - Minimized tensor creation and reshaping operations
+  - Numerical stability improvements for edge cases
+
+### 10.4 Validation Process
+- **Streamlined output**: Simplified console output with essential metrics
+- **Comprehensive logging**: Detailed metrics in Weights & Biases
+- **Integration with evaluation module**: Leverages the standalone evaluation functionality
+
+## 11. Testing Strategy
+
+### 11.1 Unit Tests for Evaluation
+- **test_evaluate.py**: Test evaluation metrics
+  - Test IoU calculation with various box configurations
+  - Test AP calculation with synthetic precision-recall curves
+  - Test mAP calculation with mock predictions and ground truths
