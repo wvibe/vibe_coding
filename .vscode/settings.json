@@ -1,24 +1,41 @@
 {
+    // Python and notebook settings
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
         "editor.wordWrapColumn": 88,
-        "editor.rulers": [88]
+        "editor.rulers": [88],
+        "diffEditor.ignoreTrimWhitespace": false
     },
+    "[jupyter][ipynb]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.wordWrapColumn": 100,
+        "editor.rulers": [100],
+        "diffEditor.ignoreTrimWhitespace": false
+    },
+
+    // Global settings
     "editor.codeActionsOnSave": {
-        "source.organizeImports": "explicit",
+        "source.organizeImports.ruff": "explicit",
         "source.fixAll.ruff": "explicit"
     },
-    "python.testing.unittestArgs": [
-        "-v",
-        "-s",
-        "./models",
-        "-p",
-        "*test*.py"
-    ],
+    "files.trimTrailingWhitespace": true,
+
+    // Python testing settings
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestArgs": [
-        "models"
-    ]
+    "python.testing.pytestArgs": ["models"],
+
+    // Ruff configuration
+    "ruff.lineLength": 88,
+    "ruff.lint.select": ["C", "E", "F", "W", "W291", "W293"],
+
+    // Python diagnostics
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportUnboundVariable": "none",
+        "reportImplicitStringConcatenation": "none",
+        "reportUnusedVariable": "information",
+        "reportUnusedImport": "information"
+    }
 }
