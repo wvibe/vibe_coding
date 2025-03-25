@@ -18,17 +18,19 @@ echo "YOLOv3 DEBUG MODE - Testing Pipeline on Small Dataset"
 echo "=========================================================="
 echo "- Running with ${PERCENT} of dataset (${PERCENT}% of all images)"
 echo "- Using smaller input size for faster processing (224px)"
+echo "- Using pretrained Darknet53 backbone weights"
 echo "- Testing all components: train, validate, evaluate"
 echo "=========================================================="
 
-# Run the training script with subset percentage parameter
+# Run the training script with subset percentage parameter and pretrained weights
 python -m models.vanilla.yolov3.train \
   --epochs 1 \
   --batch-size 4 \
   --input-size 224 \
   --workers 2 \
-  --run-name "debug_subset_${PERCENT}" \
+  --run-name "debug_pretrained_${PERCENT}" \
   --subset-percent "${PERCENT}" \
+  --pretrained \
   --fast-dev-run \
   --debug-mode \
   --no-wandb

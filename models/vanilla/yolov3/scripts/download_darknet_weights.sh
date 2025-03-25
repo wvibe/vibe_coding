@@ -2,6 +2,17 @@
 
 # Script to download and convert Darknet53 weights
 # The weights are originally trained on ImageNet classification
+#
+# Note: If you're behind a firewall or in regions with restricted internet access (like China),
+# you may need to set up a proxy before running this script:
+# export http_proxy=http://your.proxy.address:port
+# export https_proxy=http://your.proxy.address:port
+# export no_proxy=localhost,127.0.0.1
+#
+# Example:
+# export http_proxy=http://192.168.0.250:10809
+# export https_proxy=http://192.168.0.250:10809
+# export no_proxy=192.168.0.0/16,localhost,127.0.0.1
 
 # Change to project root directory to ensure .env file is accessible
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,35 +30,41 @@ mkdir -p "${WEIGHTS_DIR}"
 if [ ! -f "${DARKNET53_WEIGHTS}" ]; then
     echo "Downloading Darknet53 weights..."
 
-    # Use Python to download the weights
-    python3 -c '
-import os
-import requests
+    # Use wget directly for simple download
+    echo "Downloading weights to ${WEIGHTS_DIR}/darknet53.conv.74..."
+
+    # Try to download using wget with proxy settings
+    wget -O "${WEIGHTS_DIR}/darknet53.conv.74" "https://pjreddie.com/media/files/darknet53.conv.74" || {
+        echo "Failed to download using wget, trying with curl..."
+        curl -L "https://pjreddie.com/media/files/darknet53.conv.74" -o "${WEIGHTS_DIR}/darknet53.conv.74"
+    }
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to download weights. Please check your internet connection or proxy settings."
+        exit 1
+    fi
+
+    echo "Converting weights to PyTorch format..."
+    # Create a simple standalone Python script for conversion
+    python - << END
 import torch
 import numpy as np
-from models.vanilla.yolov3.darknet import Darknet53
+import sys
+import os
 
-def download_file(url, filename):
-    print(f"Downloading {url} to {filename}")
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    total_size = int(response.headers.get("content-length", 0))
-    block_size = 8192
-    downloaded = 0
+# Add the project root to the Python path
+sys.path.insert(0, "${PROJECT_ROOT}")
 
-    with open(filename, "wb") as f:
-        for data in response.iter_content(block_size):
-            downloaded += len(data)
-            f.write(data)
-            done = int(50 * downloaded / total_size)
-            print(f"\rProgress: [{"=" * done}{" " * (50-done)}] {downloaded}/{total_size} bytes", end="")
-    print("\nDownload completed")
+try:
+    from models.vanilla.yolov3.darknet import Darknet53
 
-def convert_darknet53_weights(weights_path, output_path):
     # Create model
     model = Darknet53()
 
     # Load weights
+    weights_path = "${WEIGHTS_DIR}/darknet53.conv.74"
+    output_path = "${DARKNET53_WEIGHTS}"
+
     with open(weights_path, "rb") as f:
         # Skip header
         header = np.fromfile(f, dtype=np.int32, count=3)
@@ -100,19 +117,21 @@ def convert_darknet53_weights(weights_path, output_path):
     torch.save(model.state_dict(), output_path)
     print(f"Saved converted weights to {output_path}")
 
-# Download and convert weights
-weights_path = "'${WEIGHTS_DIR}/darknet53.weights'"
-try:
-    download_file("https://pjreddie.com/media/files/darknet53.conv.74", weights_path)
-    convert_darknet53_weights(weights_path, "'${DARKNET53_WEIGHTS}'")
-    os.remove(weights_path)  # Remove the original weights file
+    # Remove the original weights file to save space
+    os.remove(weights_path)
     print("Conversion completed successfully")
+
 except Exception as e:
-    print(f"Error during download or conversion: {e}")
-'
+    print(f"Error during conversion: {e}")
+    sys.exit(1)
+END
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to convert weights to PyTorch format."
+        exit 1
+    fi
+
+    echo "Darknet53 weights successfully downloaded and converted to ${DARKNET53_WEIGHTS}"
 else
     echo "Darknet53 weights already exist at ${DARKNET53_WEIGHTS}"
 fi
-
-# Make the script executable
-chmod +x "${SCRIPT_DIR}/download_darknet_weights.sh"
