@@ -25,7 +25,11 @@
     // Python testing settings
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestArgs": ["models"],
+    "python.testing.nosetestsEnabled": false,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
 
     // Ruff configuration
     "ruff.lineLength": 88,
@@ -37,5 +41,12 @@
         "reportImplicitStringConcatenation": "none",
         "reportUnusedVariable": "information",
         "reportUnusedImport": "information"
-    }
+    },
+
+    // Test Explorer UI settings
+    "testExplorer.codeLens": true,
+    "testExplorer.addToEditorContextMenu": true,
+    "testExplorer.showOnRun": true,
+    "testExplorer.sort": "byLocation",
+    "testExplorer.mergeSuites": true
 }

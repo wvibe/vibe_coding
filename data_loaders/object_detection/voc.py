@@ -4,16 +4,27 @@ Pascal VOC dataset loader for object detection
 
 import os
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Optional, Tuple
 
+import albumentations as A
+import numpy as np
 import torch
+from albumentations.pytorch import ToTensorV2
 from dotenv import load_dotenv
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
 
 # Load environment variables
 load_dotenv()
-DATA_ROOT = os.getenv("DATA_ROOT", "/Users/wmu/vibe/data")
+
+
+def get_voc_root() -> str:
+    """Get VOC dataset root path from environment variables"""
+    data_root = os.getenv("DATA_ROOT", "data")
+    voc_root = os.getenv("VOC_ROOT")
+    if voc_root is None:
+        voc_root = os.path.join(data_root, "VOCdevkit")
+    return voc_root
 
 
 class PascalVOCDataset(Dataset):
@@ -23,20 +34,27 @@ class PascalVOCDataset(Dataset):
     Loads Pascal VOC dataset from local files
     """
 
-    def __init__(self, split="train", transform=None, data_dir=None, year="2012"):
+    def __init__(
+        self,
+        years: List[str] = ["2007"],
+        split: str = "train",
+        transform: Optional[A.Compose] = None,
+        data_dir: str = get_voc_root(),
+    ):
         """
         Initialize Pascal VOC dataset
 
         Args:
-            split: Dataset split ('train', 'val', 'test')
-            transform: Optional data augmentation transforms
-            data_dir: Directory containing VOC dataset (if None, uses default path)
-            year: Dataset year ('2007' or '2012')
+            years: List of dataset years to load (e.g., ["2007"] or ["2007", "2012"])
+            split: Dataset split ('train', 'val', 'test', 'trainval')
+            transform: Optional custom data augmentation transforms
+            data_dir: Root directory containing VOC datasets (defaults to VOC_ROOT from .env)
         """
         super().__init__()
+        self.years = years
         self.split = split
-        self.transform = transform
-        self.year = year
+        self.custom_transform = transform
+        self.data_dir = data_dir
 
         # Class names for Pascal VOC
         self.class_names = [
@@ -62,54 +80,92 @@ class PascalVOCDataset(Dataset):
             "tvmonitor",
         ]
         self.num_classes = len(self.class_names)
-
-        # Class name to index mapping
         self.class_to_idx = {name: i for i, name in enumerate(self.class_names)}
 
-        # Set default data directory if not provided
-        if data_dir is None:
-            # Use the correct path for the VOC dataset from environment variable
-            self.data_dir = os.path.join(DATA_ROOT, "VOCdevkit", f"VOC{year}")
-        else:
-            self.data_dir = data_dir
-
-        # Default transformations if none provided
-        if self.transform is None:
-            self.transform = transforms.Compose(
+        # Set up transforms based on split
+        if self.custom_transform is not None:
+            self.transform = self.custom_transform
+        elif split in ["train", "trainval"]:
+            # Training transforms with augmentation
+            self.transform = A.Compose(
                 [
-                    transforms.Resize((416, 416)),
-                    transforms.ToTensor(),
-                    transforms.Normalize(
-                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                    ),
-                ]
+                    A.LongestMaxSize(max_size=416),
+                    A.PadIfNeeded(min_height=416, min_width=416, border_mode=0),
+                    A.HorizontalFlip(p=0.5),
+                    A.RandomBrightnessContrast(p=0.2),
+                    A.ColorJitter(brightness=0.1, contrast=0.1, p=0.3),
+                    A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                    ToTensorV2(),
+                ],
+                bbox_params=A.BboxParams(format="yolo", label_fields=["labels"]),
+            )
+        else:
+            # Validation/Test transforms without augmentation
+            self.transform = A.Compose(
+                [
+                    A.LongestMaxSize(max_size=416),
+                    A.PadIfNeeded(min_height=416, min_width=416, border_mode=0),
+                    A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                    ToTensorV2(),
+                ],
+                bbox_params=A.BboxParams(format="yolo", label_fields=["labels"]),
             )
 
         # Load dataset
-        self._load_dataset()
+        self.image_info = self._load_dataset()
 
-    def _load_dataset(self):
-        """Load the dataset from disk"""
-        # Get list of image IDs from the ImageSets directory
-        split_file = os.path.join(
-            self.data_dir, "ImageSets", "Main", f"{self.split}.txt"
-        )
+    def _load_dataset(self) -> List[Dict[str, str]]:
+        """
+        Load the dataset from disk for all specified years
 
-        if not os.path.exists(split_file):
-            raise FileNotFoundError(
-                f"Split file not found: {split_file}. "
-                f"Make sure you have downloaded the VOC{self.year} dataset."
-            )
+        Returns:
+            List of dicts containing image info (year, id, image_path, annotation_path)
+        """
+        image_info = []
 
-        with open(split_file, "r") as f:
-            self.image_ids = [line.strip() for line in f.readlines()]
+        for year in self.years:
+            voc_dir = os.path.join(self.data_dir, f"VOC{year}")
+            split_file = os.path.join(voc_dir, "ImageSets", "Main", f"{self.split}.txt")
 
-        print(
-            f"Loaded {len(self.image_ids)} images for {self.split} split from VOC{self.year}"
-        )
+            if not os.path.exists(split_file):
+                raise FileNotFoundError(
+                    f"Split file not found: {split_file}. "
+                    f"Make sure you have downloaded the VOC{year} dataset."
+                )
 
-    def _parse_voc_xml(self, xml_file):
-        """Parse Pascal VOC XML annotation file"""
+            with open(split_file, "r") as f:
+                image_ids = [line.strip() for line in f.readlines()]
+
+            for image_id in image_ids:
+                info = {
+                    "year": year,
+                    "id": image_id,
+                    "image_path": os.path.join(
+                        voc_dir, "JPEGImages", f"{image_id}.jpg"
+                    ),
+                    "annotation_path": os.path.join(
+                        voc_dir, "Annotations", f"{image_id}.xml"
+                    ),
+                }
+                image_info.append(info)
+
+            print(f"Loaded {len(image_ids)} images from VOC{year} {self.split} split")
+
+        print(f"Total images loaded: {len(image_info)}")
+        return image_info
+
+    def _parse_voc_xml(self, xml_file: str) -> Tuple[List[List[float]], List[int]]:
+        """
+        Parse Pascal VOC XML annotation file
+
+        Args:
+            xml_file: Path to XML annotation file
+
+        Returns:
+            Tuple of (boxes, labels) where:
+                boxes: List of [x_center, y_center, width, height] (normalized)
+                labels: List of class indices
+        """
         tree = ET.parse(xml_file)
         root = tree.getroot()
 
@@ -123,15 +179,6 @@ class PascalVOCDataset(Dataset):
 
         # Process each object
         for obj in root.findall("object"):
-            # Skip difficult objects if desired
-            difficult = (
-                int(obj.find("difficult").text)
-                if obj.find("difficult") is not None
-                else 0
-            )
-            # if difficult == 1 and not self.keep_difficult:
-            #     continue
-
             # Get class name and convert to index
             name = obj.find("name").text
             if name not in self.class_to_idx:
@@ -163,11 +210,11 @@ class PascalVOCDataset(Dataset):
 
         return boxes, labels
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the number of samples in the dataset"""
-        return len(self.image_ids)
+        return len(self.image_info)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Get a sample from the dataset
 
@@ -179,35 +226,38 @@ class PascalVOCDataset(Dataset):
                 'image': The image tensor
                 'boxes': Bounding boxes in [x, y, w, h] format (normalized 0-1)
                 'labels': Class labels
-                'image_id': Image ID
+                'image_id': Image ID in format 'YEAR/ID' (e.g., '2007/000001')
         """
-        image_id = self.image_ids[idx]
+        info = self.image_info[idx]
 
         # Load image
-        image_path = os.path.join(self.data_dir, "JPEGImages", f"{image_id}.jpg")
-        image = Image.open(image_path).convert("RGB")
+        image = Image.open(info["image_path"]).convert("RGB")
+        image_np = np.array(image)
 
         # Load annotations
-        annotation_path = os.path.join(self.data_dir, "Annotations", f"{image_id}.xml")
-        boxes, labels = self._parse_voc_xml(annotation_path)
+        boxes, labels = self._parse_voc_xml(info["annotation_path"])
 
         # Handle empty boxes
         if len(boxes) == 0:
-            # Create a dummy box to avoid errors
             boxes = [[0.5, 0.5, 0.1, 0.1]]
             labels = [0]  # First class
 
-        # Convert to tensor
-        boxes = torch.tensor(boxes, dtype=torch.float32)
-        labels = torch.tensor(labels, dtype=torch.int64)
+        # Apply transforms using albumentations
+        transformed = self.transform(image=image_np, bboxes=boxes, labels=labels)
 
-        # Apply transforms to the image
-        if self.transform:
-            image = self.transform(image)
+        # Get transformed data
+        image = transformed["image"]  # Already a tensor from ToTensorV2
+        boxes = torch.tensor(transformed["bboxes"], dtype=torch.float32)
+        labels = torch.tensor(transformed["labels"], dtype=torch.int64)
+
+        # Create image_id in format 'YEAR/ID'
+        image_id = f"{info['year']}/{info['id']}"
 
         return {"image": image, "boxes": boxes, "labels": labels, "image_id": image_id}
 
-    def collate_fn(self, batch):
+    def collate_fn(
+        self, batch: List[Dict[str, torch.Tensor]]
+    ) -> Dict[str, torch.Tensor]:
         """
         Custom collate function for batching samples
 

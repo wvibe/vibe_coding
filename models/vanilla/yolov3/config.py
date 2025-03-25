@@ -50,9 +50,9 @@ class YOLOv3Config:
     # Multiscale detection
     scales: List[int] = (13, 26, 52)  # Output sizes for 416x416 input
 
-    # Loss function weights
-    lambda_coord: float = 5.0  # Coordinate loss weight
-    lambda_noobj: float = 0.5  # No object loss weight
+    # Loss function weights - adjusted for better training
+    lambda_coord: float = 10.0  # Increased from 5.0 to emphasize localization accuracy
+    lambda_noobj: float = 1.0  # Increased from 0.5 to reduce false positives
 
 
 # Default configuration
