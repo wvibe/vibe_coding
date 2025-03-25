@@ -34,9 +34,7 @@ class FeaturePyramidNetwork(nn.Module):
         self.upsample1 = nn.Upsample(scale_factor=2, mode="nearest")
 
         # Process concatenated feature map (26x26)
-        self.conv2_1 = ConvBlock(
-            256 + 512, 256, kernel_size=1
-        )  # 512 from route_2 of Darknet
+        self.conv2_1 = ConvBlock(256 + 512, 256, kernel_size=1)  # 512 from route_2 of Darknet
         self.conv2_2 = ConvBlock(256, 512, kernel_size=3)
         self.conv2_3 = ConvBlock(512, 256, kernel_size=1)
         self.conv2_4 = ConvBlock(256, 512, kernel_size=3)
@@ -49,9 +47,7 @@ class FeaturePyramidNetwork(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2, mode="nearest")
 
         # Process concatenated feature map (52x52)
-        self.conv3_1 = ConvBlock(
-            128 + 256, 128, kernel_size=1
-        )  # 256 from route_1 of Darknet
+        self.conv3_1 = ConvBlock(128 + 256, 128, kernel_size=1)  # 256 from route_1 of Darknet
         self.conv3_2 = ConvBlock(128, 256, kernel_size=3)
         self.conv3_3 = ConvBlock(256, 128, kernel_size=1)
         self.conv3_4 = ConvBlock(128, 256, kernel_size=3)

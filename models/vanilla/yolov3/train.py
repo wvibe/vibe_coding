@@ -33,7 +33,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 
 from data_loaders.object_detection.voc import PascalVOCDataset
 from models.vanilla.yolov3.config import YOLOv3Config
-from models.vanilla.yolov3.loss import YOLOv3Loss
+from models.vanilla.yolov3.evaluate import evaluate_model
+from models.vanilla.yolov3.loss import (
+    YOLOv3Loss,
+    accumulate_losses,
+    average_losses,
+    calculate_batch_loss,
+)
 from models.vanilla.yolov3.yolov3 import YOLOv3
 
 # Load environment variables
@@ -77,8 +83,8 @@ def parse_args():
         "--year",
         type=str,
         default="2007",
-        choices=["2007"],
-        help="VOC dataset year (default: 2007)",
+        choices=["2007", "2012", "2007,2012"],
+        help=("VOC dataset year(s) (default: 2007, use comma-separated for multiple years)"),
     )
 
     # Model parameters
@@ -91,9 +97,7 @@ def parse_args():
         default=20,
         help="Number of classes (default: 20 for Pascal VOC)",
     )
-    parser.add_argument(
-        "--pretrained", action="store_true", help="Use pretrained backbone weights"
-    )
+    parser.add_argument("--pretrained", action="store_true", help="Use pretrained backbone weights")
     parser.add_argument(
         "--weights",
         type=str,
@@ -108,9 +112,7 @@ def parse_args():
         default=100,
         help="Number of epochs to train (default: 100)",
     )
-    parser.add_argument(
-        "--batch-size", type=int, default=16, help="Batch size (default: 16)"
-    )
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size (default: 16)")
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -184,9 +186,7 @@ def parse_args():
     )
 
     # Other parameters
-    parser.add_argument(
-        "--seed", type=int, default=42, help="Random seed (default: 42)"
-    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     parser.add_argument(
         "--workers",
         type=int,
@@ -198,7 +198,7 @@ def parse_args():
         type=str,
         default="auto",
         choices=["auto", "cuda", "cpu", "mps"],
-        help="Device to use (default: auto - selects CUDA if available, then MPS, then CPU)",
+        help=("Device to use (default: auto - selects CUDA if available, then MPS, then CPU)"),
     )
     parser.add_argument(
         "--iou-threshold",
@@ -210,9 +210,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def train_epoch(
-    model, dataloader, loss_fn, optimizer, device, epoch, args, wandb_run=None
-):
+def train_epoch(model, dataloader, loss_fn, optimizer, device, epoch, args, wandb_run=None):
     """
     Train model for one epoch
 
@@ -232,10 +230,7 @@ def train_epoch(
     model.train()
 
     # Initialize metrics
-    total_loss = 0
-    total_loc_loss = 0
-    total_obj_loss = 0
-    total_cls_loss = 0
+    accumulated_losses = (0.0, 0.0, 0.0, 0.0)  # (total, loc, obj, cls)
     batch_times = []
 
     start_time = time.time()
@@ -263,11 +258,9 @@ def train_epoch(
         loss.backward()
         optimizer.step()
 
-        # Update metrics
-        total_loss += loss.item()
-        total_loc_loss += loss_dict["loc_loss"].item()
-        total_obj_loss += loss_dict["obj_loss"].item()
-        total_cls_loss += loss_dict["cls_loss"].item()
+        # Calculate and accumulate batch losses
+        batch_losses = calculate_batch_loss(loss_dict)
+        accumulated_losses = accumulate_losses(batch_losses, accumulated_losses)
 
         # Calculate batch time
         batch_end = time.time()
@@ -278,10 +271,10 @@ def train_epoch(
         if batch_idx % 10 == 0:
             print(
                 f"Epoch: {epoch} | Batch: {batch_idx}/{len(dataloader)} | "
-                f"Loss: {loss.item():.4f} | "
-                f"Loc Loss: {loss_dict['loc_loss'].item():.4f} | "
-                f"Obj Loss: {loss_dict['obj_loss'].item():.4f} | "
-                f"Cls Loss: {loss_dict['cls_loss'].item():.4f} | "
+                f"Loss: {batch_losses[0]:.4f} | "
+                f"Loc Loss: {batch_losses[1]:.4f} | "
+                f"Obj Loss: {batch_losses[2]:.4f} | "
+                f"Cls Loss: {batch_losses[3]:.4f} | "
                 f"Batch Time: {batch_time:.2f}s"
             )
 
@@ -290,20 +283,17 @@ def train_epoch(
                 wandb_run.log(
                     {
                         "batch": batch_idx + epoch * len(dataloader),
-                        "batch_loss": loss.item(),
-                        "batch_loc_loss": loss_dict["loc_loss"].item(),
-                        "batch_obj_loss": loss_dict["obj_loss"].item(),
-                        "batch_cls_loss": loss_dict["cls_loss"].item(),
+                        "batch_loss": batch_losses[0],
+                        "batch_loc_loss": batch_losses[1],
+                        "batch_obj_loss": batch_losses[2],
+                        "batch_cls_loss": batch_losses[3],
                         "batch_time": batch_time,
                         "learning_rate": optimizer.param_groups[0]["lr"],
                     }
                 )
 
     # Calculate average losses
-    avg_loss = total_loss / len(dataloader)
-    avg_loc_loss = total_loc_loss / len(dataloader)
-    avg_obj_loss = total_obj_loss / len(dataloader)
-    avg_cls_loss = total_cls_loss / len(dataloader)
+    avg_losses = average_losses(accumulated_losses, len(dataloader))
     avg_batch_time = sum(batch_times) / len(batch_times)
 
     # Calculate elapsed time
@@ -312,20 +302,20 @@ def train_epoch(
     # Print epoch summary
     print(
         f"Epoch: {epoch} completed in {time_elapsed:.2f}s | "
-        f"Avg Loss: {avg_loss:.4f} | "
-        f"Avg Loc Loss: {avg_loc_loss:.4f} | "
-        f"Avg Obj Loss: {avg_obj_loss:.4f} | "
-        f"Avg Cls Loss: {avg_cls_loss:.4f} | "
+        f"Avg Loss: {avg_losses['loss']:.4f} | "
+        f"Avg Loc Loss: {avg_losses['loc_loss']:.4f} | "
+        f"Avg Obj Loss: {avg_losses['obj_loss']:.4f} | "
+        f"Avg Cls Loss: {avg_losses['cls_loss']:.4f} | "
         f"Avg Batch Time: {avg_batch_time:.2f}s"
     )
 
-    # Log epoch metrics to W&B
+    # Create metrics dictionary for logging
     metrics = {
         "epoch": epoch,
-        "train_loss": avg_loss,
-        "train_loc_loss": avg_loc_loss,
-        "train_obj_loss": avg_obj_loss,
-        "train_cls_loss": avg_cls_loss,
+        "train_loss": avg_losses["loss"],
+        "train_loc_loss": avg_losses["loc_loss"],
+        "train_obj_loss": avg_losses["obj_loss"],
+        "train_cls_loss": avg_losses["cls_loss"],
         "epoch_time": time_elapsed,
         "avg_batch_time": avg_batch_time,
     }
@@ -334,6 +324,168 @@ def train_epoch(
         wandb_run.log(metrics)
 
     return metrics
+
+
+def _compute_validation_losses(model, dataloader, loss_fn, device):
+    """
+    Compute validation losses on the validation set
+
+    Args:
+        model: YOLOv3 model
+        dataloader: DataLoader for validation data
+        loss_fn: Loss function
+        device: Device to use
+
+    Returns:
+        tuple: (total_loss, total_loc_loss, total_obj_loss, total_cls_loss)
+    """
+    accumulated_losses = (0.0, 0.0, 0.0, 0.0)  # (total, loc, obj, cls)
+
+    progress_bar = tqdm(dataloader, desc="Computing validation loss")
+    for batch_idx, batch in enumerate(progress_bar):
+        # Get batch data
+        images = batch["images"].to(device)
+        targets = {
+            "boxes": [boxes.to(device) for boxes in batch["boxes"]],
+            "labels": [labels.to(device) for labels in batch["labels"]],
+        }
+
+        # Forward pass
+        predictions = model(images)
+
+        # Compute loss
+        loss_dict = loss_fn(predictions, targets)
+
+        # Calculate and accumulate batch losses
+        batch_losses = calculate_batch_loss(loss_dict)
+        accumulated_losses = accumulate_losses(batch_losses, accumulated_losses)
+
+        # Update progress bar
+        progress_bar.set_postfix(
+            {
+                "loss": batch_losses[0],
+                "loc_loss": batch_losses[1],
+                "obj_loss": batch_losses[2],
+                "cls_loss": batch_losses[3],
+            }
+        )
+
+    return accumulated_losses
+
+
+def _visualize_predictions(model, images, targets, detections, dataloader, img_idx):
+    """
+    Create visualization of predictions vs ground truth
+
+    Args:
+        model: YOLOv3 model
+        images: Batch of images
+        targets: Ground truth targets
+        detections: Model predictions
+        dataloader: DataLoader for validation data
+        img_idx: Index of image in batch
+
+    Returns:
+        matplotlib figure: Visualization image
+    """
+    # Prepare image for visualization
+    img = images[img_idx].cpu()
+    # Denormalize image
+    img = img * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    img = img + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    img = (img * 255).byte().permute(1, 2, 0).numpy()
+
+    # Create figure for visualization
+    plt.figure(figsize=(10, 10))
+    plt.imshow(img)
+
+    # Draw ground truth boxes in green
+    for box, label in zip(targets["boxes"][img_idx], targets["labels"][img_idx]):
+        x1, y1, x2, y2 = box.cpu().numpy()
+        rect = patches.Rectangle(
+            (x1, y1),
+            x2 - x1,
+            y2 - y1,
+            linewidth=2,
+            edgecolor="g",
+            facecolor="none",
+        )
+        plt.gca().add_patch(rect)
+        plt.text(
+            x1,
+            y1 - 5,
+            f"GT: {dataloader.dataset.class_names[label]}",
+            color="g",
+        )
+
+    # Draw predicted boxes in red
+    for det in detections[img_idx]:
+        if det.size(0) > 0:  # If there are detections
+            x1, y1, x2, y2, conf, cls_id = det
+            rect = patches.Rectangle(
+                (x1, y1),
+                x2 - x1,
+                y2 - y1,
+                linewidth=2,
+                edgecolor="r",
+                facecolor="none",
+            )
+            plt.gca().add_patch(rect)
+            # Get class name and format prediction text
+            class_name = dataloader.dataset.class_names[int(cls_id)]
+            pred_text = f"Pred: {class_name} {conf:.2f}"
+
+            plt.text(
+                x1,
+                y2 + 15,
+                pred_text,
+                color="r",
+            )
+
+    plt.axis("off")
+    fig = plt
+    return fig
+
+
+def _generate_validation_visualizations(
+    model, dataloader, device, max_batches=4, max_images_per_batch=2
+):
+    """
+    Generate visualizations for validation predictions
+
+    Args:
+        model: YOLOv3 model
+        dataloader: DataLoader for validation data
+        device: Device to use
+        max_batches: Maximum number of batches to visualize
+        max_images_per_batch: Maximum number of images per batch to visualize
+
+    Returns:
+        list: Visualizations as wandb.Image objects
+    """
+    validation_images = []
+
+    for batch_idx, batch in enumerate(dataloader):
+        if batch_idx >= max_batches:
+            break
+
+        # Get batch data
+        images = batch["images"].to(device)
+        targets = {
+            "boxes": [boxes.to(device) for boxes in batch["boxes"]],
+            "labels": [labels.to(device) for labels in batch["labels"]],
+        }
+
+        # Get predictions
+        detections = model.predict(images)
+
+        # Process each image in batch
+        for img_idx in range(min(max_images_per_batch, len(images))):
+            fig = _visualize_predictions(model, images, targets, detections, dataloader, img_idx)
+            validation_images.append(wandb.Image(fig))
+            plt.close()
+
+    return validation_images
 
 
 def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, args=None):
@@ -355,145 +507,60 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
     model.eval()
     start_time = time.time()
 
-    # Initialize metrics
-    total_loss = 0
-    total_loc_loss = 0
-    total_obj_loss = 0
-    total_cls_loss = 0
-
-    # For visualization
-    if wandb_run and epoch is not None and epoch % 5 == 0:  # Log every 5 epochs
-        validation_images = []
-
-    # Evaluate model using the evaluate module
     print("Running validation" + (f" for epoch {epoch}" if epoch is not None else ""))
 
     with torch.no_grad():
-        # Compute loss on validation set
-        progress_bar = tqdm(dataloader, desc="Computing validation loss")
-        for batch_idx, batch in enumerate(progress_bar):
-            # Get batch data
-            images = batch["images"].to(device)
-            targets = {
-                "boxes": [boxes.to(device) for boxes in batch["boxes"]],
-                "labels": [labels.to(device) for labels in batch["labels"]],
-            }
+        # Compute losses on validation set
+        accumulated_losses = _compute_validation_losses(model, dataloader, loss_fn, device)
 
-            # Forward pass
-            predictions = model(images)
+        # Generate visualizations if needed
+        validation_images = []
+        if wandb_run and epoch is not None and epoch % 5 == 0:  # Log every 5 epochs
+            validation_images = _generate_validation_visualizations(model, dataloader, device)
 
-            # Compute loss
-            loss_dict = loss_fn(predictions, targets)
-            loss = loss_dict["loss"]
-
-            # Update metrics
-            total_loss += loss.item()
-            total_loc_loss += loss_dict["loc_loss"].item()
-            total_obj_loss += loss_dict["obj_loss"].item()
-            total_cls_loss += loss_dict["cls_loss"].item()
-
-            # Log predictions for visualization
-            if wandb_run and epoch is not None and epoch % 5 == 0 and batch_idx < 4:
-                # Get predictions
-                detections = model.predict(images)
-
-                # Process each image in batch
-                for img_idx in range(min(2, len(images))):  # Log max 2 images per batch
-                    img = images[img_idx].cpu()
-                    # Denormalize image
-                    img = img * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-                    img = img + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-                    img = (img * 255).byte().permute(1, 2, 0).numpy()
-
-                    # Create figure for visualization
-                    plt.figure(figsize=(10, 10))
-                    plt.imshow(img)
-
-                    # Draw ground truth boxes in green
-                    for box, label in zip(
-                        targets["boxes"][img_idx], targets["labels"][img_idx]
-                    ):
-                        x1, y1, x2, y2 = box.cpu().numpy()
-                        rect = patches.Rectangle(
-                            (x1, y1),
-                            x2 - x1,
-                            y2 - y1,
-                            linewidth=2,
-                            edgecolor="g",
-                            facecolor="none",
-                        )
-                        plt.gca().add_patch(rect)
-                        plt.text(
-                            x1,
-                            y1 - 5,
-                            f"GT: {dataloader.dataset.class_names[label]}",
-                            color="g",
-                        )
-
-                    # Draw predicted boxes in red
-                    for det in detections[img_idx]:
-                        if det.size(0) > 0:  # If there are detections
-                            x1, y1, x2, y2, conf, cls_id = det
-                            rect = patches.Rectangle(
-                                (x1, y1),
-                                x2 - x1,
-                                y2 - y1,
-                                linewidth=2,
-                                edgecolor="r",
-                                facecolor="none",
-                            )
-                            plt.gca().add_patch(rect)
-                            plt.text(
-                                x1,
-                                y2 + 15,
-                                f"Pred: {dataloader.dataset.class_names[int(cls_id)]} {conf:.2f}",
-                                color="r",
-                            )
-
-                    plt.axis("off")
-                    validation_images.append(wandb.Image(plt))
-                    plt.close()
-
-            # Update progress bar
-            progress_bar.set_postfix(
-                {
-                    "loss": loss.item(),
-                    "loc_loss": loss_dict["loc_loss"].item(),
-                    "obj_loss": loss_dict["obj_loss"].item(),
-                    "cls_loss": loss_dict["cls_loss"].item(),
-                }
-            )
+        # Run mAP evaluation if epoch is divisible by 5 or it's the final validation
+        eval_metrics = {}
+        if (epoch is not None and epoch % 5 == 0) or epoch is None:
+            print("Calculating mAP metrics...")
+            iou_threshold = args.iou_threshold if args else 0.5
+            eval_metrics = evaluate_model(model, dataloader, device, iou_threshold)
+            print(f"mAP: {eval_metrics['mAP']:.4f}")
 
     # Calculate average losses
-    num_batches = len(dataloader)
-    avg_loss = total_loss / num_batches
-    avg_loc_loss = total_loc_loss / num_batches
-    avg_obj_loss = total_obj_loss / num_batches
-    avg_cls_loss = total_cls_loss / num_batches
+    avg_losses = average_losses(accumulated_losses, len(dataloader))
 
     # Create metrics dictionary
     metrics = {
-        "val_loss": avg_loss,
-        "val_loc_loss": avg_loc_loss,
-        "val_obj_loss": avg_obj_loss,
-        "val_cls_loss": avg_cls_loss,
+        "val_loss": avg_losses["loss"],
+        "val_loc_loss": avg_losses["loc_loss"],
+        "val_obj_loss": avg_losses["obj_loss"],
+        "val_cls_loss": avg_losses["cls_loss"],
         "val_time": time.time() - start_time,
     }
 
+    # Add mAP metrics if available
+    if eval_metrics:
+        metrics.update(
+            {
+                "val_mAP": eval_metrics["mAP"],
+                "val_iou_threshold": eval_metrics["iou_threshold"],
+            }
+        )
+
+        # Add class AP metrics for tracking per-class performance
+        for class_idx, ap in eval_metrics["class_APs"].items():
+            metrics[f"val_AP_class_{class_idx}"] = ap
+
     # Log validation images to W&B
     if wandb_run and epoch is not None and epoch % 5 == 0:
-        wandb_run.log(
-            {"validation_predictions": validation_images, **metrics, "epoch": epoch}
-        )
+        wandb_run.log({"validation_predictions": validation_images, **metrics, "epoch": epoch})
     elif wandb_run:
         wandb_run.log({**metrics, "epoch": epoch})
 
     return metrics
 
 
-def save_checkpoint(
-    model, optimizer, epoch, metrics, args, is_best=False, wandb_run=None
-):
+def save_checkpoint(model, optimizer, epoch, metrics, args, is_best=False, wandb_run=None):
     """
     Save model checkpoint
 
@@ -514,9 +581,7 @@ def save_checkpoint(
         "config": model.config,
     }
 
-    checkpoint_path = os.path.join(
-        args.output_dir, f"yolov3_checkpoint_epoch_{epoch}.pt"
-    )
+    checkpoint_path = os.path.join(args.output_dir, f"yolov3_checkpoint_epoch_{epoch}.pt")
     torch.save(checkpoint, checkpoint_path)
     print(f"Saved checkpoint to {checkpoint_path}")
 
@@ -592,19 +657,22 @@ def create_datasets(args):
         tuple: train_loader, val_loader, test_loader (None if not requested)
     """
     if args.dataset == "voc":
+        # Parse years into a list
+        years = args.year.split(",")
+
         # Create train dataset
-        train_dataset = PascalVOCDataset(split=args.train_split, year=args.year)
+        train_dataset = PascalVOCDataset(split=args.train_split, years=years)
         train_collate_fn = train_dataset.collate_fn
 
         # Create validation dataset
-        val_dataset = PascalVOCDataset(split=args.val_split, year=args.year)
+        val_dataset = PascalVOCDataset(split=args.val_split, years=years)
         val_collate_fn = val_dataset.collate_fn
 
         # Create test dataset if specified
         test_dataset = None
         test_collate_fn = None
         if args.test_split:
-            test_dataset = PascalVOCDataset(split=args.test_split, year=args.year)
+            test_dataset = PascalVOCDataset(split=args.test_split, years=years)
             test_collate_fn = test_dataset.collate_fn
     else:
         # In future, add BDD100K dataset
@@ -747,9 +815,7 @@ def train_with_frozen_backbone(
 
         # Validate model
         if epoch % args.eval_interval == 0:
-            val_metrics = validate(
-                model, val_loader, loss_fn, device, epoch, wandb_run, args
-            )
+            val_metrics = validate(model, val_loader, loss_fn, device, epoch, wandb_run, args)
             metrics.update(val_metrics)
 
         # Save checkpoint
@@ -825,20 +891,24 @@ def train_model(
         )
 
         # Validate model
-        val_metrics = validate(
-            model, val_loader, loss_fn, device, epoch, wandb_run, args
-        )
+        val_metrics = validate(model, val_loader, loss_fn, device, epoch, wandb_run, args)
 
         # Check if this is the best model
         is_best_loss = val_metrics["val_loss"] < best_val_loss
         if is_best_loss:
             best_val_loss = val_metrics["val_loss"]
+            print(f"New best validation loss: {best_val_loss:.4f}")
 
-        is_best_mAP = val_metrics.get("val_mAP", 0) > best_val_mAP
-        if is_best_mAP:
-            best_val_mAP = val_metrics.get("val_mAP", 0)
+        # Prioritize mAP over loss for model selection if available
+        is_best_mAP = False
+        if "val_mAP" in val_metrics:
+            is_best_mAP = val_metrics["val_mAP"] > best_val_mAP
+            if is_best_mAP:
+                best_val_mAP = val_metrics["val_mAP"]
+                print(f"New best validation mAP: {best_val_mAP:.4f}")
 
-        is_best = is_best_mAP or is_best_loss
+        # Prefer mAP over loss for determining best model
+        is_best = is_best_mAP or (is_best_loss and "val_mAP" not in val_metrics)
 
         # Save checkpoint
         if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
@@ -857,18 +927,16 @@ def train_model(
 
     # Save final model
     final_path = os.path.join(args.output_dir, "yolov3_final.pt")
-    torch.save(
-        {"model_state_dict": model.state_dict(), "config": model.config}, final_path
-    )
+    torch.save({"model_state_dict": model.state_dict(), "config": model.config}, final_path)
     print(f"Training completed. Saved final model to {final_path}")
 
     # Run final evaluation on test set if available
     if test_loader:
         print("Running final evaluation on test set...")
-        test_metrics = validate(
-            model, test_loader, loss_fn, device, args.epochs, wandb_run, args
-        )
-        print(f"Test set results: mAP: {test_metrics.get('val_mAP', 0):.4f}")
+        test_metrics = validate(model, test_loader, loss_fn, device, args.epochs, wandb_run, args)
+        print(f"Test set results: Loss: {test_metrics['val_loss']:.4f}")
+        if "val_mAP" in test_metrics:
+            print(f"Test set mAP: {test_metrics['val_mAP']:.4f}")
 
         # Save test results
         test_results_path = os.path.join(args.output_dir, "test_results.pt")
@@ -891,9 +959,7 @@ def main():
     model, loss_fn, optimizer, lr_scheduler = create_model(args, device, wandb_run)
 
     # Train model
-    train_model(
-        model, train_loader, val_loader, test_loader, loss_fn, args, device, wandb_run
-    )
+    train_model(model, train_loader, val_loader, test_loader, loss_fn, args, device, wandb_run)
 
     # Finish W&B run
     if wandb_run:

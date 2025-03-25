@@ -18,8 +18,15 @@ echo "- Using only 10% of the dataset"
 echo "- Testing all components: train, validate, evaluate"
 echo "=========================================================="
 
-# Run the debug training script
-python -m models.vanilla.yolov3.debug_train
+# Run the training script with debug parameters
+python -m models.vanilla.yolov3.train \
+  --epochs 1 \
+  --batch-size 4 \
+  --freeze-backbone \
+  --freeze-epochs 0 \
+  --workers 1 \
+  --run-name "debug_run" \
+  --no-wandb
 
 # Print completion message
 echo "Debug cycle completed."

@@ -81,9 +81,7 @@ class YOLOv3Loss(nn.Module):
             zip(scale_preds, scale_anchors, grid_sizes, strict=False)
         ):
             # Create targets tensor for this scale
-            target_tensor = self._build_target(
-                targets, anchors, grid_size, scale_idx, batch_size
-            )
+            target_tensor = self._build_target(targets, anchors, grid_size, scale_idx, batch_size)
 
             # Get masks
             obj_mask = target_tensor[..., 4].bool()  # Objectness mask
@@ -171,14 +169,9 @@ class YOLOv3Loss(nn.Module):
                 continue
 
             # For each ground truth box
-            for box_idx, (box, label) in enumerate(
-                zip(gt_boxes, gt_labels, strict=False)
-            ):
+            for box_idx, (box, label) in enumerate(zip(gt_boxes, gt_labels, strict=False)):
                 # Check if this box should be assigned to this scale
-                if (
-                    "scale_mask" in targets
-                    and not targets["scale_mask"][b][box_idx][scale_idx]
-                ):
+                if "scale_mask" in targets and not targets["scale_mask"][b][box_idx][scale_idx]:
                     continue
 
                 # Convert box coordinates to grid cell coordinates
@@ -250,3 +243,63 @@ class YOLOv3Loss(nn.Module):
 
         # Return the index of the anchor with the highest IoU
         return torch.argmax(iou).item()
+
+
+def calculate_batch_loss(loss_dict):
+    """
+    Extract individual loss components from loss dictionary.
+
+    Args:
+        loss_dict: Dictionary containing loss components
+                  {'loss': total_loss, 'loc_loss': loc_loss,
+                   'obj_loss': obj_loss, 'cls_loss': cls_loss}
+
+    Returns:
+        tuple: (total_loss, loc_loss, obj_loss, cls_loss) as scalar values
+    """
+    return (
+        loss_dict["loss"].item(),
+        loss_dict["loc_loss"].item(),
+        loss_dict["obj_loss"].item(),
+        loss_dict["cls_loss"].item(),
+    )
+
+
+def accumulate_losses(loss_tuple, accumulated_losses):
+    """
+    Accumulate loss values into running totals.
+
+    Args:
+        loss_tuple: Tuple of (total_loss, loc_loss, obj_loss, cls_loss)
+        accumulated_losses: Tuple of accumulated (total_loss, loc_loss, obj_loss, cls_loss)
+
+    Returns:
+        tuple: Updated accumulated losses
+    """
+    return (
+        accumulated_losses[0] + loss_tuple[0],  # total
+        accumulated_losses[1] + loss_tuple[1],  # loc
+        accumulated_losses[2] + loss_tuple[2],  # obj
+        accumulated_losses[3] + loss_tuple[3],  # cls
+    )
+
+
+def average_losses(accumulated_losses, num_batches):
+    """
+    Calculate average losses over multiple batches.
+
+    Args:
+        accumulated_losses: Tuple of accumulated (total_loss, loc_loss, obj_loss, total_cls_loss)
+        num_batches: Number of batches the losses were accumulated over
+
+    Returns:
+        dict: Dictionary of average losses
+              {'loss': avg_loss, 'loc_loss': avg_loc_loss,
+               'obj_loss': avg_obj_loss, 'cls_loss': avg_cls_loss}
+    """
+    return {
+        "loss": accumulated_losses[0] / num_batches,
+        "loc_loss": accumulated_losses[1] / num_batches,
+        "obj_loss": accumulated_losses[2] / num_batches,
+        "cls_loss": accumulated_losses[3] / num_batches,
+    }

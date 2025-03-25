@@ -23,9 +23,7 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="YOLOv3 Inference")
 
-    parser.add_argument(
-        "--weights", type=str, required=True, help="Path to model weights"
-    )
+    parser.add_argument("--weights", type=str, required=True, help="Path to model weights")
     parser.add_argument(
         "--input",
         type=str,
@@ -321,9 +319,7 @@ def main():
             print(f"Processing: {image_path}")
 
             # Preprocess image
-            original_image, tensor, scale_info = preprocess_image(
-                image_path, args.input_size
-            )
+            original_image, tensor, scale_info = preprocess_image(image_path, args.input_size)
             tensor = tensor.to(device)
 
             # Run inference
@@ -335,9 +331,7 @@ def main():
                 )[0]  # Get detections for the first (and only) image in batch
 
             # Postprocess detections to original image size
-            processed_detections = postprocess_detections(
-                detections, scale_info, args.input_size
-            )
+            processed_detections = postprocess_detections(detections, scale_info, args.input_size)
 
             # Draw detections
             if processed_detections.shape[0] > 0:

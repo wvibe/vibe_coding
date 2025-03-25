@@ -11,16 +11,16 @@ cd "${PROJECT_ROOT}"
 
 # Create timestamp for run name
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-RUN_NAME="yolov3_pascal_voc_10epochs_${TIMESTAMP}"
+RUN_NAME="yolov3_pascal_voc_combined_10epochs_${TIMESTAMP}"
 
 # Create output directory
-OUTPUT_DIR="${PROJECT_ROOT}/model_outputs/yolov3/${RUN_NAME}"
+OUTPUT_DIR="${PROJECT_ROOT}/models/vanilla/yolov3/model_outputs/${RUN_NAME}"
 mkdir -p "${OUTPUT_DIR}"
 
 # Print run information
 echo "Starting training run: ${RUN_NAME}"
 echo "Output directory: ${OUTPUT_DIR}"
-echo "Training for 10 epochs"
+echo "Training for 10 epochs using both VOC2007 and VOC2012 datasets"
 
 # Run the training script with desired parameters
 python -m models.vanilla.yolov3.train \
@@ -28,7 +28,7 @@ python -m models.vanilla.yolov3.train \
   --output-dir "${OUTPUT_DIR}" \
   --run-name "${RUN_NAME}" \
   --dataset voc \
-  --year 2007 \
+  --year 2007,2012 \
   --train-split train \
   --val-split val \
   --batch-size 8 \

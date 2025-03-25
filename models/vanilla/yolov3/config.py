@@ -38,9 +38,7 @@ class YOLOv3Config:
     # Detection parameters
     conf_threshold: float = 0.5  # Confidence threshold for inference
     nms_threshold: float = 0.4  # Non-maximum suppression IoU threshold
-    eval_conf_threshold: float = (
-        0.1  # Confidence threshold for evaluation (lower to ensure recall)
-    )
+    eval_conf_threshold: float = 0.1  # Confidence threshold for evaluation (lower to ensure recall)
 
     # Training parameters
     learning_rate: float = 1e-3

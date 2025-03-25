@@ -52,9 +52,7 @@ def create_subset_dataloader(
     indices = random.sample(range(full_size), subset_size)
     subset = Subset(dataset, indices)
 
-    print(
-        f"Created subset with {subset_size}/{full_size} samples ({subset_fraction * 100:.1f}%)"
-    )
+    print(f"Created subset with {subset_size}/{full_size} samples ({subset_fraction * 100:.1f}%)")
 
     # Create dataloader
     return DataLoader(
@@ -137,9 +135,7 @@ def debug_train():
     # Training loop
     print("\n=== TRAINING CYCLE ===")
     print("Running training for 1 epoch...")
-    train_metrics = train_epoch(
-        model, train_loader, loss_fn, optimizer, device, 1, args
-    )
+    train_metrics = train_epoch(model, train_loader, loss_fn, optimizer, device, 1, args)
 
     print("\n=== VALIDATION CYCLE ===")
     print("Running validation...")

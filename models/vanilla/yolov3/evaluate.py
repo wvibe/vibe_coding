@@ -232,9 +232,7 @@ def collect_predictions(
                     pred_scores = image_preds[:, 5]  # confidence
                     pred_classes = image_preds[:, 6]  # class_id
 
-                    for box, score, cls_id in zip(
-                        pred_boxes, pred_scores, pred_classes
-                    ):
+                    for box, score, cls_id in zip(pred_boxes, pred_scores, pred_classes):
                         cls_idx = int(cls_id.item())
                         if cls_idx < num_classes:  # Ensure class index is valid
                             img_detections[cls_idx].append(
@@ -262,9 +260,7 @@ def collect_predictions(
                 {
                     "images": len(all_detections),
                     "detections": sum(
-                        len(cls_dets)
-                        for img_dets in all_detections
-                        for cls_dets in img_dets
+                        len(cls_dets) for img_dets in all_detections for cls_dets in img_dets
                     ),
                 }
             )

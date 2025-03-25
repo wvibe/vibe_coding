@@ -296,7 +296,7 @@ class YOLOv3(nn.Module):
 
             # Get coordinates and scores for this class
             boxes = class_detections[:, 1:5]  # [x1, y1, x2, y2]
-            scores = class_detections[:, 5]   # confidence scores
+            scores = class_detections[:, 5]  # confidence scores
 
             # Calculate areas once (vectorized)
             areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])

@@ -3,8 +3,8 @@
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
-        "editor.wordWrapColumn": 88,
-        "editor.rulers": [88],
+        "editor.wordWrapColumn": 100,
+        "editor.rulers": [100],
         "diffEditor.ignoreTrimWhitespace": false
     },
     "[jupyter][ipynb]": {
@@ -17,8 +17,8 @@
 
     // Global settings
     "editor.codeActionsOnSave": {
-        "source.organizeImports.ruff": "explicit",
-        "source.fixAll.ruff": "explicit"
+        "source.organizeImports.ruff": "always",
+        "source.fixAll.ruff": "always"
     },
     "files.trimTrailingWhitespace": true,
 
@@ -31,7 +31,7 @@
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
 
     // Ruff configuration
-    "ruff.lineLength": 88,
+    "ruff.lineLength": 100,
     "ruff.lint.select": ["C", "E", "F", "W", "W291", "W293"],
 
     // Python diagnostics
