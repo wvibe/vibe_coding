@@ -87,6 +87,19 @@ def parse_args():
         help=("VOC dataset year(s) (default: 2007, use comma-separated for multiple years)"),
     )
 
+    # Debug/Development parameters
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=None,
+        help="Maximum number of images to use per dataset (for debugging)",
+    )
+    parser.add_argument(
+        "--fast-dev-run",
+        action="store_true",
+        help="Fast dev run mode - use minimal batches for train/val/test",
+    )
+
     # Model parameters
     parser.add_argument(
         "--input-size", type=int, default=416, help="Input image size (default: 416)"
@@ -507,24 +520,33 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
     model.eval()
     start_time = time.time()
 
+    is_debug = args and (args.fast_dev_run or args.max_images is not None)
+    if is_debug:
+        print("DEBUG MODE: Running minimal validation")
+
     print("Running validation" + (f" for epoch {epoch}" if epoch is not None else ""))
 
     with torch.no_grad():
         # Compute losses on validation set
         accumulated_losses = _compute_validation_losses(model, dataloader, loss_fn, device)
 
-        # Generate visualizations if needed
+        # Generate visualizations if needed (skip in debug mode)
         validation_images = []
-        if wandb_run and epoch is not None and epoch % 5 == 0:  # Log every 5 epochs
+        if wandb_run and epoch is not None and epoch % 5 == 0 and not is_debug:
             validation_images = _generate_validation_visualizations(model, dataloader, device)
 
         # Run mAP evaluation if epoch is divisible by 5 or it's the final validation
+        # Skip expensive mAP evaluation if in debug mode
         eval_metrics = {}
-        if (epoch is not None and epoch % 5 == 0) or epoch is None:
+        if ((epoch is not None and epoch % 5 == 0) or epoch is None) and not is_debug:
             print("Calculating mAP metrics...")
             iou_threshold = args.iou_threshold if args else 0.5
             eval_metrics = evaluate_model(model, dataloader, device, iou_threshold)
             print(f"mAP: {eval_metrics['mAP']:.4f}")
+        elif is_debug:
+            # Add dummy mAP for debug mode
+            eval_metrics = {"mAP": 0.5, "iou_threshold": 0.5, "class_APs": {0: 0.5}}
+            print("DEBUG MODE: Skipping mAP calculation, using dummy values")
 
     # Calculate average losses
     avg_losses = average_losses(accumulated_losses, len(dataloader))
@@ -552,7 +574,7 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
             metrics[f"val_AP_class_{class_idx}"] = ap
 
     # Log validation images to W&B
-    if wandb_run and epoch is not None and epoch % 5 == 0:
+    if wandb_run and epoch is not None and epoch % 5 == 0 and validation_images:
         wandb_run.log({"validation_predictions": validation_images, **metrics, "epoch": epoch})
     elif wandb_run:
         wandb_run.log({**metrics, "epoch": epoch})
@@ -678,10 +700,31 @@ def create_datasets(args):
         # In future, add BDD100K dataset
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented yet")
 
+    # Handle debug mode options
+    if args.max_images is not None:
+        print(f"DEBUG MODE: Limiting each dataset to {args.max_images} images")
+        # Create a subset for each dataset
+        train_indices = list(range(min(args.max_images, len(train_dataset))))
+        val_indices = list(range(min(args.max_images, len(val_dataset))))
+
+        train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+        val_dataset = torch.utils.data.Subset(val_dataset, val_indices)
+
+        if test_dataset:
+            test_indices = list(range(min(args.max_images, len(test_dataset))))
+            test_dataset = torch.utils.data.Subset(test_dataset, test_indices)
+
+    # Set batch size for fast dev run
+    batch_size = args.batch_size
+    if args.fast_dev_run:
+        print("DEBUG MODE: Fast dev run with minimal batches")
+        # Use extremely small batch size for fast dev run
+        batch_size = min(2, batch_size)
+
     # Create data loaders
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=args.workers,
         collate_fn=train_collate_fn,
@@ -689,7 +732,7 @@ def create_datasets(args):
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=args.workers,
         collate_fn=val_collate_fn,
@@ -700,17 +743,60 @@ def create_datasets(args):
     if test_dataset:
         test_loader = DataLoader(
             test_dataset,
-            batch_size=args.batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=args.workers,
             collate_fn=test_collate_fn,
         )
 
-    print(f"Created datasets: Train ({len(train_dataset)}), Val ({len(val_dataset)})")
+    # Print dataset sizes
+    train_size = len(train_dataset)
+    val_size = len(val_dataset)
+    print(f"Created datasets: Train ({train_size}), Val ({val_size})")
     if test_loader:
-        print(f"Test ({len(test_dataset)})")
+        test_size = len(test_dataset)
+        print(f"Test ({test_size})")
+
+    # Further limit batches for fast dev run
+    if args.fast_dev_run:
+        # Wrap loaders to limit to just a few batches
+        train_loader = _limit_batches(train_loader, 3)
+        val_loader = _limit_batches(val_loader, 2)
+        if test_loader:
+            test_loader = _limit_batches(test_loader, 1)
 
     return train_loader, val_loader, test_loader
+
+
+def _limit_batches(dataloader, num_batches):
+    """
+    Limit a dataloader to a specific number of batches
+
+    Args:
+        dataloader: The dataloader to limit
+        num_batches: Maximum number of batches to yield
+
+    Returns:
+        A generator that yields limited batches
+    """
+
+    class LimitedBatchSampler:
+        def __init__(self, dataloader, num_batches):
+            self.dataloader = dataloader
+            self.num_batches = num_batches
+
+        def __iter__(self):
+            counter = 0
+            for batch in self.dataloader:
+                if counter >= self.num_batches:
+                    break
+                yield batch
+                counter += 1
+
+        def __len__(self):
+            return min(self.num_batches, len(self.dataloader))
+
+    return LimitedBatchSampler(dataloader, num_batches)
 
 
 def create_model(args, device, wandb_run=None):
@@ -806,9 +892,14 @@ def train_with_frozen_backbone(
         weight_decay=args.weight_decay,
     )
 
+    # For fast-dev-run, limit to one epoch
+    freeze_epochs = 1 if args.fast_dev_run else args.freeze_epochs
+    if args.fast_dev_run and args.freeze_epochs > 1:
+        print(f"DEBUG MODE: Limiting freeze epochs to 1 (instead of {args.freeze_epochs})")
+
     # Train with frozen backbone
-    print(f"Training with frozen backbone for {args.freeze_epochs} epochs")
-    for epoch in range(1, args.freeze_epochs + 1):
+    print(f"Training with frozen backbone for {freeze_epochs} epochs")
+    for epoch in range(1, freeze_epochs + 1):
         metrics = train_epoch(
             model, train_loader, loss_fn, optimizer, device, epoch, args, wandb_run
         )
@@ -818,8 +909,10 @@ def train_with_frozen_backbone(
             val_metrics = validate(model, val_loader, loss_fn, device, epoch, wandb_run, args)
             metrics.update(val_metrics)
 
-        # Save checkpoint
-        if epoch % args.checkpoint_interval == 0 or epoch == args.freeze_epochs:
+        # Save checkpoint (skip in debug mode)
+        if (
+            epoch % args.checkpoint_interval == 0 or epoch == freeze_epochs
+        ) and not args.fast_dev_run:
             save_checkpoint(model, optimizer, epoch, metrics, args, wandb_run=wandb_run)
 
     # Unfreeze backbone for full training
@@ -846,10 +939,18 @@ def train_model(
         device: Device to use
         wandb_run: Weights & Biases run object for logging
     """
+    # Check if in debug mode
+    is_debug = args.fast_dev_run or args.max_images is not None
+
     # First, train with frozen backbone if specified
     model = train_with_frozen_backbone(
         model, train_loader, val_loader, loss_fn, args, device, wandb_run
     )
+
+    # For debug mode, limit to just 1 epoch total
+    epochs = 1 if is_debug else args.epochs
+    if is_debug and args.epochs > 1:
+        print(f"DEBUG MODE: Limiting training to 1 epoch (instead of {args.epochs})")
 
     # Create optimizer for full training
     if args.freeze_backbone and args.freeze_epochs > 0:
@@ -862,10 +963,10 @@ def train_model(
         # Create learning rate scheduler for remaining epochs
         lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=args.epochs - args.freeze_epochs,
+            T_max=epochs - min(1, args.freeze_epochs),
             eta_min=args.learning_rate / 100,
         )
-        start_epoch = args.freeze_epochs + 1
+        start_epoch = min(2, args.freeze_epochs + 1)  # In debug mode, start at epoch 2
     else:
         # No frozen training, train everything from scratch
         optimizer = optim.Adam(
@@ -874,7 +975,7 @@ def train_model(
         # Create learning rate scheduler for all epochs
         lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=args.epochs,
+            T_max=epochs,
             eta_min=args.learning_rate / 100,
         )
         start_epoch = 1
@@ -884,7 +985,7 @@ def train_model(
     best_val_mAP = 0.0
 
     # Main training loop
-    for epoch in range(start_epoch, args.epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         # Train one epoch
         train_metrics = train_epoch(
             model, train_loader, loss_fn, optimizer, device, epoch, args, wandb_run
@@ -910,8 +1011,8 @@ def train_model(
         # Prefer mAP over loss for determining best model
         is_best = is_best_mAP or (is_best_loss and "val_mAP" not in val_metrics)
 
-        # Save checkpoint
-        if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
+        # Save checkpoint (skip in debug mode)
+        if (epoch % args.checkpoint_interval == 0 or epoch == epochs) and not is_debug:
             save_checkpoint(
                 model,
                 optimizer,
@@ -925,13 +1026,19 @@ def train_model(
         # Update learning rate
         lr_scheduler.step()
 
-    # Save final model
-    final_path = os.path.join(args.output_dir, "yolov3_final.pt")
-    torch.save({"model_state_dict": model.state_dict(), "config": model.config}, final_path)
-    print(f"Training completed. Saved final model to {final_path}")
+        # For debug mode, we only need one epoch to test the pipeline
+        if is_debug:
+            print("DEBUG MODE: Skipping additional epochs")
+            break
 
-    # Run final evaluation on test set if available
-    if test_loader:
+    # Save final model (skip in debug mode)
+    if not is_debug:
+        final_path = os.path.join(args.output_dir, "yolov3_final.pt")
+        torch.save({"model_state_dict": model.state_dict(), "config": model.config}, final_path)
+        print(f"Training completed. Saved final model to {final_path}")
+
+    # Run final evaluation on test set if available (skip in debug mode)
+    if test_loader and not is_debug:
         print("Running final evaluation on test set...")
         test_metrics = validate(model, test_loader, loss_fn, device, args.epochs, wandb_run, args)
         print(f"Test set results: Loss: {test_metrics['val_loss']:.4f}")
@@ -942,6 +1049,10 @@ def train_model(
         test_results_path = os.path.join(args.output_dir, "test_results.pt")
         torch.save(test_metrics, test_results_path)
         print(f"Saved test results to {test_results_path}")
+    elif is_debug and test_loader:
+        print("DEBUG MODE: Skipping final test evaluation")
+
+    print("Training cycle completed" + (" (DEBUG MODE)" if is_debug else ""))
 
 
 def main():
