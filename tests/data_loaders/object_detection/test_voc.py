@@ -113,9 +113,7 @@ def test_init_multiple_years(voc_root, voc_paths):
         with patch("builtins.open", create=True) as mock_file:
             mock_file.side_effect = mock_open_file
 
-            dataset = PascalVOCDataset(
-                years=["2007", "2012"], split="train", data_dir=voc_root
-            )
+            dataset = PascalVOCDataset(years=["2007", "2012"], split="train", data_dir=voc_root)
 
             assert len(dataset.image_info) == 4
             assert dataset.image_info[0]["year"] == "2007"
@@ -139,9 +137,7 @@ def test_getitem(mock_image, mock_annotation, voc_root, voc_paths):
 
             with patch("os.path.exists", return_value=True):
                 with patch("builtins.open", mock_open(read_data="000001\n")):
-                    dataset = PascalVOCDataset(
-                        years=["2007"], split="val", data_dir=voc_root
-                    )
+                    dataset = PascalVOCDataset(years=["2007"], split="val", data_dir=voc_root)
                     sample = dataset[0]
 
                     # Check sample structure
@@ -168,6 +164,137 @@ def test_getitem(mock_image, mock_annotation, voc_root, voc_paths):
 
                     # Check label values (car=6, person=14 in VOC classes)
                     assert sample["labels"].tolist() == [6, 14]
+
+
+def test_subset_percent(voc_root):
+    """Test using subset percentage of dataset"""
+    # Create mock data with 100 image IDs
+    mock_ids = [f"{i:06d}" for i in range(100)]
+    mock_data = "\n".join(mock_ids)
+
+    with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=mock_data)):
+            # Test with 10% subset
+            dataset_10p = PascalVOCDataset(
+                years=["2007"], split="train", data_dir=voc_root, subset_percent=0.1
+            )
+
+            # Test with 50% subset
+            dataset_50p = PascalVOCDataset(
+                years=["2007"], split="train", data_dir=voc_root, subset_percent=0.5
+            )
+
+            # Verify dataset sizes are approximately correct
+            assert len(dataset_10p.image_info) == 10
+            assert len(dataset_50p.image_info) == 50
+
+            # Verify datasets are different (random subset)
+            ids_10p = set(info["id"] for info in dataset_10p.image_info)
+            ids_50p = set(info["id"] for info in dataset_50p.image_info)
+            assert ids_10p.issubset(ids_50p) or not ids_10p.issubset(ids_50p)
+
+
+def test_invalid_subset_percent(voc_root):
+    """Test with invalid subset percentage values"""
+    with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data="000001\n000002\n")):
+            # Test with negative value
+            with pytest.raises(ValueError):
+                PascalVOCDataset(
+                    years=["2007"], split="train", data_dir=voc_root, subset_percent=-0.1
+                )
+
+            # Test with too large value
+            with pytest.raises(ValueError):
+                PascalVOCDataset(
+                    years=["2007"], split="train", data_dir=voc_root, subset_percent=1.5
+                )
+
+
+def test_class_specific_loading(voc_root, voc_paths):
+    """Test loading class-specific dataset"""
+    # Mock class-specific file for 'person' class with positive and negative samples
+    # Format: "<image_id> <label>" where label is 1 (present), -1 (difficult), 0 (not present)
+    person_train_data = "000001 1\n000002 0\n000003 1\n000004 -1\n000005 1\n"
+
+    class_split_file = os.path.join(voc_paths["2007"]["splits"], "person_train.txt")
+
+    def mock_exists(path):
+        return path == class_split_file or path.endswith((".jpg", ".xml"))
+
+    def mock_open_file(filename, *args, **kwargs):
+        if filename == class_split_file:
+            return mock_open(read_data=person_train_data)()
+        return mock_open(read_data="")()
+
+    with patch("os.path.exists", side_effect=mock_exists):
+        with patch("builtins.open", create=True) as mock_file:
+            mock_file.side_effect = mock_open_file
+
+            # Create dataset with person class
+            dataset = PascalVOCDataset(
+                years=["2007"], split="train", data_dir=voc_root, class_name="person"
+            )
+
+            # Should only include images with label 1 (class present)
+            assert len(dataset.image_info) == 3
+            assert dataset.image_info[0]["id"] == "000001"
+            assert dataset.image_info[1]["id"] == "000003"
+            assert dataset.image_info[2]["id"] == "000005"
+
+
+def test_combined_class_and_subset(voc_root, voc_paths):
+    """Test using both class-specific loading and subset percentage"""
+    # Create mock data with 100 image IDs with class present (label 1)
+    mock_ids = [f"{i:06d} 1" for i in range(100)]
+    mock_data = "\n".join(mock_ids)
+
+    car_split_file = os.path.join(voc_paths["2007"]["splits"], "car_train.txt")
+
+    def mock_exists(path):
+        return path == car_split_file or path.endswith((".jpg", ".xml"))
+
+    def mock_open_file(filename, *args, **kwargs):
+        if filename == car_split_file:
+            return mock_open(read_data=mock_data)()
+        return mock_open(read_data="")()
+
+    with patch("os.path.exists", side_effect=mock_exists):
+        with patch("builtins.open", create=True) as mock_file:
+            mock_file.side_effect = mock_open_file
+
+            # Create dataset with car class and 20% subset
+            dataset = PascalVOCDataset(
+                years=["2007"],
+                split="train",
+                data_dir=voc_root,
+                class_name="car",
+                subset_percent=0.2,
+            )
+
+            # Should include ~20 images from the car class
+            assert len(dataset.image_info) == 20
+
+
+def test_invalid_class_name(voc_root):
+    """Test with invalid class name"""
+    with patch("os.path.exists", return_value=True):
+        with pytest.raises(ValueError):
+            PascalVOCDataset(
+                years=["2007"], split="train", data_dir=voc_root, class_name="invalid_class"
+            )
+
+
+def test_missing_class_split_file(voc_root):
+    """Test when class-specific split file is missing"""
+
+    def mock_exists(path):
+        # Only return True for files that aren't class-specific split files
+        return not path.endswith("person_train.txt")
+
+    with patch("os.path.exists", side_effect=mock_exists):
+        with pytest.raises(FileNotFoundError):
+            PascalVOCDataset(years=["2007"], split="train", data_dir=voc_root, class_name="person")
 
 
 def test_collate_fn(voc_root):

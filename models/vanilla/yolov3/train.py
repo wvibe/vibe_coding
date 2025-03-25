@@ -95,6 +95,23 @@ def parse_args():
         help="Maximum number of images to use per dataset (for debugging)",
     )
     parser.add_argument(
+        "--subset-percent",
+        type=float,
+        default=None,
+        help="Percentage of dataset to use (0.01 to 1.0, for debugging)",
+    )
+    parser.add_argument(
+        "--class-name",
+        type=str,
+        default=None,
+        help="Train only on images containing a specific class (e.g., 'car', 'person')",
+    )
+    parser.add_argument(
+        "--debug-mode",
+        action="store_true",
+        help="Enable additional debug logging",
+    )
+    parser.add_argument(
         "--fast-dev-run",
         action="store_true",
         help="Fast dev run mode - use minimal batches for train/val/test",
@@ -682,19 +699,45 @@ def create_datasets(args):
         # Parse years into a list
         years = args.year.split(",")
 
+        # Get debug parameters
+        is_debug = (
+            args.fast_dev_run
+            or args.max_images is not None
+            or args.subset_percent is not None
+            or args.debug_mode
+        )
+
         # Create train dataset
-        train_dataset = PascalVOCDataset(split=args.train_split, years=years)
+        train_dataset = PascalVOCDataset(
+            split=args.train_split,
+            years=years,
+            subset_percent=args.subset_percent,
+            class_name=args.class_name,
+            debug_mode=args.debug_mode,
+        )
         train_collate_fn = train_dataset.collate_fn
 
         # Create validation dataset
-        val_dataset = PascalVOCDataset(split=args.val_split, years=years)
+        val_dataset = PascalVOCDataset(
+            split=args.val_split,
+            years=years,
+            subset_percent=args.subset_percent,
+            class_name=args.class_name,
+            debug_mode=args.debug_mode,
+        )
         val_collate_fn = val_dataset.collate_fn
 
         # Create test dataset if specified
         test_dataset = None
         test_collate_fn = None
         if args.test_split:
-            test_dataset = PascalVOCDataset(split=args.test_split, years=years)
+            test_dataset = PascalVOCDataset(
+                split=args.test_split,
+                years=years,
+                subset_percent=args.subset_percent,
+                class_name=args.class_name,
+                debug_mode=args.debug_mode,
+            )
             test_collate_fn = test_dataset.collate_fn
     else:
         # In future, add BDD100K dataset
