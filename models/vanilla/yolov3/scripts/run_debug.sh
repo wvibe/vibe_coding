@@ -6,7 +6,7 @@
 
 # Change to project root directory to ensure .env file is accessible
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 # Print debug information

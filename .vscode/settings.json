@@ -25,7 +25,6 @@
     // Python testing settings
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
-    "python.testing.nosetestsEnabled": false,
     "python.testing.pytestArgs": [
         "tests"
     ],
@@ -42,11 +41,4 @@
         "reportUnusedVariable": "information",
         "reportUnusedImport": "information"
     },
-
-    // Test Explorer UI settings
-    "testExplorer.codeLens": true,
-    "testExplorer.addToEditorContextMenu": true,
-    "testExplorer.showOnRun": true,
-    "testExplorer.sort": "byLocation",
-    "testExplorer.mergeSuites": true
 }

@@ -1,5 +1,14 @@
 """
 Training script for YOLOv3 model
+
+This script should be run from the project root directory:
+python -m models.vanilla.yolov3.train [args]
+
+For quick training with default parameters, use:
+./models/vanilla/yolov3/scripts/run_train_and_eval.sh
+
+For debugging the training pipeline, use:
+./models/vanilla/yolov3/scripts/run_debug.sh
 """
 
 import argparse
@@ -8,6 +17,8 @@ import os
 import sys
 import time
 
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.optim as optim
@@ -22,7 +33,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 
 from data_loaders.object_detection.voc import PascalVOCDataset
 from models.vanilla.yolov3.config import YOLOv3Config
-from models.vanilla.yolov3.evaluate import evaluate_model
 from models.vanilla.yolov3.loss import YOLOv3Loss
 from models.vanilla.yolov3.yolov3 import YOLOv3
 
@@ -351,6 +361,10 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
     total_obj_loss = 0
     total_cls_loss = 0
 
+    # For visualization
+    if wandb_run and epoch is not None and epoch % 5 == 0:  # Log every 5 epochs
+        validation_images = []
+
     # Evaluate model using the evaluate module
     print("Running validation" + (f" for epoch {epoch}" if epoch is not None else ""))
 
@@ -378,6 +392,68 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
             total_obj_loss += loss_dict["obj_loss"].item()
             total_cls_loss += loss_dict["cls_loss"].item()
 
+            # Log predictions for visualization
+            if wandb_run and epoch is not None and epoch % 5 == 0 and batch_idx < 4:
+                # Get predictions
+                detections = model.predict(images)
+
+                # Process each image in batch
+                for img_idx in range(min(2, len(images))):  # Log max 2 images per batch
+                    img = images[img_idx].cpu()
+                    # Denormalize image
+                    img = img * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                    img = img + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                    img = (img * 255).byte().permute(1, 2, 0).numpy()
+
+                    # Create figure for visualization
+                    plt.figure(figsize=(10, 10))
+                    plt.imshow(img)
+
+                    # Draw ground truth boxes in green
+                    for box, label in zip(
+                        targets["boxes"][img_idx], targets["labels"][img_idx]
+                    ):
+                        x1, y1, x2, y2 = box.cpu().numpy()
+                        rect = patches.Rectangle(
+                            (x1, y1),
+                            x2 - x1,
+                            y2 - y1,
+                            linewidth=2,
+                            edgecolor="g",
+                            facecolor="none",
+                        )
+                        plt.gca().add_patch(rect)
+                        plt.text(
+                            x1,
+                            y1 - 5,
+                            f"GT: {dataloader.dataset.class_names[label]}",
+                            color="g",
+                        )
+
+                    # Draw predicted boxes in red
+                    for det in detections[img_idx]:
+                        if det.size(0) > 0:  # If there are detections
+                            x1, y1, x2, y2, conf, cls_id = det
+                            rect = patches.Rectangle(
+                                (x1, y1),
+                                x2 - x1,
+                                y2 - y1,
+                                linewidth=2,
+                                edgecolor="r",
+                                facecolor="none",
+                            )
+                            plt.gca().add_patch(rect)
+                            plt.text(
+                                x1,
+                                y2 + 15,
+                                f"Pred: {dataloader.dataset.class_names[int(cls_id)]} {conf:.2f}",
+                                color="r",
+                            )
+
+                    plt.axis("off")
+                    validation_images.append(wandb.Image(plt))
+                    plt.close()
+
             # Update progress bar
             progress_bar.set_postfix(
                 {
@@ -389,53 +465,28 @@ def validate(model, dataloader, loss_fn, device, epoch=None, wandb_run=None, arg
             )
 
     # Calculate average losses
-    avg_loss = total_loss / len(dataloader)
-    avg_loc_loss = total_loc_loss / len(dataloader)
-    avg_obj_loss = total_obj_loss / len(dataloader)
-    avg_cls_loss = total_cls_loss / len(dataloader)
+    num_batches = len(dataloader)
+    avg_loss = total_loss / num_batches
+    avg_loc_loss = total_loc_loss / num_batches
+    avg_obj_loss = total_obj_loss / num_batches
+    avg_cls_loss = total_cls_loss / num_batches
 
-    print(
-        f"Validation loss: {avg_loss:.4f} (Loc: {avg_loc_loss:.4f}, Obj: {avg_obj_loss:.4f}, Cls: {avg_cls_loss:.4f})"
-    )
-    print("Evaluating model performance...")
-
-    # Compute metrics using the evaluate module
-    evaluation_metrics = evaluate_model(model, dataloader, device, args.iou_threshold)
-
-    mAP = evaluation_metrics["mAP"]
-    class_APs = evaluation_metrics["class_APs"]
-
-    # Calculate elapsed time
-    time_elapsed = time.time() - start_time
-
-    # Print validation summary (keeping it minimal, detailed metrics go to wandb)
-    print(
-        f"Validation completed in {time_elapsed:.2f}s | "
-        f"Loss: {avg_loss:.4f} | "
-        f"mAP@{args.iou_threshold}: {mAP:.4f}"
-    )
-
-    # Log validation metrics to W&B
+    # Create metrics dictionary
     metrics = {
         "val_loss": avg_loss,
         "val_loc_loss": avg_loc_loss,
         "val_obj_loss": avg_obj_loss,
         "val_cls_loss": avg_cls_loss,
-        "val_mAP": mAP,
-        "val_time": time_elapsed,
+        "val_time": time.time() - start_time,
     }
 
-    # Add per-class AP metrics
-    for c, ap in class_APs.items():
-        metrics[f"val_AP_class_{c}"] = ap
-
-    if epoch is not None:
-        metrics["epoch"] = epoch
-
-    if wandb_run:
-        wandb_run.log(metrics)
-
-        # TODO: Add visualization of predictions on sample images
+    # Log validation images to W&B
+    if wandb_run and epoch is not None and epoch % 5 == 0:
+        wandb_run.log(
+            {"validation_predictions": validation_images, **metrics, "epoch": epoch}
+        )
+    elif wandb_run:
+        wandb_run.log({**metrics, "epoch": epoch})
 
     return metrics
 
@@ -611,7 +662,7 @@ def create_model(args, device, wandb_run=None):
         input_size=args.input_size,
         num_classes=args.num_classes,
         darknet_pretrained=args.pretrained,
-        darknet_weights_path=None,  # We'll load full model weights separately if provided
+        darknet_weights_path=os.getenv("DARKNET53_WEIGHTS"),  # Use environment variable
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         momentum=args.momentum,
@@ -623,7 +674,7 @@ def create_model(args, device, wandb_run=None):
 
     # Log model summary to W&B
     if wandb_run:
-        wandb.watch(model, log="all")
+        wandb.watch(model, log="all", log_freq=100)
 
     # Load weights if provided
     if args.weights:
@@ -633,6 +684,9 @@ def create_model(args, device, wandb_run=None):
             model.load_state_dict(checkpoint["model_state_dict"])
         else:
             model.load_state_dict(checkpoint)
+    elif args.pretrained:
+        print("Loading pretrained backbone weights")
+        model.backbone.load_pretrained()
 
     # Create loss function
     loss_fn = YOLOv3Loss(config)

@@ -35,14 +35,31 @@ project_root/
 │   │   │   ├── train.py            # Training script
 │   │   │   ├── inference.py        # Inference script
 │   │   │   ├── evaluate.py         # Evaluation metrics and functions
-│   │   │   ├── model_outputs/      # Directory for model checkpoints
-│   │   │   │   └── <run_name>/     # Run-specific subdirectories
-│   │   │   └── tests/              # Unit tests for YOLOv3
-│   │   │       ├── __init__.py
-│   │   │       ├── test_darknet.py
-│   │   │       ├── test_yolov3.py
-│   │   │       ├── test_loss.py
-│   │   │       └── test_evaluate.py # Tests for evaluation metrics
+│   │   │   ├── scripts/            # Utility scripts
+│   │   │   │   ├── download_darknet_weights.sh  # Script to download and convert weights
+│   │   │   │   ├── run_train_and_eval.sh        # Training and evaluation script
+│   │   │   │   └── run_debug.sh                 # Debug training script
+│   │   │   └── model_outputs/      # Directory for model checkpoints
+│   │   │       └── <run_name>/     # Run-specific subdirectories
+├── tests/                          # Centralized test directory
+│   ├── __init__.py
+│   ├── conftest.py                 # Shared test fixtures and utilities
+│   ├── data_loaders/               # Tests for data loaders
+│   │   ├── __init__.py
+│   │   └── object_detection/
+│   │       ├── __init__.py
+│   │       └── test_voc.py         # Tests for VOC dataset loader
+│   └── models/
+│       └── vanilla/
+│           ├── transformer/
+│           │   ├── __init__.py
+│           │   └── test_transformer.py
+│           └── yolov3/
+│               ├── __init__.py
+│               ├── test_darknet.py
+│               ├── test_yolov3.py
+│               ├── test_loss.py
+│               └── test_evaluate.py
 ├── wandb/                          # Weights & Biases logging directory
 ├── notebooks/                      # Jupyter notebooks for verification
 │   ├── yolov3/
@@ -155,11 +172,18 @@ The YOLOv3 loss function consists of three components:
 - Environment variables defined in `.env` file:
   - `DATA_ROOT`: Root directory for dataset storage
   - `WANDB_API_KEY`: API key for Weights & Biases integration
+  - `DARKNET53_WEIGHTS`: Path to pretrained Darknet53 weights
+  - `VOC_ROOT`: Root directory for Pascal VOC datasets
+  - `VOC2007_DIR`: Directory for VOC2007 dataset
+  - `VOC2012_DIR`: Directory for VOC2012 dataset
 - Using `python-dotenv` to load environment variables
 - Data paths and other configurable parameters centralized for easy management
 
 ### 4.2 Model Implementation
-- **Backbone**: Implement Darknet-53 with configurable input size
+- **Backbone**:
+  - Implement Darknet-53 with configurable input size
+  - Automated weight downloading and conversion from original Darknet format
+  - Support for both training from scratch and pretrained weights
 - **Feature Pyramid**: Connect features from different scales of the backbone
 - **Detection Heads**: Implement the detection logic for each scale
 - **Forward Pass**: Process an image and output predictions in the required format
@@ -167,7 +191,7 @@ The YOLOv3 loss function consists of three components:
 
 ### 4.3 Dataset Implementation
 - Create dataset classes for Pascal VOC and BDD100K
-- Support for both VOC2007 and VOC2012 datasets
+- Support for both VOC2007 and VOC2012 datasets with flexible year selection
 - Option to combine datasets using PyTorch's `ConcatDataset`
 - Implement XML parsing for VOC annotations
 - Convert annotations to YOLOv3 format (normalized [x_center, y_center, width, height])
@@ -177,6 +201,7 @@ The YOLOv3 loss function consists of three components:
 - **Run Management**:
   - Each training run has a unique name (user-defined or timestamp-based)
   - Checkpoints stored in run-specific directories to prevent overwriting
+  - Automated scripts for training, evaluation, and debugging
 - **Two-stage training approach**:
   1. Freeze backbone and train detection heads
   2. Fine-tune entire network
@@ -213,26 +238,37 @@ The YOLOv3 loss function consists of three components:
 
 ## 5. Unit Tests
 
-### 5.1 Component Tests
-- **test_darknet.py**: Test Darknet-53 backbone
+### 5.1 Test Organization
+- **Centralized Test Directory**: All tests moved to root-level `tests/` directory
+- **Mirror Project Structure**: Test directory hierarchy matches source code
+- **Shared Test Utilities**: Common fixtures and helpers in `conftest.py`
+- **Test Discovery**: Automatic test discovery using pytest conventions
+- **Test Categories**:
+  - Data loader tests
+  - Model component tests
+  - Integration tests
+  - Evaluation metric tests
+
+### 5.2 Component Tests
+- **test_darknet.py** (`tests/models/vanilla/yolov3/test_darknet.py`):
   - Test forward pass with different input sizes
   - Test feature extraction at specified layers
   - Test shape of output tensors
 
-- **test_yolov3.py**: Test full YOLOv3 model
+- **test_yolov3.py** (`tests/models/vanilla/yolov3/test_yolov3.py`):
   - Test forward pass end-to-end
   - Test with batch processing
   - Test output format
 
-- **test_loss.py**: Test loss function
+- **test_loss.py** (`tests/models/vanilla/yolov3/test_loss.py`):
   - Test loss calculation with dummy predictions and targets
   - Test gradient flow
   - Test each loss component individually
 
-### 5.2 Integration Tests
-- Test anchors generation
-- Test bounding box transformations
-- Test non-maximum suppression
+- **test_voc.py** (`tests/data_loaders/object_detection/test_voc.py`):
+  - Test dataset initialization with different years
+  - Test data loading and preprocessing
+  - Test annotation parsing and conversion
 
 ## 6. Experiments
 

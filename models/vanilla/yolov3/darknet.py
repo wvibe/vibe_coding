@@ -2,7 +2,14 @@
 Darknet-53 backbone implementation for YOLOv3
 """
 
+import os
+
+import torch
 import torch.nn as nn
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 class ConvBlock(nn.Module):
@@ -124,11 +131,36 @@ class Darknet53(nn.Module):
 
         Args:
             weights_path: Path to pretrained weights file
+                         If None, uses default path from environment variable DARKNET53_WEIGHTS
         """
-        # This would load weights from a file or a pretrained model repository
-        # For now, we'll leave this as a placeholder
-        if weights_path:
-            # Load weights using torch.load() and map to appropriate layers
-            print(f"Loading pretrained weights from {weights_path}")
-        else:
-            print("No pretrained weights provided, using random initialization")
+        if weights_path is None:
+            weights_path = os.getenv("DARKNET53_WEIGHTS")
+            if weights_path is None:
+                print("Warning: DARKNET53_WEIGHTS environment variable not set")
+                return
+
+        if not os.path.exists(weights_path):
+            print(f"Warning: Pretrained weights not found at {weights_path}")
+            print(
+                "Please run scripts/download_darknet_weights.sh to download and convert the weights"
+            )
+            return
+
+        try:
+            # Load weights
+            state_dict = torch.load(weights_path, map_location=torch.device("cpu"))
+
+            # Load weights that match the model
+            model_state_dict = self.state_dict()
+            for name, param in state_dict.items():
+                if name in model_state_dict:
+                    if param.shape == model_state_dict[name].shape:
+                        model_state_dict[name].copy_(param)
+                    else:
+                        print(f"Warning: Size mismatch for layer {name}")
+                else:
+                    print(f"Warning: Layer {name} not found in model")
+
+            print(f"Successfully loaded pretrained weights from {weights_path}")
+        except Exception as e:
+            print(f"Error loading pretrained weights: {e}")
