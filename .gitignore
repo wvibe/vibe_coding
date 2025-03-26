@@ -5,6 +5,10 @@ __pycache__/
 .venv
 env/
 venv/
+*.egg-info/
+*.egg
+build/
+dist/
 
 # IDE
 .DS_Store
