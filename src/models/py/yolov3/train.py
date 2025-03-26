@@ -704,21 +704,19 @@ def create_datasets(args):
 
         # Create train dataset
         train_dataset = PascalVOCDataset(
-            split=args.train_split,
             years=years,
-            subset_percent=args.subset_percent,
-            class_name=args.class_name,
-            debug_mode=args.debug_mode,
+            split_file=f"{args.train_split}.txt",
+            sample_pct=args.subset_percent,
+            data_dir=args.data_dir,
         )
         train_collate_fn = train_dataset.collate_fn
 
         # Create validation dataset
         val_dataset = PascalVOCDataset(
-            split=args.val_split,
             years=years,
-            subset_percent=args.subset_percent,
-            class_name=args.class_name,
-            debug_mode=args.debug_mode,
+            split_file=f"{args.val_split}.txt",
+            sample_pct=args.subset_percent,
+            data_dir=args.data_dir,
         )
         val_collate_fn = val_dataset.collate_fn
 
@@ -727,13 +725,46 @@ def create_datasets(args):
         test_collate_fn = None
         if args.test_split:
             test_dataset = PascalVOCDataset(
-                split=args.test_split,
                 years=years,
-                subset_percent=args.subset_percent,
-                class_name=args.class_name,
-                debug_mode=args.debug_mode,
+                split_file=f"{args.test_split}.txt",
+                sample_pct=args.subset_percent,
+                data_dir=args.data_dir,
             )
             test_collate_fn = test_dataset.collate_fn
+
+        # Create class-specific dataset if required
+        if args.class_name:
+            class_train_file = f"{args.class_name}_{args.train_split}.txt"
+            class_val_file = f"{args.class_name}_{args.val_split}.txt"
+
+            # Create class-specific train dataset
+            train_dataset = PascalVOCDataset(
+                years=years,
+                split_file=class_train_file,
+                sample_pct=args.subset_percent,
+                data_dir=args.data_dir,
+            )
+            train_collate_fn = train_dataset.collate_fn
+
+            # Create class-specific validation dataset
+            val_dataset = PascalVOCDataset(
+                years=years,
+                split_file=class_val_file,
+                sample_pct=args.subset_percent,
+                data_dir=args.data_dir,
+            )
+            val_collate_fn = val_dataset.collate_fn
+
+            # Create class-specific test dataset if specified
+            if args.test_split and args.class_name:
+                class_test_file = f"{args.class_name}_{args.test_split}.txt"
+                test_dataset = PascalVOCDataset(
+                    years=years,
+                    split_file=class_test_file,
+                    sample_pct=args.subset_percent,
+                    data_dir=args.data_dir,
+                )
+                test_collate_fn = test_dataset.collate_fn
     else:
         # In future, add BDD100K dataset
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented yet")

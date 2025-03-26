@@ -92,7 +92,11 @@ def debug_train():
     subset_fraction = 0.1  # Use 10% of the dataset
 
     # Create train dataset
-    train_dataset = PascalVOCDataset(split=args.train_split, year=args.year)
+    train_dataset = PascalVOCDataset(
+        years=[args.year] if isinstance(args.year, str) else args.year.split(","),
+        split_file=f"{args.train_split}.txt",
+        sample_pct=subset_fraction,
+    )
     train_loader = create_subset_dataloader(
         train_dataset,
         subset_fraction=subset_fraction,
@@ -101,7 +105,11 @@ def debug_train():
     )
 
     # Create validation dataset
-    val_dataset = PascalVOCDataset(split=args.val_split, year=args.year)
+    val_dataset = PascalVOCDataset(
+        years=[args.year] if isinstance(args.year, str) else args.year.split(","),
+        split_file=f"{args.val_split}.txt",
+        sample_pct=subset_fraction,
+    )
     val_loader = create_subset_dataloader(
         val_dataset,
         subset_fraction=subset_fraction,

@@ -53,7 +53,7 @@ def visualize_sample(dataset, idx=0, output_dir=None):
     plt.imshow(image_np)
 
     # Get class names
-    class_names = dataset.class_names
+    class_names = dataset.CLASS_NAMES
 
     # Draw boxes
     height, width = image_np.shape[:2]
@@ -101,9 +101,8 @@ def check_dataset():
     # Create dataset
     dataset = PascalVOCDataset(
         years=["2007"],
-        split="train",
-        subset_percent=0.01,  # Use small subset for testing
-        debug_mode=True,
+        split_file="train.txt",
+        sample_pct=0.01,  # Use small subset for testing
     )
 
     print(f"Dataset size: {len(dataset)}")

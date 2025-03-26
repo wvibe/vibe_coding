@@ -298,7 +298,7 @@ def main():
 
     # Create dataset
     print(f"Loading {dataset_name.upper()} dataset...")
-    dataset = PascalVOCDataset(years=["2007"], split="train", debug_mode=True)
+    dataset = PascalVOCDataset(years=["2007"], split_file="train.txt")
 
     # Collect all boxes
     boxes = collect_boxes_from_dataset(dataset)

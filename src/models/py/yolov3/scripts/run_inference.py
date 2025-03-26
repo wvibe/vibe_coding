@@ -104,7 +104,7 @@ def main():
 
     # Load dataset to sample images
     try:
-        dataset = PascalVOCDataset(years=["2007"], split="val", debug_mode=True)
+        dataset = PascalVOCDataset(years=["2007"], split_file="val.txt")
         print(f"Loaded dataset with {len(dataset)} images")
 
         # Randomly select a few images for inference
