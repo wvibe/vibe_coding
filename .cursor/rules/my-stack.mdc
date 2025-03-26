@@ -1,19 +1,49 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
-
 # Technology Stack
 
-- Operate only within project folder, ask permission if you need to touch anything outside the project
-- Use Conda environment 'vbl' for this project, use pip to install python packages
-- Python for the backend, prefer version 3.12 for this project
-- Pytorch for Machine Learning, prefer Huggingface libraries if applicable
-- Use 'data' folder under the vibe root of ML data storage, create subfolders for different datasets.
-- Use pytest for unittesting, and ruff for linting and formatting
-- HTML/JS/Gradio for the frontend
-- SQL databases, never JSON file storage
-- Separate databases for dev, test, and prod
-- When missing packages, check if the conda env vbl is activated correctly first
-- When failed to connect or download from external website, check if proxy is set correctly first
+## Environment Management
+- Conda environment: 'vbl'
+- Python version: 3.12
+- Package management: pip
+- Required environment variables: [None]
+
+## Core Technologies
+- Backend: Python 3.12
+- ML Framework: PyTorch 2.6
+- ML Libraries: Huggingface
+- Frontend: HTML/JS/Gradio
+- Database: MySQL
+- Testing: pytest
+- Linting: ruff
+
+
+## Project Structure
+vibe/                          # Root folder (not in git)
+├── vibe_coding/               # Git repository
+│   ├── src/                   # Main source code
+│   │   ├── models/            # ML model implementations
+│   │   │   ├── hf/            # Using Huggingface transformers
+│   │   │   └── py/            # Using raw PyTorch
+│   │   ├── data_loaders/      # Data loading utilities
+│   │   └── utils/             # Utility functions and helpers
+│   ├── notebooks/             # Jupyter notebooks for experiments
+│   ├── tests/                 # Test files mirroring src structure
+│   │   └── models/            # Model tests
+│   ├── docs/                  # Documentation
+│   ├── requirements.txt       # Python dependencies
+│   ├── README.md              # Project documentation
+│   └── .env                   # Environment variables (not in git)
+└── vhub                       # Resource files for ML (not in git)
+    ├── data/                  # Dataset files
+    ├── pretrained/            # Pre-trained models
+    └── checkpoints/           # Training checkpoints
+
+## Development Guidelines
+- Test coverage: Required for all model code
+- Documentation: Docstrings for functions and classes
+- Environment: Keep .env local, never commit
+- vHub: Store outside git repository in vibe root folder
