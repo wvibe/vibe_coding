@@ -34,6 +34,4 @@ def data_root():
 @pytest.fixture(scope="session")
 def voc_root():
     """Return the VOC dataset root directory from environment variable"""
-    return Path(
-        os.getenv("VOC_ROOT", os.path.join(os.getenv("DATA_ROOT", "data"), "VOCdevkit"))
-    )
+    return Path(os.getenv("VOC_ROOT", os.path.join(os.getenv("DATA_ROOT", "data"), "VOCdevkit")))
