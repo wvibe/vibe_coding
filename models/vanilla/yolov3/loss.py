@@ -15,6 +15,8 @@ class YOLOv3Loss(nn.Module):
     1. Localization loss: MSE for bounding box coordinates
     2. Objectness loss: BCE for objectness score
     3. Classification loss: BCE for class probabilities
+
+    With improved anchor assignment and ignore mechanism.
     """
 
     def __init__(self, config):
@@ -39,7 +41,7 @@ class YOLOv3Loss(nn.Module):
 
     def forward(self, predictions, targets):
         """
-        Compute the YOLOv3 loss
+        Compute the YOLOv3 loss with improved mechanism
 
         Args:
             predictions: Tuple of predictions from all three scales
@@ -48,7 +50,7 @@ class YOLOv3Loss(nn.Module):
                     {
                         'boxes': List of tensors with bounding boxes [x, y, w, h],
                         'labels': List of tensors with class labels,
-                        'scale_mask': List of tensors indicating which scale to use
+                        'scale_mask': List of tensors indicating which scale to use (optional)
                     }
 
         Returns:
@@ -80,40 +82,48 @@ class YOLOv3Loss(nn.Module):
         for scale_idx, (pred, anchors, grid_size) in enumerate(
             zip(scale_preds, scale_anchors, grid_sizes, strict=False)
         ):
-            # Create targets tensor for this scale
-            target_tensor = self._build_target(targets, anchors, grid_size, scale_idx, batch_size)
+            # Transform predictions to the same format as targets for loss computation
+            transformed_pred = self._transform_predictions(pred, anchors, grid_size)
 
-            # Get masks
-            obj_mask = target_tensor[..., 4].bool()  # Objectness mask
-            noobj_mask = ~obj_mask
+            # Create target tensor with improved assignment, including ignore mask
+            target_tensor, obj_mask, noobj_mask, ignore_mask = self._build_targets_improved(
+                targets, anchors, grid_size, scale_idx, batch_size, pred
+            )
 
-            # Compute losses
+            # Update noobj_mask to exclude ignored predictions
+            noobj_mask = noobj_mask & ~ignore_mask
+
+            # Compute losses with improved mechanism
             # Localization loss (only for cells with objects)
             if obj_mask.sum() > 0:
                 # Box coordinates loss
                 xy_loss = F.mse_loss(
-                    pred[..., 0:2][obj_mask],
+                    transformed_pred[..., 0:2][obj_mask],
                     target_tensor[..., 0:2][obj_mask],
                     reduction="sum",
                 )
                 wh_loss = F.mse_loss(
-                    pred[..., 2:4][obj_mask],
+                    transformed_pred[..., 2:4][obj_mask],
                     target_tensor[..., 2:4][obj_mask],
                     reduction="sum",
                 )
                 loc_loss += xy_loss + wh_loss
 
-            # Objectness loss
-            obj_loss += F.binary_cross_entropy_with_logits(
-                pred[..., 4][obj_mask], target_tensor[..., 4][obj_mask], reduction="sum"
-            )
+            # Objectness loss for positive samples (with objects)
+            if obj_mask.sum() > 0:
+                obj_loss += F.binary_cross_entropy_with_logits(
+                    pred[..., 4][obj_mask],
+                    torch.ones_like(pred[..., 4][obj_mask]),
+                    reduction="sum",
+                )
 
-            # No object loss (with lower weight)
-            obj_loss += self.lambda_noobj * F.binary_cross_entropy_with_logits(
-                pred[..., 4][noobj_mask],
-                target_tensor[..., 4][noobj_mask],
-                reduction="sum",
-            )
+            # No object loss (with lower weight and ignore mask)
+            if noobj_mask.sum() > 0:
+                obj_loss += self.lambda_noobj * F.binary_cross_entropy_with_logits(
+                    pred[..., 4][noobj_mask],
+                    torch.zeros_like(pred[..., 4][noobj_mask]),
+                    reduction="sum",
+                )
 
             # Classification loss (only for cells with objects)
             if obj_mask.sum() > 0:
@@ -122,6 +132,13 @@ class YOLOv3Loss(nn.Module):
                     target_tensor[..., 5:][obj_mask],
                     reduction="sum",
                 )
+
+        # Normalize losses by batch size to make them less dependent on batch size
+        # This helps stabilize training with different batch sizes
+        normalizer = batch_size  # Could use sum of objects instead, but batch_size is simpler
+        loc_loss = loc_loss / normalizer
+        obj_loss = obj_loss / normalizer
+        cls_loss = cls_loss / normalizer
 
         # Combine losses with weighting
         total_loss = self.lambda_coord * loc_loss + obj_loss + cls_loss
@@ -133,9 +150,62 @@ class YOLOv3Loss(nn.Module):
             "cls_loss": cls_loss,
         }
 
-    def _build_target(self, targets, anchors, grid_size, scale_idx, batch_size):
+    def _transform_predictions(self, pred, anchors, grid_size):
         """
-        Build target tensor for a specific scale
+        Transform raw model predictions to the target format for loss computation
+
+        Args:
+            pred: Raw predictions from model [batch_size, num_anchors, grid_size, grid_size, 5+num_classes]
+            anchors: Anchor boxes for this scale
+            grid_size: Grid size for this scale
+
+        Returns:
+            torch.Tensor: Transformed predictions in target format
+        """
+        batch_size = pred.size(0)
+        num_anchors = len(anchors)
+        device = pred.device
+
+        # Create grid
+        grid_x, grid_y = torch.meshgrid(
+            torch.arange(grid_size, device=device),
+            torch.arange(grid_size, device=device),
+            indexing="ij",
+        )
+
+        # Reshape for broadcasting
+        grid_x = grid_x.reshape(1, 1, grid_size, grid_size).expand(
+            batch_size, num_anchors, grid_size, grid_size
+        )
+        grid_y = grid_y.reshape(1, 1, grid_size, grid_size).expand(
+            batch_size, num_anchors, grid_size, grid_size
+        )
+
+        # Reshape anchors for broadcasting
+        anchors_tensor = torch.tensor(anchors, device=device, dtype=torch.float32)
+        anchors_tensor = anchors_tensor.reshape(1, num_anchors, 1, 1, 2).expand(
+            batch_size, num_anchors, grid_size, grid_size, 2
+        )
+
+        # Apply sigmoid to x, y predictions (cell-relative coordinates)
+        pred_xy = torch.sigmoid(pred[..., 0:2])
+
+        # Cell-relative coordinates to grid-relative
+        pred_xy = (pred_xy + torch.stack((grid_x, grid_y), dim=-1)) / grid_size
+
+        # Apply exp to width, height predictions and multiply by anchors
+        pred_wh = torch.exp(pred[..., 2:4]) * anchors_tensor / grid_size
+
+        # Combine transformed predictions
+        transformed_pred = torch.cat([pred_xy, pred_wh, torch.sigmoid(pred[..., 4:])], dim=-1)
+
+        return transformed_pred
+
+    def _build_targets_improved(
+        self, targets, anchors, grid_size, scale_idx, batch_size, predictions
+    ):
+        """
+        Build target tensor for a specific scale with improved anchor assignment and ignore mask
 
         Args:
             targets: Dictionary with ground truth
@@ -143,65 +213,102 @@ class YOLOv3Loss(nn.Module):
             grid_size: Grid size for this scale
             scale_idx: Index of the scale (0, 1, 2)
             batch_size: Batch size
+            predictions: Raw predictions for this scale
 
         Returns:
-            torch.Tensor: Target tensor for this scale with shape
-                        (batch_size, num_anchors, grid_size, grid_size, 5 + num_classes)
+            tuple: (target_tensor, obj_mask, noobj_mask, ignore_mask)
+                  target_tensor: Target tensor for this scale
+                  obj_mask: Mask for cells with objects
+                  noobj_mask: Mask for cells without objects
+                  ignore_mask: Mask for cells to ignore in noobj loss
         """
-        device = targets["boxes"][0].device
-        dtype = targets["boxes"][0].dtype
+        device = targets["boxes"][0].device if len(targets["boxes"]) > 0 else predictions.device
+        dtype = predictions.dtype
 
-        # Initialize target tensor
+        # Initialize tensors
         target = torch.zeros(
             (batch_size, self.num_anchors, grid_size, grid_size, 5 + self.num_classes),
             dtype=dtype,
             device=device,
         )
+        obj_mask = torch.zeros(
+            (batch_size, self.num_anchors, grid_size, grid_size), dtype=torch.bool, device=device
+        )
+        noobj_mask = torch.ones(
+            (batch_size, self.num_anchors, grid_size, grid_size), dtype=torch.bool, device=device
+        )
+        ignore_mask = torch.zeros(
+            (batch_size, self.num_anchors, grid_size, grid_size), dtype=torch.bool, device=device
+        )
+
+        # Convert anchors to tensor
+        anchors_tensor = torch.tensor(anchors, device=device, dtype=dtype)
 
         # For each image in the batch
         for b in range(batch_size):
+            # Skip if no ground truth boxes for this image
+            if len(targets["boxes"]) <= b or len(targets["boxes"][b]) == 0:
+                continue
+
             # Get ground truth boxes and labels for this image
             gt_boxes = targets["boxes"][b]
             gt_labels = targets["labels"][b]
 
-            # Skip if no ground truth boxes
-            if len(gt_boxes) == 0:
-                continue
-
-            # For each ground truth box
+            # Process each ground truth box
             for box_idx, (box, label) in enumerate(zip(gt_boxes, gt_labels, strict=False)):
-                # Check if this box should be assigned to this scale
-                if "scale_mask" in targets and not targets["scale_mask"][b][box_idx][scale_idx]:
+                # Skip dummy boxes (with width or height near 0.1)
+                if torch.allclose(box[2:4], torch.tensor([0.1, 0.1], device=device), atol=1e-2):
                     continue
 
-                # Convert box coordinates to grid cell coordinates
+                # Check if this box should be assigned to this scale
+                # If scale_mask is provided, use it to determine which scale to assign to
+                if "scale_mask" in targets and targets["scale_mask"][b].shape[0] > box_idx:
+                    if not targets["scale_mask"][b][box_idx][scale_idx]:
+                        continue
+                else:
+                    # If no scale_mask, assign based on box size relative to image size
+                    # This is a heuristic: small objects to small scale, large to large scale
+                    box_area = box[2] * box[3]  # Normalized area
+
+                    # Skip if box doesn't match this scale
+                    # Small boxes (area < 0.1) to small scale (52x52)
+                    # Medium boxes (0.1 <= area < 0.3) to medium scale (26x26)
+                    # Large boxes (area >= 0.3) to large scale (13x13)
+                    if (
+                        (scale_idx == 0 and box_area < 0.3)
+                        or (scale_idx == 1 and (box_area < 0.1 or box_area >= 0.3))
+                        or (scale_idx == 2 and box_area >= 0.1)
+                    ):
+                        continue
+
+                # Box coordinates (normalized)
                 x, y, w, h = box
 
-                # Grid cell coordinates
+                # Convert to grid cell coordinates
                 grid_x = int(x * grid_size)
                 grid_y = int(y * grid_size)
 
                 # Clamp to grid boundaries
-                grid_x = min(grid_x, grid_size - 1)
-                grid_y = min(grid_y, grid_size - 1)
+                grid_x = max(0, min(grid_x, grid_size - 1))
+                grid_y = max(0, min(grid_y, grid_size - 1))
 
                 # Box width and height relative to grid cell
                 box_w = w * grid_size
                 box_h = h * grid_size
 
                 # Find best anchor based on IoU
-                best_anchor_idx = self._find_best_anchor(box_w, box_h, anchors)
+                best_anchor_idx, best_iou = self._find_best_anchor_iou(box_w, box_h, anchors_tensor)
 
                 # Set target values
-                # Box coordinates relative to grid cell (0 to 1)
+                # Coordinates within cell (0 to 1)
                 x_cell = x * grid_size - grid_x
                 y_cell = y * grid_size - grid_y
 
                 # Width and height relative to anchor
-                w_cell = torch.log(box_w / anchors[best_anchor_idx][0] + 1e-16)
-                h_cell = torch.log(box_h / anchors[best_anchor_idx][1] + 1e-16)
+                w_cell = torch.log(w * grid_size / anchors_tensor[best_anchor_idx][0] + 1e-16)
+                h_cell = torch.log(h * grid_size / anchors_tensor[best_anchor_idx][1] + 1e-16)
 
-                # Set target box
+                # Set target box coordinates
                 target[b, best_anchor_idx, grid_y, grid_x, 0] = x_cell
                 target[b, best_anchor_idx, grid_y, grid_x, 1] = y_cell
                 target[b, best_anchor_idx, grid_y, grid_x, 2] = w_cell
@@ -213,11 +320,95 @@ class YOLOv3Loss(nn.Module):
                 # Set class (one-hot encoding)
                 target[b, best_anchor_idx, grid_y, grid_x, 5 + label] = 1.0
 
-        return target
+                # Update masks
+                obj_mask[b, best_anchor_idx, grid_y, grid_x] = True
+                noobj_mask[b, best_anchor_idx, grid_y, grid_x] = False
+
+                # Mark anchors with high IoU as ignored for noobj loss
+                for anchor_idx in range(len(anchors)):
+                    if anchor_idx != best_anchor_idx:
+                        # Calculate IoU with other anchors
+                        iou = self._calculate_anchor_box_iou(
+                            box_w,
+                            box_h,
+                            anchors_tensor[anchor_idx][0],
+                            anchors_tensor[anchor_idx][1],
+                        )
+
+                        # If IoU exceeds threshold, ignore this anchor for noobj loss
+                        if iou > self.ignore_threshold:
+                            ignore_mask[b, anchor_idx, grid_y, grid_x] = True
+
+        return target, obj_mask, noobj_mask, ignore_mask
+
+    def _find_best_anchor_iou(self, box_w, box_h, anchors):
+        """
+        Find best anchor based on IoU
+
+        Args:
+            box_w: Box width (in grid units)
+            box_h: Box height (in grid units)
+            anchors: Anchors tensor
+
+        Returns:
+            tuple: (best_anchor_idx, best_iou)
+        """
+        # Calculate IoU for all anchors
+        anchor_ious = torch.zeros(len(anchors), device=box_w.device)
+
+        for i, anchor in enumerate(anchors):
+            anchor_w, anchor_h = anchor
+
+            # Calculate intersection area
+            intersect_w = torch.min(box_w, anchor_w)
+            intersect_h = torch.min(box_h, anchor_h)
+            intersect_area = intersect_w * intersect_h
+
+            # Calculate union area
+            box_area = box_w * box_h
+            anchor_area = anchor_w * anchor_h
+            union_area = box_area + anchor_area - intersect_area + 1e-16
+
+            # Calculate IoU
+            anchor_ious[i] = intersect_area / union_area
+
+        # Find best anchor
+        best_anchor_idx = torch.argmax(anchor_ious).item()
+        best_iou = anchor_ious[best_anchor_idx].item()
+
+        return best_anchor_idx, best_iou
+
+    def _calculate_anchor_box_iou(self, box_w, box_h, anchor_w, anchor_h):
+        """
+        Calculate IoU between a box and an anchor
+
+        Args:
+            box_w: Box width
+            box_h: Box height
+            anchor_w: Anchor width
+            anchor_h: Anchor height
+
+        Returns:
+            float: IoU value
+        """
+        # Calculate intersection area
+        intersect_w = torch.min(box_w, anchor_w)
+        intersect_h = torch.min(box_h, anchor_h)
+        intersect_area = intersect_w * intersect_h
+
+        # Calculate union area
+        box_area = box_w * box_h
+        anchor_area = anchor_w * anchor_h
+        union_area = box_area + anchor_area - intersect_area + 1e-16
+
+        # Calculate IoU
+        iou = intersect_area / union_area
+
+        return iou
 
     def _find_best_anchor(self, box_w, box_h, anchors):
         """
-        Find best anchor box based on IoU
+        Find best anchor box based on IoU (legacy method, kept for compatibility)
 
         Args:
             box_w: Box width relative to grid cell
