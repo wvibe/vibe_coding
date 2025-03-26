@@ -10,46 +10,53 @@ For information about recent improvements and usage instructions, see [YOLOv3 RE
 
 ```
 project_root/
-├── data_loaders/                   # Dataset utilities (renamed from datasets)
-│   ├── __init__.py
-│   ├── images/                     # Image dataset loaders
+├── src/                           # Source code directory
+│   ├── data_loaders/              # Dataset utilities
 │   │   ├── __init__.py
-│   │   ├── voc.py                  # Pascal VOC dataset
-│   │   └── bdd.py                  # BDD100K dataset
-│   ├── object_detection/           # Object detection specific loaders
+│   │   └── cv/                    # Computer Vision data loaders
+│   │       ├── __init__.py
+│   │       └── voc.py             # Pascal VOC dataset
+│   ├── models/
 │   │   ├── __init__.py
-│   │   ├── voc.py                  # VOC object detection format
-│   │   └── bdd.py                  # BDD100K detection format
-│   └── utils/                      # Common dataset utilities
-│       ├── __init__.py
-│       ├── augmentation.py         # Data augmentation functions
-│       └── bbox.py                 # Bounding box utilities
-├── models/
-│   ├── py/
-│   │   ├── yolov3/                 # YOLOv3 implementation
+│   │   ├── hf/                    # Huggingface models
 │   │   │   ├── __init__.py
-│   │   │   ├── config.py           # Model configuration
-│   │   │   ├── darknet.py          # Darknet-53 backbone
-│   │   │   ├── neck.py             # Feature pyramid network
-│   │   │   ├── head.py             # Detection heads
-│   │   │   ├── yolov3.py           # Full YOLOv3 model
-│   │   │   ├── loss.py             # Loss functions
-│   │   │   ├── train.py            # Training script
-│   │   │   ├── inference.py        # Inference script
-│   │   │   ├── evaluate.py         # Evaluation metrics and functions
-│   │   │   ├── scripts/            # Utility scripts
-│   │   │   ├── anchors/            # Generated anchor boxes
-│   │   │   ├── visualizations/     # Data pipeline visualizations
-│   │   │   └── model_outputs/      # Directory for model checkpoints
-│   │   │       └── <run_name>/     # Run-specific subdirectories
-├── tests/                          # Centralized test directory
-├── wandb/                          # Weights & Biases logging directory
-├── notebooks/                      # Jupyter notebooks for verification
-├── utils/                          # Shared utilities
-├── .env                            # Environment variables
-├── requirements.txt                # Project dependencies
-└── doc/                            # Documentation
-    └── yolov3/                     # YOLOv3 specific documentation
+│   │   │   └── WT5/               # WT5 model implementation
+│   │   └── py/                    # PyTorch models
+│   │       ├── __init__.py
+│   │       ├── transformer/       # Transformer implementation
+│   │       └── yolov3/            # YOLOv3 implementation
+│   │           ├── __init__.py
+│   │           ├── config.py      # Model configuration
+│   │           ├── darknet.py     # Darknet-53 backbone
+│   │           ├── neck.py        # Feature pyramid network
+│   │           ├── head.py        # Detection heads
+│   │           ├── yolov3.py      # Full YOLOv3 model
+│   │           ├── loss.py        # Loss functions
+│   │           ├── train.py       # Training script
+│   │           ├── inference.py   # Inference script
+│   │           ├── evaluate.py    # Evaluation metrics and functions
+│   │           ├── scripts/       # Utility scripts
+│   │           ├── anchors/       # Generated anchor boxes
+│   │           └── visualizations/ # Data pipeline visualizations
+│   ├── notebooks/                 # Jupyter notebooks for verification
+│   └── utils/                     # Shared utilities
+│       ├── __init__.py
+│       └── bbox/                  # Bounding box utilities
+│           ├── __init__.py
+│           └── bbox.py            # Bounding box operations
+├── tests/                         # Centralized test directory
+│   ├── data_loaders/
+│   │   └── cv/                    # Tests for CV data loaders
+│   └── models/
+│       └── py/                    # Tests for PyTorch models
+│           ├── transformer/       # Tests for transformer models
+│           └── yolov3/            # Tests for YOLOv3 implementation
+├── docs/                          # Documentation
+│   └── yolov3/                    # YOLOv3 specific documentation
+├── setup.py                       # Project setup script
+├── .env                           # Environment variables
+├── requirements.txt               # Project dependencies
+└── wandb/                         # Weights & Biases logging directory
 ```
 
 ## 2. YOLOv3 Architecture Details
@@ -127,12 +134,14 @@ The YOLOv3 loss function consists of three components:
 
 ### 4.1 Environment Configuration
 - Environment variables defined in `.env` file:
+  - `VIBE_ROOT`: Root directory for the entire project
+  - `VHUB_ROOT`: Root directory for data and models outside Git
   - `DATA_ROOT`: Root directory for dataset storage
-  - `WANDB_API_KEY`: API key for Weights & Biases integration
-  - `DARKNET53_WEIGHTS`: Path to pretrained Darknet53 weights
   - `VOC_ROOT`: Root directory for Pascal VOC datasets
-  - `VOC2007_DIR`: Directory for VOC2007 dataset
-  - `VOC2012_DIR`: Directory for VOC2012 dataset
+  - `PRETRAINED_ROOT`: Directory for pretrained models
+  - `CHECKPOINTS_ROOT`: Directory for training checkpoints
+  - `DARKNET53_WEIGHTS`: Path to pretrained Darknet53 weights
+  - `WANDB_API_KEY`: API key for Weights & Biases integration
 
 ### 4.2 Training Infrastructure
 - **Two-stage training approach**:
@@ -211,6 +220,10 @@ The YOLOv3 loss function consists of three components:
 - Weights & Biases for experiment tracking
 - python-dotenv for environment management
 - PIL for image processing
+
+All dependencies are managed through:
+- `requirements.txt`: Contains detailed dependency versions
+- `setup.py`: Provides package installation and dependency definition
 
 ## 8. References
 

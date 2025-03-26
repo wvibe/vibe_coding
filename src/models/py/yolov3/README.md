@@ -23,7 +23,13 @@ The implementation has been significantly improved to address training stability
 - Balanced loss weights (λ_coord=5.0, λ_noobj=0.5)
 - Batch size increased to 16 for better gradient estimates
 
-### 4. Data Processing Verification
+### 4. Code Structure Improvements
+- Moved to proper Python package structure with src layout
+- Replaced relative imports with absolute imports
+- Simplified environment configuration
+- Added proper package installation with setup.py
+
+### 5. Data Processing Verification
 - Added verification scripts to ensure data pipeline correctness
 - Proper scale assignment for objects of different sizes
 - Handling of dummy boxes to prevent false training signals
@@ -31,17 +37,20 @@ The implementation has been significantly improved to address training stability
 ## Quick Start
 
 ```bash
+# Install the package
+pip install -e .
+
 # Verify data pipeline and model loading
-./src/models/py/yolov3/scripts/verify_pipeline.py
+python -m src.models.py.yolov3.scripts.verify_pipeline
 
 # Generate custom anchors for VOC dataset
-./src/models/py/yolov3/scripts/generate_anchors.py voc custom
+python -m src.models.py.yolov3.scripts.generate_anchors voc custom
 
 # Train with improved settings
-./src/models/py/yolov3/scripts/run_train_and_eval.sh
+bash src/models/py/yolov3/scripts/run_train_and_eval.sh
 
 # Evaluate a trained model
-./src/models/py/yolov3/scripts/run_train_and_eval.sh --eval
+bash src/models/py/yolov3/scripts/run_train_and_eval.sh --eval
 ```
 
 ## Model Overview
@@ -77,4 +86,4 @@ The model follows the YOLOv3 architecture with three main components:
 ## References
 - YOLOv3 paper: "YOLOv3: An Incremental Improvement" by Joseph Redmon and Ali Farhadi
 - Pascal VOC dataset: http://host.robots.ox.ac.uk/pascal/VOC/
-- Detailed design document: [design.md](../../doc/yolov3/design.md)
+- Detailed design document: [design.md](../../../../docs/yolov3/design.md)

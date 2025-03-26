@@ -12,8 +12,8 @@ The model converts the sentiment classification task into a text-to-text format:
 
 ## Requirements
 
-- Python 3.7+
-- PyTorch 1.10+
+- Python 3.12+
+- PyTorch 2.0+
 - Transformers 4.18+
 - Datasets
 - scikit-learn
@@ -22,13 +22,16 @@ The model converts the sentiment classification task into a text-to-text format:
 You can install the required packages with:
 
 ```bash
-pip install torch transformers datasets scikit-learn tqdm
+# Clone the repository and install
+git clone https://github.com/wvibe/vibe_coding.git
+cd vibe_coding
+pip install -e .
 ```
 
 ## Directory Structure
 
 ```
-models/hf/WT5/
+src/models/hf/WT5/
 ├── configuration.py    # WT5 configuration class
 ├── modeling.py         # WT5 model implementation
 ├── trainer.py          # Training implementation
@@ -43,7 +46,7 @@ models/hf/WT5/
 The simplest way to run an experiment is to use the `run_experiment.py` script:
 
 ```bash
-python run_experiment.py --config small --batch_size 4 --epochs 3
+python -m src.models.hf.WT5.run_experiment --config small --batch_size 4 --epochs 3
 ```
 
 This will train a small WT5 model on the IMDB dataset for 3 epochs.
@@ -73,8 +76,8 @@ The script includes three predefined configurations:
 You can also use the trainer directly in your own code:
 
 ```python
-from configuration import WT5Config
-from trainer import WT5Trainer
+from src.models.hf.WT5.configuration import WT5Config
+from src.models.hf.WT5.trainer import WT5Trainer
 
 # Create custom configuration
 config = WT5Config(
@@ -108,7 +111,7 @@ results = trainer.train(
 You can load a trained model using the `from_pretrained` method:
 
 ```python
-from trainer import WT5Trainer
+from src.models.hf.WT5.trainer import WT5Trainer
 
 # Load model from saved checkpoint
 trainer = WT5Trainer.from_pretrained("./my_experiment/best_model")
@@ -127,4 +130,4 @@ print(f"Test metrics: {metrics}")
 
 ## Extending
 
-This implementation can be extended for other text classification tasks by modifying the dataset formatting in `IMDBDataset` class to fit the specific requirements of your task. 
+This implementation can be extended for other text classification tasks by modifying the dataset formatting in `IMDBDataset` class to fit the specific requirements of your task.
