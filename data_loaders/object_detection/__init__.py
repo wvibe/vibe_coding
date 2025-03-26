@@ -1,3 +1,0 @@
-"""
-Object detection dataset loaders
-"""
