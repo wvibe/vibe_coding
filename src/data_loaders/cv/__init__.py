@@ -2,7 +2,9 @@
 Computer Vision data loaders
 """
 
-# Import main classes
-from src.data_loaders.cv.voc import PascalVOCDataset
+from src.data_loaders.cv.dummy import DummyDetectionDataset
 
-__all__ = ["PascalVOCDataset"]
+# Import main classes
+from src.data_loaders.cv.voc import ImprovedVOCDataset, PascalVOCDataset
+
+__all__ = ["PascalVOCDataset", "ImprovedVOCDataset", "DummyDetectionDataset"]

@@ -114,8 +114,11 @@ class YOLOv3(nn.Module):
             # Process predictions for each scale
             scale_predictions = [pred[batch_idx] for pred in predictions]
 
-            # Use grid sizes that match the predictions output for 416x416 input
-            grid_sizes = [13, 26, 52]  # Grid sizes for 416x416 input
+            # FIXED: Dynamically determine grid sizes from prediction tensor shapes
+            # Instead of hardcoded grid sizes for 416x416 input
+            grid_sizes = [
+                pred.shape[1] for pred in scale_predictions
+            ]  # Get grid size from prediction shape
             anchor_indices = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
             # Process each scale

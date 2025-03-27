@@ -27,17 +27,29 @@ class YOLOv3Loss(nn.Module):
             config: YOLOv3 configuration object
         """
         super().__init__()
-        self.lambda_coord = config.lambda_coord
-        self.lambda_noobj = config.lambda_noobj
+        self.lambda_coord = 5.0  # Weight for coordinate loss
+        self.lambda_noobj = 0.5  # Weight for no-object loss
         self.num_classes = config.num_classes
-        self.anchors = config.anchors
-        self.num_anchors = config.anchors_per_scale
-        self.ignore_threshold = 0.5  # IoU threshold for ignoring objectness loss
+        self.num_anchors = 3  # Number of anchors per grid cell
+        self.ignore_threshold = 0.5  # IoU threshold for ignoring predictions
 
-        # Reshape anchors for each scale
-        self.anchors_large = self.anchors[0:3]  # For 13x13 grid
-        self.anchors_medium = self.anchors[3:6]  # For 26x26 grid
-        self.anchors_small = self.anchors[6:9]  # For 52x52 grid
+        # Save input size for box conversion
+        self.input_size = config.input_size
+
+        # Scale-specific anchors
+        anchor_list = config.anchors
+        anchor_indices = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
+
+        # Anchors for each scale
+        self.anchors_large = [anchor_list[i] for i in anchor_indices[0]]  # 13x13 grid anchors
+        self.anchors_medium = [anchor_list[i] for i in anchor_indices[1]]  # 26x26 grid anchors
+        self.anchors_small = [anchor_list[i] for i in anchor_indices[2]]  # 52x52 grid anchors
+
+        # All anchors as tensor
+        self.anchors = torch.tensor(anchor_list, dtype=torch.float32)
+
+        # Scaled anchors for each grid level
+        self.scaled_anchors = [self.anchors_large, self.anchors_medium, self.anchors_small]
 
     def forward(self, predictions, targets):
         """
@@ -74,10 +86,22 @@ class YOLOv3Loss(nn.Module):
         obj_loss = torch.tensor(0.0, device=device)
         cls_loss = torch.tensor(0.0, device=device)
 
+        # Add loss balance weights (FIXED: Improved balance between components)
+        box_gain = 0.05  # Lower weight for box regression (xy, wh)
+        obj_gain = 1.0  # Standard weight for objectness
+        cls_gain = 0.5  # Medium weight for classification
+
+        # Keep track of total objects for normalization
+        total_objects = 0
+
         # Compute loss for each scale
         scale_preds = [large_pred, medium_pred, small_pred]
         scale_anchors = [self.anchors_large, self.anchors_medium, self.anchors_small]
-        grid_sizes = [13, 26, 52]  # Grid sizes for 416x416 input
+        grid_sizes = [
+            large_pred.shape[2],
+            medium_pred.shape[2],
+            small_pred.shape[2],
+        ]  # Fixed to use dynamic grid sizes
 
         for scale_idx, (pred, anchors, grid_size) in enumerate(
             zip(scale_preds, scale_anchors, grid_sizes, strict=False)
@@ -92,6 +116,9 @@ class YOLOv3Loss(nn.Module):
 
             # Update noobj_mask to exclude ignored predictions
             noobj_mask = noobj_mask & ~ignore_mask
+
+            # Count objects for normalization
+            total_objects += obj_mask.sum().item()
 
             # Compute losses with improved mechanism
             # Localization loss (only for cells with objects)
@@ -133,15 +160,25 @@ class YOLOv3Loss(nn.Module):
                     reduction="sum",
                 )
 
-        # Normalize losses by batch size to make them less dependent on batch size
-        # This helps stabilize training with different batch sizes
-        normalizer = batch_size  # Could use sum of objects instead, but batch_size is simpler
-        loc_loss = loc_loss / normalizer
-        obj_loss = obj_loss / normalizer
-        cls_loss = cls_loss / normalizer
+        # FIXED: Improved loss normalization
+        # Ensure we have at least 1 object for normalization to avoid division by zero
+        total_objects = max(1, total_objects)
 
-        # Combine losses with weighting
-        total_loss = self.lambda_coord * loc_loss + obj_loss + cls_loss
+        # Normalize localization and classification losses by number of objects
+        # This makes the loss more stable and less affected by batch size variations
+        loc_loss = loc_loss / total_objects
+        cls_loss = cls_loss / total_objects
+
+        # Normalize objectness loss by batch size (as it applies to all grid cells)
+        obj_loss = obj_loss / batch_size
+
+        # Apply loss component weights and combine
+        weighted_loc_loss = box_gain * loc_loss
+        weighted_obj_loss = obj_gain * obj_loss
+        weighted_cls_loss = cls_gain * cls_loss
+
+        # Combine losses with improved weighting
+        total_loss = weighted_loc_loss + weighted_obj_loss + weighted_cls_loss
 
         return {
             "loss": total_loss,
@@ -260,27 +297,53 @@ class YOLOv3Loss(nn.Module):
                 if torch.allclose(box[2:4], torch.tensor([0.1, 0.1], device=device), atol=1e-2):
                     continue
 
-                # Check if this box should be assigned to this scale
-                # If scale_mask is provided, use it to determine which scale to assign to
-                if "scale_mask" in targets and targets["scale_mask"][b].shape[0] > box_idx:
-                    if not targets["scale_mask"][b][box_idx][scale_idx]:
-                        continue
-                else:
-                    # If no scale_mask, assign based on box size relative to image size
-                    # This is a heuristic: small objects to small scale, large to large scale
-                    box_area = box[2] * box[3]  # Normalized area
+                # Get all anchors from all scales to find best anchor across all scales
+                all_anchor_list = []
+                scale_indices = []
 
-                    # Skip if box doesn't match this scale
-                    # Small boxes (area < 0.1) to small scale (52x52)
-                    # Medium boxes (0.1 <= area < 0.3) to medium scale (26x26)
-                    # Large boxes (area >= 0.3) to large scale (13x13)
-                    if (
-                        (scale_idx == 0 and box_area < 0.3)
-                        or (scale_idx == 1 and (box_area < 0.1 or box_area >= 0.3))
-                        or (scale_idx == 2 and box_area >= 0.1)
-                    ):
-                        continue
+                for s in range(3):  # Three scales: large (13x13), medium (26x26), small (52x52)
+                    scale_anchor_list = self.scaled_anchors[s]
+                    all_anchor_list.extend(scale_anchor_list)
+                    scale_indices.extend([s] * len(scale_anchor_list))
 
+                # Convert lists to tensors
+                all_anchors = torch.tensor(all_anchor_list, device=device, dtype=dtype)
+                scale_indices = torch.tensor(scale_indices, device=device)
+
+                # Calculate box width and height in absolute terms
+                _, _, box_w, box_h = box
+                box_w_abs = box_w * self.input_size  # Convert to absolute pixels
+                box_h_abs = box_h * self.input_size
+
+                # Calculate IoU with all anchors
+                ious = []
+                for anchor_idx, anchor in enumerate(all_anchors):
+                    anchor_w, anchor_h = anchor
+                    # Calculate intersection
+                    inter_w = torch.min(box_w_abs, anchor_w)
+                    inter_h = torch.min(box_h_abs, anchor_h)
+                    inter_area = inter_w * inter_h
+                    # Calculate union
+                    box_area = box_w_abs * box_h_abs
+                    anchor_area = anchor_w * anchor_h
+                    union_area = box_area + anchor_area - inter_area + 1e-16
+                    # Calculate IoU
+                    iou = inter_area / union_area
+                    ious.append(iou)
+
+                ious = torch.tensor(ious, device=device)
+                best_anchor_idx = torch.argmax(ious)
+                best_scale = scale_indices[best_anchor_idx]
+
+                # Check if this box should be assigned to the current scale
+                if best_scale != scale_idx:
+                    # Skip if this box is assigned to a different scale
+                    continue
+
+                # Get anchor index within this scale (0, 1, or 2)
+                within_scale_idx = best_anchor_idx % 3
+
+                # Continue with original code for target assignment
                 # Box coordinates (normalized)
                 x, y, w, h = box
 
@@ -296,8 +359,8 @@ class YOLOv3Loss(nn.Module):
                 box_w = w * grid_size
                 box_h = h * grid_size
 
-                # Find best anchor based on IoU
-                best_anchor_idx, best_iou = self._find_best_anchor_iou(box_w, box_h, anchors_tensor)
+                # Use the best anchor determined by IoU
+                best_anchor_idx = within_scale_idx
 
                 # Set target values
                 # Coordinates within cell (0 to 1)

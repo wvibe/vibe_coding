@@ -355,3 +355,191 @@ class PascalVOCDataset(Dataset):
             "labels": labels,
             "image_ids": image_ids,
         }
+
+
+class ImprovedVOCDataset(PascalVOCDataset):
+    """
+    Extension of PascalVOCDataset with improved augmentation strategies
+    including mosaic, mixup, and HSV augmentations.
+    """
+
+    def __init__(
+        self,
+        years: List[str] = ["2007"],
+        split_file: str = "train.txt",
+        transform: Optional[A.Compose] = None,
+        data_dir: str = get_voc_root(),
+        sample_pct: Optional[float] = None,
+        img_size: int = 416,
+        # Additional augmentation parameters
+        use_mosaic: bool = True,
+        mosaic_prob: float = 0.5,
+        use_hsv: bool = True,
+        hsv_prob: float = 0.5,
+    ):
+        """
+        Initialize improved VOC dataset with advanced augmentations
+
+        Args:
+            years: List of dataset years to load (e.g., ["2007"] or ["2007", "2012"])
+            split_file: Filename in ImageSets/Main directory (e.g., "train.txt", "person_train.txt")
+            transform: Optional custom data augmentation transforms
+            data_dir: Root directory containing VOC datasets (defaults to VOC_ROOT from .env)
+            sample_pct: Optional percentage (0.0-1.0) of dataset to use
+            img_size: Size of output images (default: 416 for YOLOv3)
+            use_mosaic: Whether to use mosaic augmentation
+            mosaic_prob: Probability of applying mosaic augmentation
+            use_hsv: Whether to use HSV augmentation
+            hsv_prob: Probability of applying HSV augmentation
+        """
+        # Store augmentation parameters
+        self.use_mosaic = use_mosaic
+        self.mosaic_prob = mosaic_prob
+        self.use_hsv = use_hsv
+        self.hsv_prob = hsv_prob
+
+        # Flag to track if we're in training mode
+        self.is_train = "train" in split_file
+
+        # Initialize parent class
+        super().__init__(
+            years=years,
+            split_file=split_file,
+            transform=transform,
+            data_dir=data_dir,
+            sample_pct=sample_pct,
+            img_size=img_size,
+        )
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Get sample with enhanced augmentation
+
+        Args:
+            idx: Index of the sample
+
+        Returns:
+            tuple: (image, boxes, labels) with augmentations applied
+        """
+        # Get original sample
+        sample = super().__getitem__(idx)
+        img = sample["image"]
+        boxes = sample["boxes"]
+        labels = sample["labels"]
+
+        # Apply mosaic augmentation with probability
+        if self.is_train and self.use_mosaic and random.random() < self.mosaic_prob:
+            img, boxes, labels = self._mosaic_augmentation(idx, img, boxes, labels)
+
+        # Apply HSV augmentation with probability
+        if self.is_train and self.use_hsv and random.random() < self.hsv_prob:
+            img = self._hsv_augmentation(img)
+
+        return img, boxes, labels
+
+    def _mosaic_augmentation(self, index, img, boxes, labels):
+        """
+        Mosaic augmentation - combines 4 images into one
+
+        Args:
+            index: Index of the current image
+            img: Original image tensor
+            boxes: Original bounding boxes
+            labels: Original class labels
+
+        Returns:
+            tuple: (img, boxes, labels) with mosaic augmentation applied
+        """
+        # Get image shape
+        h, w = img.shape[1:3]
+
+        # Choose 3 more random indices from dataset
+        indices = [index] + [random.randint(0, len(self) - 1) for _ in range(3)]
+
+        # Define mosaic image with twice the dimensions
+        mosaic_img = torch.zeros((3, h * 2, w * 2), dtype=img.dtype)
+
+        # Combined boxes and labels
+        combined_boxes = []
+        combined_labels = []
+
+        # Place images in 4 quadrants of mosaic
+        # Each image will be placed in one of the 4 positions:
+        # [0, 0], [0, 1], [1, 0], [1, 1]
+        for i, idx in enumerate(indices):
+            # Get image and its annotations
+            if i == 0:
+                # Use provided image for the first one
+                curr_img, curr_boxes, curr_labels = img, boxes, labels
+            else:
+                # Load other images from parent dataset
+                curr_sample = super().__getitem__(idx)
+                curr_img = curr_sample["image"]
+                curr_boxes = curr_sample["boxes"]
+                curr_labels = curr_sample["labels"]
+
+            # Determine position in mosaic (top-left, top-right, bottom-left, bottom-right)
+            x_offset = w * (i % 2)
+            y_offset = h * (i // 2)
+
+            # Place image in mosaic
+            mosaic_img[:, y_offset : y_offset + h, x_offset : x_offset + w] = curr_img
+
+            # Adjust boxes to new position in mosaic
+            if len(curr_boxes) > 0:
+                # Adjust absolute coordinates
+                curr_boxes[:, [0, 2]] = curr_boxes[:, [0, 2]] * w + x_offset
+                curr_boxes[:, [1, 3]] = curr_boxes[:, [1, 3]] * h + y_offset
+
+                # Normalize to new mosaic dimensions
+                curr_boxes[:, [0, 2]] = curr_boxes[:, [0, 2]] / (w * 2)
+                curr_boxes[:, [1, 3]] = curr_boxes[:, [1, 3]] / (h * 2)
+
+                # Add to combined boxes and labels
+                combined_boxes.append(curr_boxes)
+                combined_labels.append(curr_labels)
+
+        # Combine all boxes and labels
+        if combined_boxes:
+            combined_boxes = torch.cat(combined_boxes, dim=0)
+            combined_labels = torch.cat(combined_labels, dim=0)
+        else:
+            combined_boxes = torch.zeros((0, 4), dtype=torch.float32)
+            combined_labels = torch.zeros((0,), dtype=torch.int64)
+
+        return mosaic_img, combined_boxes, combined_labels
+
+    def _hsv_augmentation(self, img):
+        """
+        HSV augmentation - randomly adjusts hue, saturation, and value
+
+        Args:
+            img: Original image tensor
+
+        Returns:
+            torch.Tensor: Augmented image
+        """
+        import cv2
+        import numpy as np
+
+        # Convert tensor to numpy array for OpenCV
+        img_np = img.permute(1, 2, 0).numpy()
+
+        # Convert RGB to HSV
+        img_hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
+
+        # Random HSV augmentation
+        h_gain = random.uniform(-0.1, 0.1)
+        s_gain = random.uniform(0.5, 1.5)
+        v_gain = random.uniform(0.5, 1.5)
+
+        # Apply augmentation
+        img_hsv[:, :, 0] = (img_hsv[:, :, 0] * (1 + h_gain)) % 180
+        img_hsv[:, :, 1] = np.clip(img_hsv[:, :, 1] * s_gain, 0, 255)
+        img_hsv[:, :, 2] = np.clip(img_hsv[:, :, 2] * v_gain, 0, 255)
+
+        # Convert back to RGB and then to tensor
+        img_rgb = cv2.cvtColor(img_hsv, cv2.COLOR_HSV2RGB)
+        img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1)
+
+        return img_tensor
