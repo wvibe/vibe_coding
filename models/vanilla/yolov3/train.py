@@ -214,6 +214,18 @@ def parse_args():
         default=None,
         help="Weights & Biases entity (default: None)",
     )
+    parser.add_argument(
+        "--wandb-name",
+        type=str,
+        default=None,
+        help="Weights & Biases run name (default: None, uses run-name)",
+    )
+    parser.add_argument(
+        "--wandb-tags",
+        type=str,
+        default=None,
+        help="Weights & Biases tags, comma-separated (default: None)",
+    )
 
     # Other parameters
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
@@ -286,6 +298,10 @@ def train_epoch(model, dataloader, loss_fn, optimizer, device, epoch, args, wand
         # Backward pass and optimize
         optimizer.zero_grad()
         loss.backward()
+
+        # Apply gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+
         optimizer.step()
 
         # Calculate and accumulate batch losses
@@ -633,6 +649,15 @@ def save_checkpoint(model, optimizer, epoch, metrics, args, is_best=False, wandb
         if wandb_run:
             wandb.save(best_path)
 
+            # Log model as an artifact
+            artifact = wandb.Artifact(
+                name=f"model-{args.run_name}",
+                type="model",
+                description=f"YOLOv3 best model for {args.run_name}",
+            )
+            artifact.add_file(best_path)
+            wandb_run.log_artifact(artifact)
+
 
 def setup_environment(args):
     """
@@ -661,11 +686,17 @@ def setup_environment(args):
     # Initialize W&B
     wandb_run = None
     if not args.no_wandb:
+        wandb_config = vars(args)
+        tags = None
+        if args.wandb_tags:
+            tags = [tag.strip() for tag in args.wandb_tags.split(",")]
+
         wandb_run = wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
-            name=args.run_name,
-            config=vars(args),
+            name=args.wandb_name or args.run_name,
+            config=wandb_config,
+            tags=tags,
         )
         print(f"W&B initialized: {wandb.run.name}")
 
