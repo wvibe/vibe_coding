@@ -1,0 +1,3 @@
+[submodule "ext/ultralytics/yolov3"]
+	path = ext/ultralytics/yolov3
+	url = https://github.com/ultralytics/yolov3.git

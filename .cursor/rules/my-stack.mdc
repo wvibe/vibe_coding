@@ -30,6 +30,7 @@ vibe/                          # Root folder (not in git)
 │   │   │   └── py/            # Using raw PyTorch
 │   │   ├── data_loaders/      # Data loading utilities
 │   │   └── utils/             # Utility functions and helpers
+│   ├── ext/                   # External reference code (READ-ONLY)
 │   ├── notebooks/             # Jupyter notebooks for experiments
 │   ├── tests/                 # Test files mirroring src structure
 │   │   └── models/            # Model tests
@@ -37,7 +38,7 @@ vibe/                          # Root folder (not in git)
 │   ├── requirements.txt       # Python dependencies
 │   ├── README.md              # Project documentation
 │   └── .env                   # Environment variables (not in git)
-└── vhub                       # Resource files for ML (not in git)
+└── hub                        # Resource files for ML (not in git)
     ├── data/                  # Dataset files
     ├── pretrained/            # Pre-trained models
     └── checkpoints/           # Training checkpoints
@@ -46,4 +47,5 @@ vibe/                          # Root folder (not in git)
 - Test coverage: Required for all model code
 - Documentation: Docstrings for functions and classes
 - Environment: Keep .env local, never commit
-- vHub: Store outside git repository in vibe root folder
+- Hub: Store outside git repository in vibe root folder
+- External code: The `ext` directory contains third-party reference code that should be treated as READ-ONLY. Do not modify code in this directory.
