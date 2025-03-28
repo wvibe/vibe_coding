@@ -57,5 +57,13 @@ DATA_ROOT=${VHUB_ROOT}/data
 
 This is a playground repository - perfect for experimentation and learning. Feel free to break things, fix them, and learn in the process!
 
+## 👥 Contributing
+
+When contributing to this playground:
+- Create a new branch for your experiments
+- Document your findings and approaches
+- Feel free to add new directories for distinct project ideas
+- Share insights in the documentation
+
 ---
 Happy Coding! ✨

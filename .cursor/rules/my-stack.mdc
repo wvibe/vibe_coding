@@ -32,6 +32,8 @@ vibe/                          # Root folder (not in git)
 │   │   └── utils/             # Utility functions and helpers
 │   ├── ext/                   # External reference code (READ-ONLY)
 │   ├── notebooks/             # Jupyter notebooks for experiments
+│   │   ├── dataset/           # Dataset exploration notebooks
+│   │   └── model/             # Model training and evaluation notebooks
 │   ├── tests/                 # Test files mirroring src structure
 │   │   └── models/            # Model tests
 │   ├── docs/                  # Documentation
@@ -49,3 +51,4 @@ vibe/                          # Root folder (not in git)
 - Environment: Keep .env local, never commit
 - Hub: Store outside git repository in vibe root folder
 - External code: The `ext` directory contains third-party reference code that should be treated as READ-ONLY. Do not modify code in this directory.
+- Notebooks: Keep all notebooks in the top-level notebooks directory with appropriate subfolders for organization.
