@@ -65,5 +65,30 @@ When contributing to this playground:
 - Feel free to add new directories for distinct project ideas
 - Share insights in the documentation
 
+## YOLOv8 Fine-tuning
+
+A script is provided to fine-tune YOLOv8 models on configured datasets.
+
+### Configuration
+
+1.  **Dataset Definition (`src/models/ext/yolov8/configs/voc_combined.yaml`):** Defines the paths to the training, validation, and test image directories and the class names for the combined PASCAL VOC 2007+2012 dataset.
+2.  **Training Parameters (`src/models/ext/yolov8/configs/voc_finetune_config.yaml`):** Specifies the base YOLOv8 model (e.g., `yolov8l.pt`), the dataset YAML to use, and all training hyperparameters (epochs, batch size, image size, device, optimizer, learning rate, output directories, etc.).
+
+### Running Training
+
+1.  **Activate Environment:** Ensure the `vbl` conda environment is active:
+    ```bash
+    conda activate vbl
+    ```
+2.  **Login to Wandb (Optional but Recommended):** If you want to log runs to Weights & Biases, log in first:
+    ```bash
+    wandb login
+    ```
+3.  **Run the Script:** Execute the training script from the project root directory (`vibe_coding/`), providing the path to the training configuration file:
+    ```bash
+    python src/models/ext/yolov8/finetune_yolov8.py --config src/models/ext/yolov8/configs/voc_finetune_config.yaml
+    ```
+4.  **Output:** Training progress will be displayed in the terminal. Results, including trained model weights (`best.pt`, `last.pt`) and logs, will be saved to the directory specified by the `project` and `name` parameters in the training config (default: `runs/detect/yolov8l_voc_combined_finetune/`). If wandb is enabled and configured, metrics will also be logged there.
+
 ---
 Happy Coding! ✨

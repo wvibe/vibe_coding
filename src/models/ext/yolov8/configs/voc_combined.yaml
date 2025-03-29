@@ -1,0 +1,39 @@
+# PASCAL VOC 2007+2012 dataset configuration for YOLOv8
+# Using pre-split image directories under the specified absolute path
+
+# Dataset root (Absolute path required for robustness)
+path: /home/wmu/vibe/hub/datasets/VOC
+
+# Image directories relative to 'path'
+# Combining 2007 train/val and 2012 train/val for training
+train:
+  - images/train2007
+  - images/val2007
+  - images/train2012
+# Using VOC2012 val set for validation
+val: images/val2012
+# Using VOC2007 test set for testing
+test: images/test2007
+
+# Classes (remain unchanged)
+names:
+  0: aeroplane
+  1: bicycle
+  2: bird
+  3: boat
+  4: bottle
+  5: bus
+  6: car
+  7: cat
+  8: chair
+  9: cow
+  10: diningtable
+  11: dog
+  12: horse
+  13: motorbike
+  14: person
+  15: pottedplant
+  16: sheep
+  17: sofa
+  18: train
+  19: tvmonitor

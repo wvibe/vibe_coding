@@ -1,0 +1,48 @@
+# Training configuration for fine-tuning YOLOv8 on combined PASCAL VOC
+
+# --- Base Model & Dataset ---
+# Base model weights file or architecture yaml
+model: yolov8l.pt
+# Path to the dataset definition yaml (relative to project root)
+data: src/models/ext/yolov8/configs/voc_combined.yaml
+
+# --- Training Hyperparameters ---
+# Number of epochs
+epochs: 100
+# Training image size
+imgsz: 640
+# Batch size (-1 for auto-batch calculation, or specify e.g., 16, 32)
+# Adjust based on GPU memory. 16 or 32 should work for 2x A5000 with yolov8l
+batch: 16
+# Number of worker threads for data loading
+workers: 8
+# Optimizer: 'SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp', 'auto'
+optimizer: auto
+# Initial learning rate (e.g., 0.01 for SGD, 0.001 for AdamW)
+lr0: 0.01
+# Final learning rate (lr0 * lrf)
+lrf: 0.01
+# Close mosaic augmentation for the last N epochs (set to 0 to disable)
+close_mosaic: 10
+# Add other hyperparameters from YOLOv8 docs as needed
+# e.g., weight_decay, momentum, warmup_epochs, augmentations (hsv_h, etc.)
+
+# --- Execution Settings ---
+# Device: '' for auto, 'cpu', '0', '0,1'
+device: '0,1'
+# Pretrained weights (True for fine-tuning, False for scratch)
+pretrained: True
+
+# --- Output Settings ---
+# Project directory (relative to project root)
+project: runs/detect
+# Name for the specific training run directory
+name: yolov8l_voc_combined_finetune
+# Overwrite existing run directory if needed
+exist_ok: False
+# Save checkpoints every N epochs (or -1 to save only last/best)
+save_period: -1
+
+# --- Wandb Logging (will be used automatically if logged in) ---
+# Set to False to disable wandb even if installed/logged in
+# enable_wandb: True
