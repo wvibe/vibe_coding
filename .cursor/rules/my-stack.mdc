@@ -31,6 +31,7 @@ vibe/                          # Root folder (not in git)
 │   │   │   └── py/            # Using raw PyTorch
 │   │   ├── data_loaders/      # Data loading utilities
 │   │   └── utils/             # Utility functions and helpers
+│   ├── scripts/               # Scripts for general purpose
 │   ├── ext/                   # External reference code (READ-ONLY)
 │   ├── notebooks/             # Jupyter notebooks for experiments
 │   │   ├── dataset/           # Dataset exploration notebooks
