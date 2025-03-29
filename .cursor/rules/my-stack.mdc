@@ -1,6 +1,6 @@
 ---
-description:
-globs:
+description: 
+globs: 
 alwaysApply: true
 ---
 # Technology Stack
@@ -17,7 +17,7 @@ alwaysApply: true
 - ML Libraries: Huggingface
 - Frontend: HTML/JS/Gradio
 - Database: MySQL
-- Testing: pytest
+- UnitTest: pytest
 - Linting: ruff
 
 

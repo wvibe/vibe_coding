@@ -1,0 +1,26 @@
+# COCO Small Dataset Configuration
+# Simplified COCO dataset with only 10 common classes for quick testing
+
+# Dataset paths
+path: /Users/wmu/vibe/hub/data/COCO  # COCO dataset root
+train: images/train2017  # Train images
+val: images/val2017      # Val images
+test: images/test2017    # Test images
+labels: labels           # Default labels directory (can be overridden)
+
+# Dataset task specification
+task: detect
+nc: 10  # Explicitly set number of classes to 10
+
+# Class names (only 10 common COCO classes)
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  4: bus
+  5: dog
+  6: cat
+  7: chair
+  8: cup
+  9: laptop

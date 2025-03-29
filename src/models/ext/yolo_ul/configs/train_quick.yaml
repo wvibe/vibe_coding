@@ -1,0 +1,43 @@
+# Quick Training Configuration
+# Minimal training setup for quick testing and prototyping
+
+# Model parameters
+pretrained: true  # Use pretrained weights
+
+# Training parameters (to be set in script)
+# epochs: 3       # Very few epochs for quick testing
+# batch: 4        # Small batch size for memory efficiency
+# imgsz: 640      # Standard image size
+# device: mps     # Metal Performance Shaders for Apple Silicon
+
+# Augmentation (minimal)
+augment: true
+hsv_h: 0.015      # HSV-Hue augmentation
+hsv_s: 0.7        # HSV-Saturation augmentation
+hsv_v: 0.4        # HSV-Value augmentation
+degrees: 0.0      # No rotation
+translate: 0.1    # Small translation
+scale: 0.5        # Scale
+flipud: 0.0       # No vertical flip
+fliplr: 0.5       # Horizontal flip (50% probability)
+mosaic: 1.0       # Enable mosaic
+mixup: 0.0        # No mixup
+
+# Optimization
+optimizer: SGD    # Standard optimizer
+lr0: 0.01         # Initial learning rate
+lrf: 0.01         # Final learning rate = lr0 * lrf
+momentum: 0.937   # SGD momentum
+weight_decay: 0.0005  # Weight decay
+warmup_epochs: 1.0    # Quick warmup (1 epoch)
+warmup_momentum: 0.8  # Warmup momentum
+warmup_bias_lr: 0.1   # Warmup bias learning rate
+
+# Save parameters
+save: true        # Save checkpoints
+save_period: 3    # Save every 3 epochs
+plots: true       # Generate plots
+patience: 20      # Early stopping after 20 epochs with no improvement
+
+# Other
+workers: 4        # DataLoader workers

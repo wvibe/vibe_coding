@@ -1,0 +1,18 @@
+# VOC2007 3-Class Dataset Configuration
+# Simplified PASCAL VOC2007 dataset with only 3 classes for quick testing
+
+# Dataset paths
+path: /Users/wmu/vibe/hub/data/VOCdevkit  # VOC dataset root
+train: VOC2007/JPEGImages  # Train images
+val: VOC2007/JPEGImages    # Val images
+test: VOC2007/JPEGImages   # Test images
+
+# Training/validation splits
+train_annotations: VOC2007/ImageSets/Main/trainval.txt
+val_annotations: VOC2007/ImageSets/Main/test.txt
+
+# Class names (only 3 common classes)
+names:
+  0: person
+  1: car
+  2: bicycle

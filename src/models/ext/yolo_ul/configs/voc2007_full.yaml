@@ -1,0 +1,38 @@
+# VOC2007 Dataset Configuration
+# PASCAL VOC2007 dataset with all 20 classes
+
+# Dataset paths - direct format
+path: /Users/wmu/vibe/hub/data/VOCdevkit  # VOC dataset root
+train: VOC2007/JPEGImages  # Train images directory
+val: VOC2007/JPEGImages    # Validation images directory
+
+# Split files
+train_annotations: VOC2007/ImageSets/Main/trainval.txt  # Training split file
+val_annotations: VOC2007/ImageSets/Main/test.txt        # Validation split file
+
+# Auto-convert annotations from XML to YOLO format
+task: detect
+format: voc
+
+# Class names (all 20 VOC classes)
+names:
+  0: aeroplane
+  1: bicycle
+  2: bird
+  3: boat
+  4: bottle
+  5: bus
+  6: car
+  7: cat
+  8: chair
+  9: cow
+  10: diningtable
+  11: dog
+  12: horse
+  13: motorbike
+  14: person
+  15: pottedplant
+  16: sheep
+  17: sofa
+  18: train
+  19: tvmonitor

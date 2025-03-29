@@ -1,0 +1,51 @@
+# Full Training Configuration
+# Complete training setup for optimal model performance
+
+# Model parameters
+pretrained: true  # Use pretrained weights
+
+# Training parameters (to be set in script)
+# epochs: 100     # Standard number of epochs for good convergence
+# batch: 16       # Larger batch size for stable training
+# imgsz: 640      # Standard image size
+# device: mps     # Metal Performance Shaders for Apple Silicon
+
+# Augmentation settings (tuned to reduce warnings)
+augment: true
+hsv_h: 0.015      # HSV-Hue augmentation
+hsv_s: 0.7        # HSV-Saturation augmentation
+hsv_v: 0.4        # HSV-Value augmentation
+degrees: 0.0      # Rotation
+translate: 0.1    # Translation (reduced from 0.2)
+scale: 0.5        # Scale
+shear: 0.0        # Shear
+perspective: 0.0  # Perspective
+flipud: 0.0       # Vertical flip
+fliplr: 0.5       # Horizontal flip (50% probability)
+mosaic: 1.0       # Mosaic augmentation
+mixup: 0.0        # Mixup disabled to reduce complexity
+
+# Optimization
+optimizer: SGD    # Optimizer
+lr0: 0.01         # Initial learning rate
+lrf: 0.01         # Final learning rate = lr0 * lrf
+momentum: 0.937   # SGD momentum
+weight_decay: 0.0005  # Weight decay
+warmup_epochs: 2.0    # Warmup epochs (reduced from 3.0)
+warmup_momentum: 0.8  # Warmup momentum
+warmup_bias_lr: 0.1   # Warmup bias learning rate
+
+# Regularization
+dropout: 0.0      # Dropout probability
+label_smoothing: 0.0  # Label smoothing epsilon
+
+# Save parameters
+save: true        # Save train checkpoints
+save_period: 5    # Save every 5 epochs (reduced from 10)
+plots: true       # Save plots during training
+patience: 50      # Early stopping patience (reduced from 100)
+
+# Other parameters
+verbose: true     # Show verbose output
+workers: 4        # DataLoader workers
+close_mosaic: 10  # Disable mosaic for final epochs

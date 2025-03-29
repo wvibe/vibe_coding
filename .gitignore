@@ -19,6 +19,7 @@ dist/
 # Model output directories
 **/output/
 **/model_outputs/
+**/runs/
 *.pt
 *.bin
 *.safetensors

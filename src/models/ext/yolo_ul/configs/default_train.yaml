@@ -1,0 +1,51 @@
+# Default Training Configuration for YOLO
+# This file contains default settings for training YOLO models
+
+# Model configuration
+model: yolo11n.pt  # Model to use for training (name or path)
+task: detect       # Task type: detect, segment, classify, pose
+
+# Dataset configuration
+data:              # Path to dataset YAML file (will be filled programmatically)
+fraction: 1.0      # Dataset fraction to train on (0.0-1.0)
+
+# Training parameters
+epochs: 100        # Number of training epochs
+batch: 16          # Batch size
+imgsz: 640         # Image size
+device:            # Device to use (None for auto-selection, 'cpu', '0', or '0,1,2,3')
+
+# Saving configuration
+project: yolo_runs  # Project name for saving results
+name: train        # Experiment name
+save: True         # Save train checkpoints
+save_period: -1    # Save checkpoint every x epochs (disabled if < 1)
+exist_ok: False    # Whether to overwrite existing experiment
+
+# Optimizer settings
+optimizer: auto    # Optimizer: SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto
+lr0: 0.01          # Initial learning rate
+lrf: 0.01          # Final learning rate (lr0 * lrf)
+momentum: 0.937    # SGD momentum/Adam beta1
+weight_decay: 0.0005 # Optimizer weight decay
+
+# Logging & visualization
+verbose: True      # Whether to print verbose output
+plots: True        # Save plots during training
+
+# Augmentation
+hsv_h: 0.015       # Image HSV-Hue augmentation
+hsv_s: 0.7         # Image HSV-Saturation augmentation
+hsv_v: 0.4         # Image HSV-Value augmentation
+degrees: 0.0       # Image rotation (+/- deg)
+translate: 0.1     # Image translation (+/- fraction)
+scale: 0.5         # Image scale (+/- gain)
+shear: 0.0         # Image shear (+/- deg)
+perspective: 0.0   # Image perspective (+/- fraction)
+flipud: 0.0        # Image flip up-down (probability)
+fliplr: 0.5        # Image flip left-right (probability)
+mosaic: 1.0        # Image mosaic (probability)
+mixup: 0.0         # Image mixup (probability)
+
+# Early stopping
+patience: 100      # Epochs to wait for no observable improvement for early stopping
