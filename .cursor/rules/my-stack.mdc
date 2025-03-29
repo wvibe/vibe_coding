@@ -6,19 +6,20 @@ alwaysApply: true
 # Technology Stack
 
 ## Environment Management
-- Conda environment: 'vbl'
-- Python version: 3.12
-- Package management: pip
-- Required environment variables: [None]
+- **Environment management tool:** `conda`
+- **Default environment:** `vbl`
+- **Python version:** `3.12`
+- **Package management:** `pip`
+- **Required environment variables:** None
 
 ## Core Technologies
-- Backend: Python 3.12
-- ML Framework: PyTorch 2.6
-- ML Libraries: Huggingface
-- Frontend: HTML/JS/Gradio
-- Database: MySQL
-- UnitTest: pytest
-- Linting: ruff
+- **Backend:** `Python 3.12`
+- **ML Framework:** `PyTorch 2.6`
+- **ML Libraries:** `Hugging Face`
+- **Frontend:** `HTML`, `JavaScript`, `Gradio`
+- **Database:** `MySQL`
+- **Unit Testing:** `pytest`
+- **Linting:** `ruff`
 
 
 ## Project Structure
@@ -41,8 +42,8 @@ vibe/                          # Root folder (not in git)
 │   ├── README.md              # Project documentation
 │   └── .env                   # Environment variables (not in git)
 └── hub                        # Resource files for ML (not in git)
-    ├── data/                  # Dataset files
-    ├── pretrained/            # Pre-trained models
+    ├── datasets/              # Dataset files
+    ├── models/                # Exporte models
     └── checkpoints/           # Training checkpoints
 
 ## Development Guidelines
