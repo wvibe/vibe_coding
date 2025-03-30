@@ -1,44 +1,35 @@
 {
-    // Python and notebook settings
+    // Python and notebook settings (using Ruff)
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
-        "editor.wordWrapColumn": 100,
-        "editor.rulers": [100],
-        "diffEditor.ignoreTrimWhitespace": false
+        "editor.rulers": [100] // Keep ruler for Python
     },
     "[jupyter][ipynb]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
-        "editor.wordWrapColumn": 100,
-        "editor.rulers": [100],
-        "diffEditor.ignoreTrimWhitespace": false
+        "editor.rulers": [100] // Keep ruler for notebooks
     },
 
-    // Global settings
+    // Global editor settings
+    "editor.rulers": [100], // Set global ruler
+    "editor.wordWrapColumn": 100, // Set global word wrap
+    "diffEditor.ignoreTrimWhitespace": false, // Keep this setting globally
+    "files.trimTrailingWhitespace": true,
+
+    // Ruff integration
     "editor.codeActionsOnSave": {
         "source.organizeImports.ruff": "always",
         "source.fixAll.ruff": "always"
     },
-    "files.trimTrailingWhitespace": true,
+    "ruff.lineLength": 100,
+    "ruff.lint.select": ["C", "E", "F", "W", "W291", "W293"], // Keep essential lint rules
 
-    // Python testing settings
+    // Python testing (Pytest)
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
     "python.testing.pytestArgs": [
         "tests"
     ],
-    "python.testing.autoTestDiscoverOnSaveEnabled": true,
-
-    // Ruff configuration
-    "ruff.lineLength": 100,
-    "ruff.lint.select": ["C", "E", "F", "W", "W291", "W293"],
-
-    // Python diagnostics
-    "python.analysis.diagnosticSeverityOverrides": {
-        "reportUnboundVariable": "none",
-        "reportImplicitStringConcatenation": "none",
-        "reportUnusedVariable": "information",
-        "reportUnusedImport": "information"
-    },
+    "python.testing.autoTestDiscoverOnSaveEnabled": true
 }

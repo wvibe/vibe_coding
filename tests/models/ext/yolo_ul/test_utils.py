@@ -31,33 +31,41 @@ class TestSourcePathResolution:
         path = resolve_source_path(url)
         assert path == url
 
-    def test_voc2007_prefix(self):
+    def test_voc2007_prefix(self, monkeypatch):
         """Test handling of VOC2007 prefix"""
+        dummy_path = "/tmp/dummy_voc2007"
+        monkeypatch.setattr('src.models.ext.yolo_ul.utils.VOC2007_DIR', dummy_path)
         relative_path = "JPEGImages/000001.jpg"
         source = f"VOC2007/{relative_path}"
         path = resolve_source_path(source)
-        assert path == os.path.join(VOC2007_DIR, relative_path)
+        assert path == os.path.join(dummy_path, relative_path)
 
-    def test_voc2012_prefix(self):
+    def test_voc2012_prefix(self, monkeypatch):
         """Test handling of VOC2012 prefix"""
+        dummy_path = "/tmp/dummy_voc2012"
+        monkeypatch.setattr('src.models.ext.yolo_ul.utils.VOC2012_DIR', dummy_path)
         relative_path = "JPEGImages/000001.jpg"
         source = f"VOC2012/{relative_path}"
         path = resolve_source_path(source)
-        assert path == os.path.join(VOC2012_DIR, relative_path)
+        assert path == os.path.join(dummy_path, relative_path)
 
-    def test_coco_prefix(self):
+    def test_coco_prefix(self, monkeypatch):
         """Test handling of COCO prefix"""
+        dummy_path = "/tmp/dummy_coco"
+        monkeypatch.setattr('src.models.ext.yolo_ul.utils.COCO_ROOT', dummy_path)
         relative_path = "train2017/000000000001.jpg"
         source = f"COCO/{relative_path}"
         path = resolve_source_path(source)
-        assert path == os.path.join(COCO_ROOT, relative_path)
+        assert path == os.path.join(dummy_path, relative_path)
 
-    def test_vocdevkit_prefix(self):
+    def test_vocdevkit_prefix(self, monkeypatch):
         """Test handling of VOCdevkit prefix"""
+        dummy_path = "/tmp/dummy_voc_root"
+        monkeypatch.setattr('src.models.ext.yolo_ul.utils.VOC_ROOT', dummy_path)
         relative_path = "VOC2007/JPEGImages/000001.jpg"
         source = f"VOCdevkit/{relative_path}"
         path = resolve_source_path(source)
-        assert path == os.path.join(VOC_ROOT, relative_path)
+        assert path == os.path.join(dummy_path, relative_path)
 
     def test_relative_path(self):
         """Test handling of relative paths"""

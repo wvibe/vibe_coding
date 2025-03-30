@@ -13,3 +13,4 @@ alwaysApply: true
 – Avoid having files over 500 lines of code. Refactor at that point
 – Mocking data is only needed for tests, never mock data for dev or prod
 – Never overwrite my .env file without first asking and confirming
+- when you are on a remote session when you see prompt like "dev-gpu-5512%" or "zsh: command not found:" always run 'bash' to activate my shell, and run "act vbl" to active conda env

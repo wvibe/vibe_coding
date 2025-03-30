@@ -1,0 +1,41 @@
+# Example: configs/benchmarking/detection_benchmark.yaml
+
+# List of models to test.
+# Can be Ultralytics model names (e.g., 'yolov8n') which implies downloading yolov8n.pt,
+# or paths to local checkpoint files (.pt).
+models_to_test:
+  - yolov8n
+  # - yolov5s
+  # - /path/to/your/custom_model.pt
+
+dataset:
+  # !!! IMPORTANT: Update these paths if your dataset location or desired split differs !!!
+  test_images_dir: "/home/wmu/vibe/hub/datasets/VOC/images/test2007" # Defaulting to test2007 split
+  annotations_dir: "/home/wmu/vibe/hub/datasets/VOC/labels/test2007" # Defaulting to test2007 split
+  annotation_format: "yolo_txt"
+  num_classes: 20 # Added: Number of classes for VOC dataset
+  subset_method: random # 'random', 'first_n', or 'all'
+  subset_size: 20 # Keep small for initial testing
+  image_list_file: null # Optional path to a file with image basenames
+
+metrics:
+  iou_threshold_map: 0.5
+  iou_range_coco: [0.5, 0.95, 0.05]
+  object_size_definitions:
+    small: [0, 1024]
+    medium: [1024, 9216]
+    large: [9216, .inf] # Use '.inf' for infinity
+  confusion_matrix_classes: null # null or e.g., ["person", "car"]
+
+compute:
+  device: 'auto' # 'cpu', 'cuda:0', 'auto'
+  batch_size: 1
+
+output:
+  # Use {timestamp} for automatic timestamping, e.g., {timestamp:%Y%m%d_%H%M%S}
+  output_dir: "runs/detect/benchmark_results/run_{timestamp:%Y%m%d_%H%M%S}"
+  results_csv: "metrics.csv"
+  results_html: "report.html"
+  save_plots: true
+  save_qualitative_results: true
+  num_qualitative_images: 3

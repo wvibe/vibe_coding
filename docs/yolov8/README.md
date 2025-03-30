@@ -113,6 +113,12 @@ results = model.train(
 
 For a complete walkthrough, refer to the demo notebook at `notebooks/model/ext/yolov8/yolov8_intro.ipynb`. This notebook includes steps to load the environment variables.
 
+## Benchmarking
+
+A configurable tool is available to benchmark YOLOv8 and other object detection models on datasets like PASCAL VOC. It measures various accuracy (mAP, mAP_s/m/l, confusion matrix) and performance (inference time percentiles, model size, GPU memory) metrics.
+
+For the detailed design and usage instructions, see the [Benchmark Design Document](./benchmark_design.md).
+
 ## References
 
 - [Ultralytics YOLOv8 Documentation](https://docs.ultralytics.com/)

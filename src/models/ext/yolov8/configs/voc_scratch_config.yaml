@@ -1,14 +1,14 @@
-# Training configuration for fine-tuning YOLOv8 on combined PASCAL VOC
+# Training configuration for YOLOv8 FROM SCRATCH on combined PASCAL VOC
 
-# --- Base Model & Dataset ---
-# Base model weights file or architecture yaml
-model: yolov8l.pt
+# --- Base Model Architecture & Dataset ---
+# Model architecture YAML (NOT a .pt weights file)
+model: yolov8l.yaml
 # Path to the dataset definition yaml (relative to project root)
 data: src/models/ext/yolov8/configs/voc_combined.yaml
 
 # --- Training Hyperparameters ---
-# Number of epochs
-epochs: 100
+# Number of epochs (more needed for scratch training)
+epochs: 300
 # Training image size
 imgsz: 640
 # Batch size (-1 for auto-batch calculation, or specify e.g., 16, 32)
@@ -18,20 +18,23 @@ batch: 16
 workers: 8
 # Optimizer: 'SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp', 'auto'
 optimizer: auto
-# Initial learning rate (e.g., 0.01 for SGD, 0.001 for AdamW)
+# Initial learning rate (may need tuning for scratch training)
 lr0: 0.01
 # Final learning rate (lr0 * lrf)
 lrf: 0.01
 # Close mosaic augmentation for the last N epochs (set to 0 to disable)
 close_mosaic: 10
-# Add other hyperparameters from YOLOv8 docs as needed
-# e.g., weight_decay, momentum, warmup_epochs, augmentations (hsv_h, etc.)
+# Consider using cosine LR schedule for long training runs
+# cos_lr: True
+# Patience for early stopping (default 100)
+# patience: 100
+# Add other hyperparameters as needed
 
 # --- Execution Settings ---
 # Device: '' for auto, 'cpu', '0', '0,1'
 device: '0,1'
-# Pretrained weights (True for fine-tuning, False for scratch)
-pretrained: True
+# Pretrained: MUST be False for training from scratch
+pretrained: False
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)
