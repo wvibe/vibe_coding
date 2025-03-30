@@ -1,0 +1,78 @@
+# Default configuration for evaluate_detect.py
+
+# --- Model ---
+model: "yolo11n.pt" # REQUIRED: Update this path or use resolvable name (e.g., yolo11n.pt)
+
+# --- Dataset ---
+dataset:
+  image_dir: "/home/wmu/vibe/hub/datasets/VOC/images/test2007" # REQUIRED: Path to evaluation image directory
+  label_dir: "/home/wmu/vibe/hub/datasets/VOC/labels/test2007" # REQUIRED: Path to corresponding label directory
+  # REQUIRED: List of class names in the order corresponding to label file indices
+  class_names:
+    - aeroplane
+    - bicycle
+    - bird
+    - boat
+    - bottle
+    - bus
+    - car
+    - cat
+    - chair
+    - cow
+    - diningtable
+    - dog
+    - horse
+    - motorbike
+    - person
+    - pottedplant
+    - sheep
+    - sofa
+    - train
+    - tvmonitor
+
+# --- Evaluation Parameters (for model.predict) ---
+evaluation_params:
+  imgsz: 640             # Image size for inference
+  batch_size: 16         # Batch size for model.predict
+  device: 0              # Compute device (0, 'cpu', 'cuda:0', etc. 0=first GPU)
+  iou_thres_nms: 0.65    # IoU threshold for NMS during model.predict
+  conf_thres: 0.001      # Confidence threshold for predictions (use low value for AP calc)
+  max_det: 300           # Maximum detections per image
+  warmup_iterations: 5   # Number of warmup iterations before timing
+
+# --- Metrics Configuration ---
+metrics:
+  iou_thresholds: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]  # IoU thresholds for mAP calculation
+
+  confidence_threshold_cm: 0.3 # Min prediction confidence to include in Confusion Matrix
+  iou_threshold_cm: 0.5        # IoU threshold for matching in Confusion Matrix
+  target_classes_cm:           # Class NAMES for explicit CM rows/cols (others grouped)
+    - person
+    - car
+    - bicycle
+    - bus
+    - motorbike
+    - aeroplane
+    - train
+    - boat
+
+  size_ranges:                 # Area in pixels^2 for mAP@Size (COCO standard)
+    small: [0, 1024]           # area < 32*32
+    medium: [1024, 9216]       # 32*32 <= area < 96*96
+    large: [9216, null]        # area >= 96*96
+
+# --- Computation Measurement ---
+computation:
+  measure_inference_time: True  # Measure inference time
+  measure_memory: True          # Measure peak GPU memory usage
+
+# --- Output Control ---
+output:
+  project: "runs/evaluate/detect"  # Base directory for output
+  name: null                       # Run name, defaults to model name + timestamp if not specified
+  save_json: True                  # Save results to a JSON file
+  save_txt: True                   # Save results as text files
+  save_conf: True                  # Include confidence in text files
+  save_metrics: True               # Save computed metrics as CSV or JSON
+  plot_confusion_matrix: True      # Generate confusion matrix plot
+  plot_precision_recall: True      # Generate P-R curve plots

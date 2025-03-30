@@ -21,24 +21,48 @@
   - [x] Implement source handling (file/dir/random select)
   - [x] Implement core prediction logic using `model.predict`
   - [x] Add entry point & docstrings
-- [ ] Milestone 4: Finetuning Script (Detection on VOC)
-  - [ ] Create `src/models/ext/yolov11/finetune_detect.py`
-  - [ ] Implement CLI args (`--model`, `--data`, `--epochs`, etc.)
-  - [ ] Implement loading YOLOv11 model & training
-  - [x] Milestone 4: Training Script (Detection on VOC)
-    - [x] Create training configs (`voc_finetune.yaml`, `voc_scratch.yaml`)
-    - [x] Create script `train_detect.py` (adapting `train_yolov8.py`)
-    - [x] Implement config loading, path resolution, resume logic
-    - [x] Implement `model.train()` call with args
-    - [x] Add CLI args (`--config`, `--name`, `--project`, `--resume`, etc.)
-- [ ] Milestone 5: Unit Tests (Detection)
-  - [ ] Create test files in `tests/models/ext/yolov11/`
-  - [ ] Add basic tests for `predict_detect.py`
-  - [ ] Add basic tests for `train_detect.py`
-- [ ] Milestone 6: Documentation Update (Detection)
+- [ ] Milestone 4: Training/Finetuning Script (Detection on VOC)
+  - [x] Create training configs (`voc_finetune.yaml`, `voc_retrain.yaml`)
+  - [x] Create script `train_detect.py` (adapting `train_yolov8.py`)
+  - [x] Implement config loading, path resolution, resume logic
+  - [x] Implement `model.train()` call with args
+  - [x] Add CLI args (`--config`, `--name`, `--project`, `--resume`, etc.)
+
+- [ ] Milestone 5: Metrics Implementation (Detection)
+  - [x] Step 5.1: Setup directories (`src/utils/metrics`, `tests/utils/metrics`) and base files (`detection.py`, `test_detection.py`, `__init__.py`)
+  - [x] Step 5.2: Implement and Test Core Metrics Incrementally:
+    - [x] 5.2.1: Implement `calculate_iou` and add unit tests.
+    - [x] 5.2.2: Implement `match_predictions` and add unit tests.
+    - [x] 5.2.3: Implement `calculate_pr_data` and add unit tests.
+    - [x] 5.2.4: Implement AP & mAP calculation and add unit tests.
+    - [x] 5.2.5: Implement mAP by Size calculation and add unit tests.
+    - [x] 5.2.6: Implement Confusion Matrix generation and add unit tests.
+    - [x] 5.2.7: Implement compute utilities (`get_model_params`, `get_peak_gpu_memory_mb`) and add unit tests.
+  - [ ] Step 5.3: Develop Evaluation Script (`evaluate_detect.py`):
+    - [x] 5.3.1: Setup script structure with single `--config` argument and basic imports.
+    - [x] 5.3.2: Create `evaluate_default.yaml` configuration file with comprehensive options.
+    - [x] 5.3.3: Implement configuration loading and validation.
+    - [x] 5.3.4: Add model loading with parameter counting via `get_model_params`.
+    - [ ] 5.3.5: Implement inference with warmup and measurement of time/memory.
+    - [ ] 5.3.6: Implement ground truth loading and format conversion.
+    - [ ] 5.3.7: Integrate metric calculation (`match_predictions`, `calculate_map`, etc.).
+    - [ ] 5.3.8: Implement visualization and result saving.
+    - [x] 5.3.9: Create evaluation documentation in `docs/yolov11/evaluate.md`.
+
+- [ ] Milestone 6: Benchmarking and Reporting (Detection)
+  - [ ] Implement comparison logic: Predictions vs. Ground Truth
+  - [ ] Implement comparison logic: Model vs. Model / Run vs. Run
+  - [ ] Implement plain text report generation function
+  - [ ] Implement HTML report generation function (with plots/visualizations)
+  - [ ] Create script/CLI for running benchmarks & generating reports
+
+- [ ] Milestone 7: Documentation Update (Detection)
   - [x] Add usage examples to `README.md` for prediction
-  - [x] Review/update `design.md` (updated for prediction script)
-  - [ ] Add usage examples to `README.md` for training
+  - [x] Add usage examples to `README.md` for training (finetune & retrain)
+  - [x] Review/update `design.md` (updated for prediction & training scripts)
+  - [x] Add documentation for metrics calculation utilities (Step 5.1, 5.2)
+  - [ ] Add documentation for metrics calculation and configuration (Milestone 5)
+  - [ ] Add documentation for benchmarking script and reports (Milestone 6)
 
 ## Phase 2: Segmentation & Further Expansion (Deferred)
 
