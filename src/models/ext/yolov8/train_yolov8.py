@@ -106,12 +106,25 @@ def main():
     # --- Load Base Model ---
     base_model_name = config.get("model", "yolov8n.pt")  # Default if missing
     try:
-        print(f"Loading base model: {base_model_name}")
-        # Device specified during train() overrides initial load
-        model = YOLO(base_model_name)
+        model_to_load = base_model_name
+        # Check if resuming and if the last checkpoint exists
+        if args.resume:
+            checkpoint_path = project_root / project_value / args.name / "weights" / "last.pt"
+            if checkpoint_path.exists():
+                print(f"Resume flag set and checkpoint found. Loading: {checkpoint_path}")
+                model_to_load = str(checkpoint_path)
+            else:
+                print(f"Resume flag set, but checkpoint not found at: {checkpoint_path}")
+                print("Attempting to resume without explicit checkpoint (might start new run)...")
+                # Keep resume=True in train_kwargs, ultralytics might still find it
+
+        print(f"Loading model: {model_to_load}")
+        # Device specified during train() can override initial load device if specified there
+        model = YOLO(model_to_load)
+
         print("Model loaded successfully.")
     except Exception as e:
-        print(f"Error loading base model '{base_model_name}': {e}")
+        print(f"Error loading model '{model_to_load}': {e}")
         return
 
     # --- Prepare Training Arguments from Config & CLI ---
