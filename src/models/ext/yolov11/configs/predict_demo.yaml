@@ -1,0 +1,18 @@
+# predict_demo.yaml: Demo config for predict_detect.py
+
+# Required parameters
+model: yolo11n.pt  # Example model, can be changed
+source: /home/wmu/vibe/hub/datasets/VOC/images/test2007
+project: runs/predict/detect # Base directory for output runs
+
+# Optional prediction parameters (Ultralytics defaults if not specified)
+# conf: 0.25
+# imgsz: 640
+# iou: 0.7
+# max_det: 300
+save_txt: True    # Save results as YOLO labels
+save_conf: True   # Include confidence in saved labels/plots
+save: True        # Save annotated images
+
+# Custom script parameters
+random_select: 5  # Predict on 5 random images if source is a directory (0 or null for all)
