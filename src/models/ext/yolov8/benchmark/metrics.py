@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import torch
 from ultralytics.engine.results import Results  # For type hinting
@@ -92,7 +92,7 @@ def calculate_detection_metrics(
     ground_truths: List[List[GroundTruthBox]],
     num_classes: int,
     config: BenchmarkConfig,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """
     Calculates all detection metrics (mAP, etc.) using Ultralytics DetMetrics.
 
@@ -103,17 +103,23 @@ def calculate_detection_metrics(
         config: The benchmark configuration.
 
     Returns:
-        A dictionary containing calculated metrics.
+        A dictionary containing calculated metrics, IoU thresholds, mean AP per IoU,
+        and the confusion matrix. Returns default values or None for arrays
+        if calculation fails.
     """
     logging.info("Calculating detection metrics using Ultralytics DetMetrics...")
     if not predictions:
         logging.warning("No predictions available to calculate metrics.")
+        # Return default values including None for new array keys
         return {
             "mAP_50": 0.0,
             "mAP_50_95": 0.0,
             "mAP_small": 0.0,
             "mAP_medium": 0.0,
             "mAP_large": 0.0,
+            "iou_thresholds": None,
+            "mean_ap_per_iou": None,
+            "confusion_matrix": None,
         }
 
     # --- Initialize DetMetrics ---
@@ -124,16 +130,19 @@ def calculate_detection_metrics(
     iou_vector = torch.linspace(iou_low, iou_high, int(round((iou_high - iou_low) / iou_step)) + 1)
 
     try:
-        det_metrics = metrics.DetMetrics(nc=num_classes, iou_vector=iou_vector)
+        det_metrics = metrics.DetMetrics()
     except Exception as e:
         logging.error(f"Failed to initialize DetMetrics: {e}", exc_info=True)
-        # Return error state if DetMetrics fails to initialize
+        # Return error state including None for new array keys
         return {
             "mAP_50": -1.0,
             "mAP_50_95": -1.0,
             "mAP_small": -1.0,
             "mAP_medium": -1.0,
             "mAP_large": -1.0,
+            "iou_thresholds": None,
+            "mean_ap_per_iou": None,
+            "confusion_matrix": None,
         }
 
     # --- Process predictions and ground truths ---
@@ -195,18 +204,41 @@ def calculate_detection_metrics(
             "mAP_small": results.get("metrics/mAP50-95(S)", 0.0),
             "mAP_medium": results.get("metrics/mAP50-95(M)", 0.0),
             "mAP_large": results.get("metrics/mAP50-95(L)", 0.0),
+            # Extract detailed data
+            "iou_thresholds": det_metrics.iouv.cpu().numpy()
+            if hasattr(det_metrics, "iouv")
+            else None,
+            "mean_ap_per_iou": det_metrics.ap.mean(0).cpu().numpy()
+            if hasattr(det_metrics, "ap")
+            else None,
+            "confusion_matrix": det_metrics.confusion_matrix.matrix.cpu().numpy()
+            if hasattr(det_metrics, "confusion_matrix")
+            and hasattr(det_metrics.confusion_matrix, "matrix")
+            else None,
         }
         logging.info(
-            f"Calculated Metrics: mAP50={metrics_output['mAP_50']:.4f}, mAP50-95={metrics_output['mAP_50_95']:.4f}"
+            f"Calculated Metrics: mAP50={metrics_output['mAP_50']:.4f}, mAP50-95={metrics_output['mAP_50_95']:.4f}. Detailed data extracted."
         )
+        # Basic check if extraction might have failed silently
+        if metrics_output["iou_thresholds"] is None or metrics_output["mean_ap_per_iou"] is None:
+            logging.warning("Could not extract IoU thresholds or mean AP per IoU.")
+        if metrics_output["confusion_matrix"] is None:
+            logging.warning("Could not extract confusion matrix.")
+
     except Exception as e:
-        logging.error(f"Failed to calculate final metrics results: {e}", exc_info=True)
+        logging.error(
+            f"Failed to calculate final metrics results or extract detailed data: {e}",
+            exc_info=True,
+        )
         metrics_output = {
             "mAP_50": -1.0,
             "mAP_50_95": -1.0,
             "mAP_small": -1.0,
             "mAP_medium": -1.0,
             "mAP_large": -1.0,
+            "iou_thresholds": None,
+            "mean_ap_per_iou": None,
+            "confusion_matrix": None,
         }
 
     return metrics_output

@@ -5,8 +5,9 @@ import logging
 import sys
 import time  # For timestamp in output dir
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import torch  # <-- ADDED Import
 import yaml
@@ -46,10 +47,15 @@ def benchmark_single_model(
     config: BenchmarkConfig,
     output_dir: Path,
     num_classes: int,
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Optional[Union[np.ndarray, List[float]]]]]:
     """
     Runs the benchmark for a single loaded model.
     Calculates inference time statistics and calls metric calculation.
+
+    Returns:
+        A tuple containing:
+            - Standard metrics dictionary (for aggregation).
+            - Detailed metrics dictionary (IoUs, AP per IoU, Confusion Matrix).
     """
     logging.info(f"--- Benchmarking Model: {model_name} ---")
     start_time_total = time.time()
@@ -167,6 +173,9 @@ def benchmark_single_model(
             "mAP_small": 0.0,
             "mAP_medium": 0.0,
             "mAP_large": 0.0,
+            "iou_thresholds": None,
+            "mean_ap_per_iou": None,
+            "confusion_matrix": None,
         }
 
     # --- Calculate Peak GPU Memory ---
@@ -183,7 +192,8 @@ def benchmark_single_model(
     logging.info(f"--- Finished benchmarking {model_name} in {total_time_sec:.2f} seconds ---")
 
     # --- Return Combined Metrics ---
-    metrics = {
+    # Separate standard metrics for the main results table
+    standard_metrics = {
         "model_name": model_name,
         "num_images_processed": num_valid_images,
         "num_images_requested": num_images,
@@ -192,11 +202,23 @@ def benchmark_single_model(
         "inference_time_ms_p75": round(p75_time_ms, 2),
         "inference_time_ms_p90": round(p90_time_ms, 2),
         "inference_time_ms_p95": round(p95_time_ms, 2),
-        "peak_gpu_memory_mb": peak_mem_mb,  # Update placeholder
+        "peak_gpu_memory_mb": peak_mem_mb,
     }
-    metrics.update(detection_metrics)  # Add mAP values etc.
+    # Add standard mAP values
+    standard_metrics["mAP_50"] = detection_metrics.get("mAP_50", -1.0)
+    standard_metrics["mAP_50_95"] = detection_metrics.get("mAP_50_95", -1.0)
+    standard_metrics["mAP_small"] = detection_metrics.get("mAP_small", -1.0)
+    standard_metrics["mAP_medium"] = detection_metrics.get("mAP_medium", -1.0)
+    standard_metrics["mAP_large"] = detection_metrics.get("mAP_large", -1.0)
 
-    return metrics
+    # Extract detailed metrics for separate handling
+    detailed_metrics = {
+        "iou_thresholds": detection_metrics.get("iou_thresholds"),  # Should be ndarray or None
+        "mean_ap_per_iou": detection_metrics.get("mean_ap_per_iou"),  # Should be ndarray or None
+        "confusion_matrix": detection_metrics.get("confusion_matrix"),  # Should be ndarray or None
+    }
+
+    return standard_metrics, detailed_metrics
 
 
 def main():
@@ -220,6 +242,40 @@ def main():
         config = BenchmarkConfig(**config_data)
         logging.info("Configuration loaded and validated successfully.")
         # logging.debug(config.model_dump_json(indent=2)) # Optional: Print validated config
+
+        # --- Determine Class Names and Number of Classes ---
+        class_names = config.metrics.confusion_matrix_classes
+        num_classes = 0
+        if class_names:
+            num_classes = len(class_names)
+            logging.info(f"Using {num_classes} class names from config: {class_names}")
+        else:
+            # TODO: Implement logic to infer class names from dataset if config is null
+            # This might involve parsing voc.yaml or using ultralytics dataset info.
+            # For now, raise an error if CM plots are expected but names are missing.
+            logging.warning(
+                "Class names not specified in config (metrics.confusion_matrix_classes). "
+                "Confusion matrix plots will be skipped if generated."
+            )
+            # Set a reasonable default? Or try to load from a standard location?
+            # For PASCAL VOC, we know the 20 classes, but this should be generic.
+            # Let's default to an empty list and rely on downstream checks.
+            class_names = []
+            # num_classes will need to be determined during metric calculation if not set here.
+            # calculate_detection_metrics initializes DetMetrics with nc=num_classes passed to it.
+            # We need num_classes BEFORE calling benchmark_single_model which calls calculate_detection_metrics.
+            # This is a problem. Let's require class_names in config for now if CM is desired.
+            if config.output.save_plots:  # Assume plots include CM if true
+                logging.error(
+                    "Cannot generate confusion matrix plots: 'metrics.confusion_matrix_classes' must be specified in the config when save_plots is true."
+                )
+                sys.exit(1)
+            # If not saving plots, maybe we can proceed without class names?
+            # DetMetrics might infer nc if not provided or 0, but let's be explicit.
+            logging.warning(
+                "Number of classes could not be determined from config. Metrics requiring class count might be inaccurate."
+            )
+            # Attempting to proceed without num_classes. DetMetrics might handle this.
 
         # --- Setup Output Directory ---
         output_dir_template = config.output.output_dir
@@ -275,7 +331,9 @@ def main():
 
         # --- Run Benchmarks for each model ---
         all_results = []
-        num_classes = config.dataset.num_classes
+        all_mean_aps_per_iou: Dict[str, Optional[np.ndarray]] = {}
+        all_confusion_matrices: Dict[str, Optional[np.ndarray]] = {}
+        iou_thresholds_list: Optional[np.ndarray] = None  # Should be same for all models
 
         for model_name_or_path in config.models_to_test:
             try:
@@ -285,7 +343,7 @@ def main():
                 logging.info("Model loaded successfully.")
 
                 # Run benchmark for this specific model
-                model_results = benchmark_single_model(
+                standard_metrics, detailed_metrics = benchmark_single_model(
                     model=model,
                     model_name=model_name_or_path,
                     benchmark_files=benchmark_files,
@@ -293,7 +351,18 @@ def main():
                     output_dir=final_output_dir,  # Pass output dir for model-specific files
                     num_classes=num_classes,
                 )
-                all_results.append(model_results)
+                all_results.append(standard_metrics)
+                all_mean_aps_per_iou[model_name_or_path] = detailed_metrics.get("mean_ap_per_iou")
+                all_confusion_matrices[model_name_or_path] = detailed_metrics.get(
+                    "confusion_matrix"
+                )
+
+                # Store IoU thresholds (should be the same from first valid model run)
+                if (
+                    iou_thresholds_list is None
+                    and detailed_metrics.get("iou_thresholds") is not None
+                ):
+                    iou_thresholds_list = detailed_metrics.get("iou_thresholds")
 
             except Exception as e:
                 logging.error(f"Failed to benchmark model {model_name_or_path}: {e}", exc_info=True)
@@ -315,6 +384,9 @@ def main():
                         "mAP_small": -1.0,
                         "mAP_medium": -1.0,
                         "mAP_large": -1.0,
+                        "iou_thresholds": None,
+                        "mean_ap_per_iou": None,
+                        "confusion_matrix": None,
                     }
                 )
 
@@ -339,8 +411,15 @@ def main():
                 generate_html_report(
                     results_df=results_df,
                     config_data=config_data,  # Pass the original loaded config dict
+                    iou_thresholds=iou_thresholds_list,
+                    mean_ap_per_iou_dict=all_mean_aps_per_iou,
+                    confusion_matrices_dict=all_confusion_matrices,
+                    class_names=class_names if class_names else [],  # Pass determined class names
                     output_dir=final_output_dir,
                     report_filename=config.output.results_html,
+                )
+                logging.info(
+                    f"HTML report saved to: {final_output_dir / config.output.results_html}"
                 )
             except Exception as e:
                 logging.error(f"Failed to generate HTML report: {e}", exc_info=True)

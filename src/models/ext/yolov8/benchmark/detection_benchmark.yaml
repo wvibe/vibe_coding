@@ -25,7 +25,27 @@ metrics:
     small: [0, 1024]
     medium: [1024, 9216]
     large: [9216, .inf] # Use '.inf' for infinity
-  confusion_matrix_classes: null # null or e.g., ["person", "car"]
+  confusion_matrix_classes:
+    - aeroplane
+    - bicycle
+    - bird
+    - boat
+    - bottle
+    - bus
+    - car
+    - cat
+    - chair
+    - cow
+    - diningtable
+    - dog
+    - horse
+    - motorbike
+    - person
+    - pottedplant
+    - sheep
+    - sofa
+    - train
+    - tvmonitor
 
 compute:
   device: 'auto' # 'cpu', 'cuda:0', 'auto'

@@ -4,12 +4,13 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from jinja2 import Template
+import numpy as np
 
 # Basic logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -69,23 +70,105 @@ def save_inference_boxplot(
     # plt.tight_layout()
     # plt.savefig(filename)
     # plt.close()
-    # logging.info(f"Saved box plot: {filename}")
     pass  # Skip for now
+
+
+def save_map_iou_plot(
+    results_df: pd.DataFrame,
+    iou_thresholds: Optional[np.ndarray],
+    mean_ap_per_iou_dict: Dict[str, Optional[np.ndarray]],
+    output_dir: Path,
+) -> Optional[str]:
+    """Generates and saves a line plot comparing mAP vs IoU threshold across models."""
+    if iou_thresholds is None or not mean_ap_per_iou_dict:
+        logging.warning("Skipping mAP vs IoU plot: Missing IoU thresholds or AP data.")
+        return None
+
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(exist_ok=True)
+    filename = plots_dir / "map_vs_iou.png"
+
+    plt.figure(figsize=(12, 7))
+    try:
+        all_aps_valid = False
+        for model_name in results_df["model_name"]:
+            aps = mean_ap_per_iou_dict.get(model_name)
+            if aps is not None and aps.shape == iou_thresholds.shape:
+                plt.plot(iou_thresholds, aps, marker='o', linestyle='-', label=model_name)
+                all_aps_valid = True # Mark if at least one model has valid data
+            else:
+                logging.warning(f"Skipping model {model_name} in mAP vs IoU plot: Missing or mismatched AP data.")
+
+        if not all_aps_valid:
+            logging.warning("Skipping mAP vs IoU plot: No valid AP data found for any model.")
+            plt.close()
+            return None
+
+        plt.title("Mean Average Precision (mAP) vs. IoU Threshold")
+        plt.xlabel("IoU Threshold")
+        plt.ylabel("mAP")
+        plt.grid(True)
+        plt.legend(loc="best")
+        plt.ylim(0, 1) # mAP is between 0 and 1
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
+        logging.info(f"Saved mAP vs IoU plot: {filename}")
+        # Return relative path for HTML report
+        return filename.relative_to(output_dir).as_posix()
+
+    except Exception as e:
+        logging.error(f"Failed to generate mAP vs IoU plot {filename}: {e}", exc_info=True)
+        plt.close()
+        return None
 
 
 def save_confusion_matrix_plot(
-    # Placeholder - Needs data from metrics.py
-    # confusion_matrix_data: Dict,
-    # class_names: List[str],
-    filename: Path,
-) -> None:
-    """Generates and saves a confusion matrix heatmap."""
-    # This requires confusion matrix data per model, which is not currently
-    # calculated or returned by calculate_detection_metrics.
-    logging.warning(
-        "Confusion matrix plot generation requires matrix data and is not yet implemented."
-    )
-    pass  # Skip for now
+    model_name: str,
+    cm_data: Optional[np.ndarray],
+    class_names: List[str],
+    output_dir: Path,
+) -> Optional[str]:
+    """Generates and saves a confusion matrix heatmap for a specific model."""
+    if cm_data is None or not class_names:
+        logging.warning(f"Skipping confusion matrix for {model_name}: Missing matrix data or class names.")
+        return None
+
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(exist_ok=True)
+    filename = plots_dir / f"confusion_matrix_{model_name}.png"
+
+    # Ensure class names match confusion matrix dimensions
+    if cm_data.shape[0] != len(class_names) or cm_data.shape[1] != len(class_names):
+        logging.warning(
+            f"Skipping confusion matrix for {model_name}: Matrix dimensions ({cm_data.shape}) "
+            f"do not match number of class names ({len(class_names)})."
+        )
+        return None
+
+    plt.figure(figsize=(max(8, len(class_names) * 0.5), max(6, len(class_names) * 0.4)))
+    try:
+        sns.heatmap(
+            cm_data,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            xticklabels=class_names,
+            yticklabels=class_names,
+        )
+        plt.title(f"Confusion Matrix: {model_name}")
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.tight_layout() # Adjust layout
+        plt.savefig(filename)
+        plt.close()
+        logging.info(f"Saved confusion matrix: {filename}")
+        # Return relative path for HTML report
+        return filename.relative_to(output_dir).as_posix()
+    except Exception as e:
+        logging.error(f"Failed to generate confusion matrix plot {filename}: {e}", exc_info=True)
+        plt.close()
+        return None
 
 
 def save_qualitative_results(
@@ -162,22 +245,32 @@ HTML_TEMPLATE = """
     </div>
     {% endif %}
 
-    {% if plot_paths.get('time_distribution') %}
+    {% if plot_paths.get('map_iou_plot') %}
     <div class="plot-container">
-        <h2>Inference Time Distribution</h2>
-        <img src="{{ plot_paths.time_distribution }}" alt="Inference Time Distribution Plot">
-        <p><i>Note: Boxplot generation pending implementation.</i></p>
+        <h2>mAP vs. IoU Threshold</h2>
+        <img src="{{ plot_paths.map_iou_plot }}" alt="mAP vs. IoU Threshold Plot">
     </div>
     {% endif %}
 
+    {% if plot_paths.get('time_distribution') %}
+    {# Boxplot implementation is still pending #}
+    {# <div class="plot-container">
+        <h2>Inference Time Distribution</h2>
+        <img src="{{ plot_paths.time_distribution }}" alt="Inference Time Distribution Plot">
+        <p><i>Note: Boxplot generation pending implementation.</i></p>
+    </div> #}
+    {% endif %}
+
     {# Add placeholders for confusion matrix plots if implemented #}
+    {% if plot_paths.get('confusion_matrices') %}
+    <h2>Confusion Matrices</h2>
     {% for model_name, cm_path in plot_paths.get('confusion_matrices', {}).items() %}
         <div class="plot-container">
-            <h2>Confusion Matrix: {{ model_name }}</h2>
+            <h3>{{ model_name }}</h3>
             <img src="{{ cm_path }}" alt="Confusion Matrix for {{ model_name }}">
-            <p><i>Note: Confusion matrix generation pending implementation.</i></p>
         </div>
     {% endfor %}
+    {% endif %}
 
     {% if qualitative_image_paths %}
     <h2>Qualitative Results (Sample)</h2>
@@ -199,6 +292,11 @@ HTML_TEMPLATE = """
 def generate_html_report(
     results_df: pd.DataFrame,
     config_data: Dict,  # Original config dict for display
+    # New detailed metrics data
+    iou_thresholds: Optional[np.ndarray],
+    mean_ap_per_iou_dict: Dict[str, Optional[np.ndarray]],
+    confusion_matrices_dict: Dict[str, Optional[np.ndarray]],
+    class_names: List[str], # Needed for CM plot labels
     output_dir: Path,
     report_filename: str = "report.html",
 ) -> None:
@@ -249,23 +347,38 @@ def generate_html_report(
     if gpu_plot_path.exists():
         plot_paths["gpu_comparison"] = gpu_plot_path.relative_to(output_dir).as_posix()
 
+    # NEW: mAP vs IoU Plot
+    map_iou_rel_path = save_map_iou_plot(
+        results_df,
+        iou_thresholds,
+        mean_ap_per_iou_dict,
+        output_dir,
+    )
+    if map_iou_rel_path:
+        plot_paths["map_iou_plot"] = map_iou_rel_path
+
     # Placeholders for more complex plots
     time_dist_path = plots_dir / "time_distribution.png"
     save_inference_boxplot(time_dist_path)
     if time_dist_path.exists():  # If the function is ever implemented and saves a file
         plot_paths["time_distribution"] = time_dist_path.relative_to(output_dir).as_posix()
 
-    # Confusion Matrices (requires data per model)
-    # plot_paths["confusion_matrices"] = {}
-    # for index, row in results_df.iterrows():
-    #     model_name = row['model_name']
-    #     cm_filename = plots_dir / f"confusion_matrix_{model_name}.png"
-    #     # Need to get cm_data for the specific model from somewhere
-    #     # save_confusion_matrix_plot(cm_data, class_names, cm_filename)
-    #     if cm_filename.exists():
-    #         plot_paths["confusion_matrices"][model_name] = cm_filename.relative_to(output_dir).as_posix()
+    # Confusion Matrices (Per Model)
+    cm_plot_paths = {}
+    for model_name in results_df["model_name"]:
+        cm_data = confusion_matrices_dict.get(model_name)
+        cm_rel_path = save_confusion_matrix_plot(
+            model_name=model_name,
+            cm_data=cm_data,
+            class_names=class_names,
+            output_dir=output_dir,
+        )
+        if cm_rel_path:
+            cm_plot_paths[model_name] = cm_rel_path
+    if cm_plot_paths: # Only add if we generated at least one CM plot
+        plot_paths["confusion_matrices"] = cm_plot_paths
 
-    # Qualitative Results (requires implementation)
+    # Qualitative Results (Still Pending)
     qualitative_image_paths_relative = []
     # qualitative_image_files = save_qualitative_results(..., qualitative_dir, ...)
     # for img_file in qualitative_image_files:
@@ -300,7 +413,7 @@ def generate_html_report(
         )
 
         report_path = output_dir / report_filename
-        with open(report_path, "w") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         logging.info(f"HTML report saved to: {report_path}")
 
