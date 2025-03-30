@@ -1,35 +1,21 @@
 {
-    // Python and notebook settings (using Ruff)
     "[python]": {
-        "editor.defaultFormatter": "charliermarsh.ruff",
-        "editor.formatOnSave": true,
-        "editor.rulers": [100] // Keep ruler for Python
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
+      "editor.rulers": [100]
     },
-    "[jupyter][ipynb]": {
-        "editor.defaultFormatter": "charliermarsh.ruff",
-        "editor.formatOnSave": true,
-        "editor.rulers": [100] // Keep ruler for notebooks
-    },
-
-    // Global editor settings
-    "editor.rulers": [100], // Set global ruler
-    "editor.wordWrapColumn": 100, // Set global word wrap
-    "diffEditor.ignoreTrimWhitespace": false, // Keep this setting globally
-    "files.trimTrailingWhitespace": true,
-
-    // Ruff integration
     "editor.codeActionsOnSave": {
-        "source.organizeImports.ruff": "always",
-        "source.fixAll.ruff": "always"
+      "source.organizeImports": "explicit",
+      "source.fixAll": "explicit"
     },
-    "ruff.lineLength": 100,
-    "ruff.lint.select": ["C", "E", "F", "W", "W291", "W293"], // Keep essential lint rules
 
-    // Python testing (Pytest)
-    "python.testing.pytestEnabled": true,
-    "python.testing.unittestEnabled": false,
+    "editor.rulers": [100],
+    "editor.wordWrapColumn": 100,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "files.trimTrailingWhitespace": true,
     "python.testing.pytestArgs": [
-        "tests"
+      "tests"
     ],
-    "python.testing.autoTestDiscoverOnSaveEnabled": true
-}
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+  }
