@@ -1,0 +1,45 @@
+# Training configuration for YOLOv11 FROM SCRATCH on combined PASCAL VOC
+
+# --- Base Model Architecture & Dataset ---
+# Model architecture YAML (YOLOv11 Large) - NOT a .pt weights file
+# Note: Ensure Ultralytics provides/recognizes this YAML or adjust as needed.
+model: yolo11l.yaml
+# Path to the dataset definition yaml (relative to project root)
+data: src/models/ext/yolov11/configs/voc_detect.yaml
+
+# --- Training Hyperparameters ---
+# Number of epochs (typically more needed for scratch training, e.g., 300)
+epochs: 300
+# Training image size
+imgsz: 640
+# Batch size (-1 for auto-batch calculation, or specify e.g., 8, 16 for yolov11l)
+batch: 32
+# Number of worker threads for data loading
+workers: 8
+# Optimizer: 'SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp', 'auto'
+optimizer: auto
+# Initial learning rate
+lr0: 0.02
+# Final learning rate (lr0 * lrf)
+lrf: 0.01
+# Close mosaic augmentation for the last N epochs
+close_mosaic: 10
+# Consider using cosine LR schedule for long scratch training runs
+# cos_lr: True
+# Patience for early stopping (default 100)
+# patience: 100
+# Add other relevant hyperparameters
+
+# --- Execution Settings ---
+# Device: '' for auto, 'cpu', '0', '0,1'
+device: '0,1'
+# Pretrained: MUST be False for training from scratch
+pretrained: False
+
+# --- Output Settings ---
+# Default project directory (relative to project root, can be overridden by --project CLI arg)
+project: runs/detect
+
+# --- Wandb Logging (will be used automatically if logged in) ---
+# Set to False to disable wandb even if installed/logged in
+# enable_wandb: True

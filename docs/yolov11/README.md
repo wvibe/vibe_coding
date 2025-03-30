@@ -96,7 +96,7 @@ python src/models/ext/yolov11/train_detect.py \
 
 ```bash
 python src/models/ext/yolov11/train_detect.py \
-    --config src/models/ext/yolov11/configs/voc_scratch.yaml \
+    --config src/models/ext/yolov11/configs/voc_retrain.yaml \
     --name voc11l_scratch_run1
 ```
 
@@ -110,3 +110,40 @@ python src/models/ext/yolov11/train_detect.py \
 ```
 
 Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>/`.
+
+### Evaluation (Detection)
+
+The `evaluate_detect.py` script provides comprehensive evaluation of YOLOv11 models using custom metrics and visualization tools.
+
+**Configuration (`src/models/ext/yolov11/configs/evaluate_*.yaml`):**
+
+- `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt`).
+- `dataset`: Configuration for evaluation data (image and label directories, class names).
+- `evaluation_params`: Parameters for model inference (image size, batch size, etc.).
+- `metrics`: Configuration for metric calculation (IoU thresholds, size ranges, etc.).
+- `computation`: Options for measuring inference time and memory usage.
+- `output`: Settings for output directory and formats.
+
+For detailed configuration options, see [Evaluation Documentation](./evaluate.md).
+
+**Command-Line:**
+
+```bash
+python src/models/ext/yolov11/evaluate_detect.py --config <path_to_config.yaml>
+```
+
+**Example:**
+
+```bash
+python src/models/ext/yolov11/evaluate_detect.py \
+    --config src/models/ext/yolov11/configs/evaluate_default.yaml
+```
+
+Results (metrics, visualizations, inference statistics) are saved to the configured output directory.
+
+## Documentation
+
+Detailed documentation is available in the following files:
+- [Design Notes](./design.md): Architecture and design decisions
+- [Evaluation Guide](./evaluate.md): Detailed evaluation metrics and configuration
+- [Todo List](./todo.md): Project roadmap and task tracking
