@@ -7,3 +7,6 @@
 [submodule "ext/ultralytics/yolov5"]
 	path = ext/ultralytics/yolov5
 	url = git@github.com:ultralytics/yolov5.git
+[submodule "ext/dust3r"]
+	path = ext/dust3r
+	url = git@github.com:ZerenYu/dust3r.git
