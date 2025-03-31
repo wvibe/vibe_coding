@@ -113,33 +113,28 @@ Training progress and results (checkpoints, metrics, logs) are saved to `<projec
 
 ### Evaluation (Detection)
 
-The `evaluate_detect.py` script provides comprehensive evaluation of YOLOv11 models using custom metrics and visualization tools.
+The `evaluate_detect.py` script provides comprehensive evaluation of YOLOv11 detection models using custom metrics and visualization tools, integrating utilities for metric calculation and performance measurement.
 
 **Configuration (`src/models/ext/yolov11/configs/evaluate_*.yaml`):**
 
-- `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt`).
-- `dataset`: Configuration for evaluation data (image and label directories, class names).
-- `evaluation_params`: Parameters for model inference (image size, batch size, etc.).
-- `metrics`: Configuration for metric calculation (IoU thresholds, size ranges, etc.).
-- `computation`: Options for measuring inference time and memory usage.
-- `output`: Settings for output directory and formats.
+This file configures the model path, evaluation dataset details (images, labels, class names), inference parameters (image size, confidence/IoU thresholds), metric settings, and output options. A key option is `save_results: True|False` which controls whether to save annotated images and prediction details in YOLO `.txt` format for each evaluated image into an `individual_results` subfolder.
 
-For detailed configuration options, see [Evaluation Documentation](./evaluate.md).
+For detailed configuration options, refer to the specific comments within `evaluate_default.yaml` or the dedicated documentation in [`evaluate.md`](./evaluate.md).
 
 **Command-Line:**
 
 ```bash
-python src/models/ext/yolov11/evaluate_detect.py --config <path_to_config.yaml>
+python -m src.models.ext.yolov11.evaluate_detect --config <path_to_config.yaml>
 ```
 
-**Example:**
+**Example (using default config):**
 
 ```bash
-python src/models/ext/yolov11/evaluate_detect.py \
+python -m src.models.ext.yolov11.evaluate_detect \
     --config src/models/ext/yolov11/configs/evaluate_default.yaml
 ```
 
-Results (metrics, visualizations, inference statistics) are saved to the configured output directory.
+Results (summary metrics JSON, plots, optional individual results) are saved to a timestamped directory within the project path defined in the configuration (e.g., `runs/evaluate/detect/expN`).
 
 ## Documentation
 

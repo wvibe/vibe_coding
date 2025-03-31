@@ -58,72 +58,13 @@ computation:
 output:
   project: "runs/evaluate/detect"  # Base directory for output
   name: null                       # Run name (defaults to model+timestamp)
-  save_json: True                  # Save results to JSON
-  save_txt: True                   # Save results as text files
-  save_conf: True                  # Include confidence in text files
-  save_metrics: True               # Save metrics as CSV/JSON
+  save_results: False              # Save annotated images and YOLO format txt for each image (in `individual_results` subdir)
+  # Ultralytics predict() save flags (NOT directly used by this script's main logic, but may affect internal predict behavior if passed):
+  # save_json: True                  # (UL flag) Save results to JSON - Handled by our script's metrics saving
+  # save_txt: True                   # (UL flag) Save results as text files - Handled by `save_results` if needed
+  # save_conf: True                  # (UL flag) Include confidence in text files - Handled by `save_results` if needed
+  # Metrics/Plot Saving (Controlled by our script):
+  save_metrics_json: True          # Save final computed metrics to metrics.json
   plot_confusion_matrix: True      # Generate confusion matrix plot
   plot_precision_recall: True      # Generate P-R curve plots
 ```
-
-A default configuration is provided at `src/models/ext/yolov11/configs/evaluate_default.yaml`.
-
-## Usage
-
-To run the evaluation script:
-
-```bash
-python -m src.models.ext.yolov11.evaluate_detect --config path/to/config.yaml
-```
-
-## Implementation Details
-
-The evaluation script follows this process:
-
-1. **Configuration Loading**: Loads and validates the configuration YAML file
-2. **Output Directory Setup**: Creates a timestamped output directory
-3. **Model Loading**: Loads the model and counts parameters with `get_model_params`
-4. **Inference**: Runs predictions on all evaluation images and measures performance:
-   - Performs warmup iterations
-   - Measures inference time
-   - Tracks peak GPU memory with `get_peak_gpu_memory_mb`
-5. **Ground Truth Processing**: Loads and processes ground truth annotations
-6. **Metric Calculation**:
-   - Matches predictions to ground truth using `match_predictions`
-   - Calculates precision-recall data with `calculate_pr_data`
-   - Calculates mAP across IoU thresholds with `calculate_map`
-   - Calculates mAP by object size with `calculate_map_by_size`
-   - Generates confusion matrix with `generate_confusion_matrix`
-7. **Result Reporting**: Outputs metrics to console and saves to files
-8. **Visualization**: Generates precision-recall curves and confusion matrix plots
-
-## Metrics
-
-The script calculates the following metrics:
-
-- **mAP (mean Average Precision)**: Averaged across classes and IoU thresholds
-- **mAP@0.5**: AP at IoU threshold of 0.5
-- **mAP@0.5:0.95**: AP averaged over IoU thresholds from 0.5 to 0.95
-- **mAP by Size**: AP for small, medium, and large objects
-- **Confusion Matrix**: True positives, false positives, and false negatives by class
-- **Computational Metrics**:
-  - Model parameter count
-  - Inference time per image
-  - Peak GPU memory usage
-
-## Output
-
-The script creates the following output files in the specified output directory:
-
-- **config.yaml**: Copy of the evaluation configuration
-- **metrics.json**: Complete metrics results
-- **predictions.json**: Detection results in JSON format
-- **confusion_matrix.png**: Confusion matrix visualization
-- **pr_curves.png**: Precision-recall curves
-- **inference_stats.txt**: Inference time and memory statistics
-
-## Future Extensions
-
-- Integration with benchmarking to compare multiple models
-- Support for custom metrics and visualizations
-- Integration with external evaluation frameworks (COCO, etc.)

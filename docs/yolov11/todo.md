@@ -43,10 +43,10 @@
     - [x] 5.3.2: Create `evaluate_default.yaml` configuration file with comprehensive options.
     - [x] 5.3.3: Implement configuration loading and validation.
     - [x] 5.3.4: Add model loading with parameter counting via `get_model_params`.
-    - [ ] 5.3.5: Implement inference with warmup and measurement of time/memory.
-    - [ ] 5.3.6: Implement ground truth loading and format conversion.
-    - [ ] 5.3.7: Integrate metric calculation (`match_predictions`, `calculate_map`, etc.).
-    - [ ] 5.3.8: Implement visualization and result saving.
+    - [x] 5.3.5: Implement inference with warmup and measurement of time/memory.
+    - [x] 5.3.6: Implement ground truth loading and format conversion.
+    - [x] 5.3.7: Integrate metric calculation (`match_predictions`, `calculate_map`, etc.).
+    - [x] 5.3.8: Implement visualization and result saving.
     - [x] 5.3.9: Create evaluation documentation in `docs/yolov11/evaluate.md`.
 
 - [ ] Milestone 6: Benchmarking and Reporting (Detection)

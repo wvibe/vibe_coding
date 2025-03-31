@@ -7,6 +7,7 @@ model: "yolo11n.pt" # REQUIRED: Update this path or use resolvable name (e.g., y
 dataset:
   image_dir: "/home/wmu/vibe/hub/datasets/VOC/images/test2007" # REQUIRED: Path to evaluation image directory
   label_dir: "/home/wmu/vibe/hub/datasets/VOC/labels/test2007" # REQUIRED: Path to corresponding label directory
+  sample_num_images: 100 # Optional: Set to a positive integer to randomly sample images, null/0 to use all
   # REQUIRED: List of class names in the order corresponding to label file indices
   class_names:
     - aeroplane
@@ -71,8 +72,9 @@ output:
   project: "runs/evaluate/detect"  # Base directory for output
   name: null                       # Run name, defaults to model name + timestamp if not specified
   save_json: True                  # Save results to a JSON file
-  save_txt: True                   # Save results as text files
-  save_conf: True                  # Include confidence in text files
-  save_metrics: True               # Save computed metrics as CSV or JSON
+  save_txt: False                  # Save Ultralytics format labels (different from YOLO format)
+  save_conf: False                 # Include confidence in Ultralytics format labels
+  save_results: True              # Renamed: Save annotated images and YOLO format txt files per image
+  # save_metrics: True             # This is implicitly done via save_json
   plot_confusion_matrix: True      # Generate confusion matrix plot
   plot_precision_recall: True      # Generate P-R curve plots
