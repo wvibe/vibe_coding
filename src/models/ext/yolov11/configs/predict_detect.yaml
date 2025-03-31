@@ -1,7 +1,7 @@
 # predict_demo.yaml: Demo config for predict_detect.py
 
 # Required parameters
-model: yolo11n.pt  # Example model, can be changed
+model: yolo11l.pt  # Example model, can be changed
 source: /home/wmu/vibe/hub/datasets/VOC/images/test2007
 project: runs/predict/detect # Base directory for output runs
 
@@ -15,4 +15,4 @@ save_conf: True   # Include confidence in saved labels/plots
 save: True        # Save annotated images
 
 # Custom script parameters
-random_select: 5  # Predict on 5 random images if source is a directory (0 or null for all)
+random_select: 10  # Predict on 5 random images if source is a directory (0 or null for all)

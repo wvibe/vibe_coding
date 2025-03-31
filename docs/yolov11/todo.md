@@ -64,13 +64,20 @@
   - [ ] Add documentation for metrics calculation and configuration (Milestone 5)
   - [ ] Add documentation for benchmarking script and reports (Milestone 6)
 
-## Phase 2: Segmentation & Further Expansion (Deferred)
+## Phase 2: Segmentation & Further Expansion
 
-- [ ] Segmentation dataset preparation
-- [ ] Segmentation configurations (`*_seg.yaml`)
-- [ ] Segmentation inference script (`inference_seg.py`)
-- [ ] Segmentation finetuning script (`finetune_seg.py`)
-- [ ] Segmentation tests
-- [ ] COCO Dataset Integration (Detection & Segmentation)
-- [ ] Full training scripts (optional)
-- [ ] Final comprehensive documentation update
+- [x] Milestone 8: Basic Segmentation Support
+  - [x] Create segmentation prediction config (`predict_segment.yaml`)
+  - [x] Create common utility module for prediction (`predict_utils.py`)
+  - [x] Implement segmentation prediction script (`predict_segment.py`)
+  - [x] Add proper documentation in README.md
+  - [x] Set up proper Python package structure with __init__.py files
+- [ ] Milestone 9: Advanced Segmentation Features
+  - [ ] Segmentation dataset preparation
+  - [ ] Segmentation configurations (`*_seg.yaml`)
+  - [ ] Segmentation finetuning script (`train_segment.py`)
+  - [ ] Segmentation evaluation script (`evaluate_segment.py`)
+  - [ ] Segmentation tests
+  - [ ] COCO Dataset Integration (Detection & Segmentation)
+  - [ ] Full training scripts (optional)
+  - [ ] Final comprehensive documentation update

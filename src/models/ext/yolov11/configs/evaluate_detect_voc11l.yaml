@@ -1,0 +1,82 @@
+# Configuration for evaluating the fine-tuned YOLOv11-L model (voc11l_finetune_run1) on VOC2007 test set
+
+# --- Model ---
+# Path to the specific model weights file to evaluate
+model: runs/detect/voc11l_finetune_run1/weights/best.pt
+
+# --- Dataset ---
+dataset:
+  # REQUIRED: Explicit path to the evaluation image directory
+  image_dir: "/home/wmu/vibe/hub/datasets/VOC/images/test2007"
+  # REQUIRED: Explicit path to the corresponding label directory (assuming YOLO *.txt format)
+  # NOTE: Make sure labels exist at this path in the correct format.
+  label_dir: "/home/wmu/vibe/hub/datasets/VOC/labels/test2007"
+  # Optional: Set to a positive integer to randomly sample images, null/0 or remove to use all
+  sample_num_images: 500
+  # REQUIRED: List of class names in the order corresponding to label file indices (copied from voc_detect.yaml)
+  class_names:
+    - aeroplane
+    - bicycle
+    - bird
+    - boat
+    - bottle
+    - bus
+    - car
+    - cat
+    - chair
+    - cow
+    - diningtable
+    - dog
+    - horse
+    - motorbike
+    - person
+    - pottedplant
+    - sheep
+    - sofa
+    - train
+    - tvmonitor
+
+# --- Evaluation Parameters (passed to model.predict and for timing) ---
+evaluation_params:
+  imgsz: 640             # Image size for inference (should match training if possible)
+  batch_size: 16         # Batch size for model.predict (adjust based on GPU memory)
+  device: 0              # Compute device (0, 'cpu', 'cuda:0', etc. 0=first GPU)
+  iou_thres_nms: 0.45    # IoU threshold for NMS during model.predict
+  conf_thres: 0.25       # Confidence threshold for predictions (adjust as needed, lower for mAP)
+  max_det: 300           # Maximum detections per image
+  warmup_iterations: 3   # Number of warmup iterations before timing
+  random_seed: 42        # Seed for image sampling reproducibility
+
+# --- Metrics Configuration ---
+metrics:
+  # List of IoU thresholds for calculating mAP@IoU (e.g., [0.5] for PASCAL VOC mAP, list for COCO mAP)
+  iou_thresholds: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+
+  # Parameters specifically for the Confusion Matrix plot
+  confidence_threshold_cm: 0.25 # Min prediction confidence to include in Confusion Matrix
+  iou_threshold_cm: 0.45        # IoU threshold for matching in Confusion Matrix
+  target_classes_cm: null       # Optional: List class NAMES for explicit CM rows/cols (null = use all)
+
+  # Optional: Define pixel area ranges for calculating mAP by object size
+  size_ranges:                 # Area in pixels^2 for mAP@Size (COCO standard)
+    small: [0, 1024]           # area < 32*32
+    medium: [1024, 9216]       # 32*32 <= area < 96*96
+    large: [9216, null]        # area >= 96*96
+
+# --- Computation Measurement ---
+computation:
+  measure_inference_time: True  # Measure inference time (excluding warmup)
+  measure_memory: True          # Measure peak GPU memory usage (if GPU is used)
+
+# --- Output Control ---
+output:
+  # Base directory where the run's named output folder will be created
+  project: "runs/evaluate/detect"
+  # Specific name for this evaluation run's output folder
+  name: "voc11l_finetune_run1"
+  save_json: True                  # Save comprehensive results (metrics, config) to a JSON file
+  # save_txt: False                 # Ultralytics format labels (rarely needed)
+  # save_conf: False                # Include confidence in Ultralytics format labels
+  save_results: True               # Save annotated images and YOLO format txt files per evaluated image
+  plot_confusion_matrix: True      # Generate confusion matrix plot
+  plot_precision_recall: True      # Generate P-R curve plots

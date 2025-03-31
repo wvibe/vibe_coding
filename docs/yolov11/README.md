@@ -35,7 +35,7 @@ The `predict_detect.py` script runs inference using a YOLOv11 model based on par
 **Command-Line:**
 
 ```bash
-python src/models/ext/yolov11/predict_detect.py \
+python -m src.models.ext.yolov11.predict_detect \
     --config <path_to_config.yaml> \
     --name-prefix <your_run_prefix> \
     [--<param_to_override> <value>] # Optional overrides
@@ -44,22 +44,53 @@ python src/models/ext/yolov11/predict_detect.py \
 **Example (using demo config):**
 
 ```bash
-python src/models/ext/yolov11/predict_detect.py \
-    --config src/models/ext/yolov11/configs/predict_demo.yaml \
+python -m src.models.ext.yolov11.predict_detect \
+    --config src/models/ext/yolov11/configs/predict_detect.yaml \
     --name-prefix demo_voc_test
 ```
 
 **Example (overriding model and confidence):**
 
 ```bash
-python src/models/ext/yolov11/predict_detect.py \
-    --config src/models/ext/yolov11/configs/predict_demo.yaml \
+python -m src.models.ext.yolov11.predict_detect \
+    --config src/models/ext/yolov11/configs/predict_detect.yaml \
     --name-prefix demo_voc_yolo11s_conf50 \
     --model yolo11s.pt \
     --conf 0.5
 ```
 
 Results are saved to `<config.project>/<name-prefix>_<timestamp>/`.
+
+### Prediction (Segmentation)
+
+The `predict_segment.py` script runs instance segmentation inference using a YOLOv11 segmentation model. It follows the same structure and pattern as the detection script.
+
+**Configuration (`src/models/ext/yolov11/configs/predict_segment.yaml`):**
+
+- `model`: Path to the segmentation model (`.pt`) or Ultralytics model name (e.g., `yolo11n-seg.pt`).
+- `source`: Path to the input image or directory.
+- `project`: Base directory to save output runs (e.g., `runs/predict/segment`).
+- `random_select`: (Optional) Number of images to randomly select if `source` is a directory.
+- Additional segmentation parameters like `retina_masks` and `overlap_mask`.
+
+**Command-Line:**
+
+```bash
+python -m src.models.ext.yolov11.predict_segment \
+    --config <path_to_config.yaml> \
+    --name-prefix <your_run_prefix> \
+    [--<param_to_override> <value>] # Optional overrides
+```
+
+**Example:**
+
+```bash
+python -m src.models.ext.yolov11.predict_segment \
+    --config src/models/ext/yolov11/configs/predict_segment.yaml \
+    --name-prefix segment_test
+```
+
+Results are saved to `<config.project>/<name-prefix>_<timestamp>/`. The segmentation masks are saved as overlays on the original images, and as text files with mask coordinates if `save_txt` is enabled.
 
 ### Training (Detection)
 
