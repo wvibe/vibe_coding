@@ -94,13 +94,19 @@ def get_peak_gpu_memory_mb(device=None):
                 log.info(f"Device '{device}' is not a CUDA device.")
                 return None
             device_idx = device.index if device.index is not None else torch.cuda.current_device()
+        elif isinstance(device, int): # Add check for integer device ID
+            if device < 0 or device >= torch.cuda.device_count():
+                log.error(f"CUDA device index {device} out of range.")
+                return None
+            device_idx = device # Use the integer directly
         else:
              log.error(f"Invalid device type: {type(device)}")
              return None
 
-        if device_idx >= torch.cuda.device_count():
-             log.error(f"CUDA device index {device_idx} out of range.")
-             return None
+        # No need for second check, handled above
+        # if device_idx >= torch.cuda.device_count():
+        #      log.error(f"CUDA device index {device_idx} out of range.")
+        #      return None
 
         # Get peak memory in bytes and convert to MiB (1024*1024)
         peak_mem_bytes = torch.cuda.max_memory_allocated(device=device_idx)
