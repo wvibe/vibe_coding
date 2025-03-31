@@ -53,6 +53,23 @@ VHUB_ROOT=${VIBE_ROOT}/vhub
 DATA_ROOT=${VHUB_ROOT}/data
 ```
 
+## 🖥️ Cursor IDE Setup
+
+For an enhanced development experience using the Cursor IDE, please follow the setup guide located here:
+
+➡️ **[Cursor Setup Guide](./docs/cursor/setup-guide.md)**
+
+This guide covers:
+- Configuring global and project-specific rules.
+- Setting up recommended auto-run behavior.
+- Using Model Configuration Profiles (MCPs).
+- Effective development workflows with the AI assistant.
+
+### Helpful Videos
+
+*   **Intro to Cursor Features:** [https://www.youtube.com/watch?v=TQsP_PlCY1I](https://www.youtube.com/watch?v=TQsP_PlCY1I&list=PLhBPcrfhLEXuzJRfriP_C6KDf3M0oXmRg&index=4)
+*   **Cursor AI Pair Programming:** [https://www.youtube.com/watch?v=v7UcVPO4y3c](https://www.youtube.com/watch?v=v7UcVPO4y3c&list=PLhBPcrfhLEXuzJRfriP_C6KDf3M0oXmRg&index=8)
+
 ## 📝 Note
 
 This is a playground repository - perfect for experimentation and learning. Feel free to break things, fix them, and learn in the process!

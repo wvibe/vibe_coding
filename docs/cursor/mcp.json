@@ -8,7 +8,7 @@
         "run",
         "@smithery-ai/github",
         "--config",
-        "\"{\\\"githubPersonalAccessToken\\\":\\\"<GITHUB_PAT_PLACEHOLDER>\\\"}\""
+        "{\"githubPersonalAccessToken\":\"<GITHUB_PAT_PLACEHOLDER>\"}"
       ]
     },
     "AgentDesk BrowserTools": {
@@ -16,6 +16,25 @@
       "args": [
         "@agentdeskai/browser-tools-mcp@1.2.0"
       ]
+    },
+    "weights_and_biases": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/wmu/vibe/mcp-server",
+        "run",
+        "src/mcp_server/server.py"
+      ]
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "BSAY4d79iliJMLfcxxdESq6EmjcCvtt"
+      }
     }
   }
-} 
+}

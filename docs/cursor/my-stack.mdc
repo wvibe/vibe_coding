@@ -1,0 +1,56 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Technology Stack
+
+## Environment Management
+- **Environment management tool:** `conda`
+- **Default environment:** `vbl`
+- **Python version:** `3.12`
+- **Package management:** `pip`
+- **Required environment variables:** None
+
+## Core Technologies
+- **Backend:** `Python 3.12`
+- **ML Framework:** `PyTorch 2.6`
+- **ML Libraries:** `Hugging Face`
+- **Frontend:** `HTML`, `JavaScript`, `Gradio`
+- **Database:** `MySQL`
+- **Unit Testing:** `pytest`
+- **Linting:** `ruff`
+
+
+## Project Structure
+vibe/                          # Root folder (not in git)
+├── vibe_coding/               # Git repository
+│   ├── src/                   # Main source code
+│   │   ├── models/            # ML model implementations
+│   │   │   ├── hf/            # Using Huggingface transformers
+│   │   │   └── py/            # Using raw PyTorch
+│   │   ├── data_loaders/      # Data loading utilities
+│   │   └── utils/             # Utility functions and helpers
+│   ├── scripts/               # Scripts for general purpose
+│   ├── ext/                   # External reference code (READ-ONLY)
+│   ├── notebooks/             # Jupyter notebooks for experiments
+│   │   ├── dataset/           # Dataset exploration notebooks
+│   │   └── model/             # Model training and evaluation notebooks
+│   ├── tests/                 # Test files mirroring src structure
+│   │   └── models/            # Model tests
+│   ├── docs/                  # Documentation
+│   ├── requirements.txt       # Python dependencies
+│   ├── README.md              # Project documentation
+│   └── .env                   # Environment variables (not in git)
+└── hub                        # Resource files for ML (not in git)
+    ├── datasets/              # Dataset files
+    ├── models/                # Exporte models
+    └── checkpoints/           # Training checkpoints
+
+## Development Guidelines
+- Test coverage: Required for all model code
+- Documentation: Docstrings for functions and classes
+- Environment: Keep .env local, never commit
+- Hub: Store outside git repository in vibe root folder
+- External code: The `ext` directory contains third-party reference code that should be treated as READ-ONLY. Do not modify code in this directory.
+- Notebooks: Keep all notebooks in the top-level notebooks directory with appropriate subfolders for organization.
