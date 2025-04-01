@@ -302,29 +302,31 @@ def test_load_ground_truth_image_read_error(mock_get_dims, caplog):
     image_stems = ["img1"]
     class_names = ["classA"]
 
+    # Mock Path.is_file to return True for label file but False for image file
+    def mock_is_file(self):
+        if self.name == "img1.txt" and self.parent.name == "labels":
+            return True
+        if self.name == "img1.jpg" and self.parent.name == "images":
+            return False
+        return False
+
     # Mock open to provide label content
     def mock_file_open(filename, mode="r"):
         path_str = str(filename)
         if path_str == "labels/img1.txt":
             return mock_open(read_data="0 0.1 0.1 0.1 0.1")().__enter__()
         else:
-            # Simulate image file potentially not being found by open if needed,
-            # although load_ground_truth uses Path.is_file first usually.
             raise FileNotFoundError
 
-    # Rely on _get_image_dimensions returning None to trigger the error path,
-    # or potentially the internal Path.is_file check failing if not mocked.
     with (
         caplog.at_level(logging.WARNING),
+        patch("pathlib.Path.is_file", mock_is_file),
         patch("builtins.open", mock_file_open),
-    ):  # Keep open mock for label file
+    ):
         result_gts = load_ground_truth(label_dir, image_dir, image_stems, class_names)
 
-    # Assertions: Check log for dimension error OR missing image warning
-    assert (
-        "Failed to read dimensions/find image for" in caplog.text
-        or "Label file found but no image file" in caplog.text
-    )
+    # Assert the warning log message was generated
+    assert "Label file found but no image file" in caplog.text
     assert result_gts == {"img1": []}
 
 
@@ -369,6 +371,14 @@ def test_load_ground_truth_zero_area_box(mock_get_dims, caplog):
     image_stems = ["img_zero"]
     class_names = ["classA"]
 
+    # Mock Path.is_file to return True for both label and image files
+    def mock_is_file(self):
+        if self.name == "img_zero.txt" and self.parent.name == "labels":
+            return True
+        if self.name == "img_zero.jpg" and self.parent.name == "images":
+            return True
+        return False
+
     zero_area_content = "0 0.0 0.5 0.0 0.1"
     mock_label_files_dict = {
         "labels/img_zero.txt": zero_area_content,
@@ -380,12 +390,13 @@ def test_load_ground_truth_zero_area_box(mock_get_dims, caplog):
         if path_str in mock_label_files_dict:
             return mock_open(read_data=mock_label_files_dict[path_str])().__enter__()
         else:
-            # Simulate image file potentially not found if is_file isn't mocked
             raise FileNotFoundError
 
-    # Rely on _get_image_dimensions and the processing logic for zero-area box.
-    # Assume internal Path.is_file check might pass/fail, but label is provided.
-    with patch("builtins.open", mock_file_open), caplog.at_level(logging.WARNING):
+    with (
+        patch("pathlib.Path.is_file", mock_is_file),
+        patch("builtins.open", mock_file_open),
+        caplog.at_level(logging.WARNING),
+    ):
         result_gts = load_ground_truth(label_dir, image_dir, image_stems, class_names)
 
     # Assertions remain the same

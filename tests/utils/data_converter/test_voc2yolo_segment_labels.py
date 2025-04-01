@@ -314,55 +314,82 @@ def test_match_instance_to_class(voc_segment_test_setup):
 
 @patch("src.utils.data_converter.voc2yolo_segment_labels.parse_voc_xml")
 @patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._get_mask_instances")
+@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._mask_to_polygons")
+@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._compute_iou")
+@patch("builtins.open", new_callable=mock_open)
 @patch("pathlib.Path.exists")
-@patch("src.utils.data_converter.voc2yolo_segment_labels.open", new_callable=mock_open)
-@patch("src.utils.data_converter.voc2yolo_segment_labels.logger")
+@patch("pathlib.Path.is_dir")
 def test_process_segmentation_file(
-    mock_logger,
-    mock_open_write,
+    mock_is_dir,
     mock_path_exists,
+    mock_open_write,
+    mock_compute_iou,
+    mock_mask_to_polygons,
     mock_get_masks,
     mock_parse_xml,
-    voc_segment_test_setup,
+    temp_voc_dir,
 ):
-    devkit_path, year, output_path, class_names = voc_segment_test_setup
-    converter = SegmentConverter(
-        devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
-    )
-    img_id = "img1"
+    """Test processing of a single segmentation file."""
+    # Setup
+    year = "2012"
+    voc_root, output_path = temp_voc_dir  # Unpack the tuple
+    img_id = "test_image"
 
-    # Mock path exists to always return True to bypass the initial check
+    # Mock Path.exists and Path.is_dir to return True for our test paths
     mock_path_exists.return_value = True
+    mock_is_dir.return_value = True
 
-    # Mock return value for parse_voc_xml
-    mock_xml_objects = [
-        {"name": "classA", "bbox": [2, 0, 4, 1], "difficult": 0},
-        {"name": "classB", "bbox": [1, 1, 3, 2], "difficult": 0},
-    ]
-    mock_img_dims = (4, 2)
-    mock_parse_xml.return_value = (mock_xml_objects, mock_img_dims)
+    # Create converter instance
+    converter = SegmentConverter(
+        devkit_path=str(voc_root / "VOCdevkit"), year=year, output_segment_dir=str(output_path)
+    )
 
-    # Mock return value for _get_mask_instances
-    mask1_data = np.array([[0, 0, 1, 1], [0, 0, 0, 0]], dtype=np.uint8)
-    mask2_data = np.array([[0, 0, 0, 0], [0, 1, 1, 0]], dtype=np.uint8)
-    mock_get_masks.return_value = {1: mask1_data, 2: mask2_data}
+    # Mock parse_voc_xml to return valid data
+    mock_parse_xml.return_value = (
+        [
+            {
+                "name": "person",
+                "bbox": [100, 100, 200, 200],  # [xmin, ymin, xmax, ymax]
+            }
+        ],
+        (640, 480),  # img_dims
+    )
+
+    # Mock _get_mask_instances to return valid data
+    mock_get_masks.return_value = {
+        1: np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.uint8)  # Simple mask
+    }
+
+    # Mock _mask_to_polygons to return valid polygons
+    mock_mask_to_polygons.return_value = [[0.1, 0.1, 0.2, 0.2, 0.1, 0.2]]  # Simple triangle
+
+    # Mock _compute_iou to return a high value
+    mock_compute_iou.return_value = 0.8  # High IoU value
 
     # Call the method under test
     converter._process_segmentation_file(img_id, output_path)
 
     # Verify parse_voc_xml was called correctly
-    expected_xml_path = devkit_path / f"VOC{year}" / "Annotations" / f"{img_id}.xml"
+    expected_xml_path = voc_root / "VOCdevkit" / f"VOC{year}" / "Annotations" / f"{img_id}.xml"
     mock_parse_xml.assert_called_once_with(expected_xml_path)
 
     # Verify _get_mask_instances was called
-    expected_mask_path = devkit_path / f"VOC{year}" / "SegmentationObject" / f"{img_id}.png"
+    expected_mask_path = (
+        voc_root / "VOCdevkit" / f"VOC{year}" / "SegmentationObject" / f"{img_id}.png"
+    )
     mock_get_masks.assert_called_once_with(expected_mask_path)
+
+    # Verify _mask_to_polygons was called
+    mock_mask_to_polygons.assert_called_once()
+
+    # Verify _compute_iou was called
+    mock_compute_iou.assert_called_once()
 
     # Verify the output file write was attempted
     expected_output_file = output_path / f"{img_id}.txt"
     mock_open_write.assert_called_once_with(expected_output_file, "w")
 
-    # Verify the content written (optional, but good practice)
+    # Verify the content written
     handle = mock_open_write()  # Get the mock file handle
     handle.write.assert_called()  # Check that write was called
 

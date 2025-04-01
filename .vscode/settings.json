@@ -1,21 +1,27 @@
 {
     "[python]": {
-      "editor.defaultFormatter": "charliermarsh.ruff",
-      "editor.formatOnSave": true,
-      "editor.rulers": [100]
-    },
-    "editor.codeActionsOnSave": {
-      "source.organizeImports": "explicit",
-      "source.fixAll": "explicit"
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        },
+        "editor.rulers": [100]
     },
 
-    "editor.rulers": [100],
-    "editor.wordWrapColumn": 100,
-    "diffEditor.ignoreTrimWhitespace": false,
     "files.trimTrailingWhitespace": true,
-    "python.testing.pytestArgs": [
-      "tests"
+
+    "python.analysis.extraPaths": [
+        "./src"
     ],
-    "python.testing.unittestEnabled": false,
+
     "python.testing.pytestEnabled": true,
-  }
+    "python.testing.unittestEnabled": false,
+    "python.testing.cwd": "${workspaceFolder}",
+
+    "python.envFile": "${workspaceFolder}/.env",
+
+    "terminal.integrated.env.osx": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+    }
+}
