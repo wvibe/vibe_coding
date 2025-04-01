@@ -54,7 +54,7 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
 - [x] Create unit tests for `detect_voc2yolo.py` core functions
 - [x] Create unit tests for `voc2yolo_detect_labels.py` core functions
 - [x] Add test cases for edge cases (detection)
-- [ ] Update README.md to include `voc2yolo_images.py` and visualization scripts.
+- [x] Update README.md to include `voc2yolo_images.py` and visualization scripts.
 
 ### 4. Documentation
 - [x] Rename `explanation.md` to `README.md`
@@ -79,8 +79,8 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
 ### 7. Image Handling and Visualization
 - [x] Add `opencv-python` and `python-dotenv` to requirements.txt
 - [x] Implement `voc2yolo_images.py` to copy images based on image sets.
-- [ ] Add visualization drawing utilities (bbox, polygon, mask overlay, colors) to `voc2yolo_utils.py`.
-- [ ] Implement `vocdev_detect_viz.py` (visualize VOC XML annotations).
+- [x] Add visualization drawing utilities (bbox, polygon, mask overlay, colors) to `src/utils/common/image_annotate.py`.
+- [x] Implement `vocdev_detect_viz.py` (visualize VOC XML annotations).
 - [ ] Implement `vocdev_segment_viz.py` (visualize VOC mask annotations).
 - [ ] Implement `yolo_detect_viz.py` (visualize YOLO detection labels).
 - [ ] Implement `yolo_segment_viz.py` (visualize YOLO segmentation labels).

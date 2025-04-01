@@ -77,7 +77,8 @@ def parse_voc_xml(
 
     Returns:
         Tuple: (List of object dictionaries, (image_width, image_height)) or (None, None) if parsing fails.
-               Object dictionary keys: 'name', 'bbox' ([xmin, ymin, xmax, ymax] absolute coords).
+               Object dictionary keys: 'name', 'bbox' ([xmin, ymin, xmax, ymax] absolute coords),
+                                     'difficult' (int, 0 or 1).
                Only includes objects whose class is in VOC_CLASSES.
     """
     try:
@@ -147,7 +148,22 @@ def parse_voc_xml(
             )
             continue
 
-        objects.append({"name": cls_name, "bbox": [xmin, ymin, xmax, ymax]})
+        # Get difficult flag (default to 0 if not present)
+        difficult_text = obj.findtext("difficult", "0")
+        try:
+            difficult = int(difficult_text)
+            if difficult not in [0, 1]:
+                logger.warning(
+                    f"Invalid difficult flag '{difficult_text}' for object '{cls_name}' in {xml_path}. Assuming 0."
+                )
+                difficult = 0
+        except ValueError:
+            logger.warning(
+                f"Non-integer difficult flag '{difficult_text}' for object '{cls_name}' in {xml_path}. Assuming 0."
+            )
+            difficult = 0
+
+        objects.append({"name": cls_name, "bbox": [xmin, ymin, xmax, ymax], "difficult": difficult})
 
     if not objects:
         logger.debug(f"No valid objects belonging to known classes found in {xml_path}")
