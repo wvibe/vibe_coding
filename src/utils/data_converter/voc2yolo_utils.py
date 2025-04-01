@@ -2,6 +2,7 @@
 """Utility functions and constants for VOC data converters."""
 
 import logging
+import random
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,10 +17,15 @@ JPEG_IMAGES_DIR = "JPEGImages"
 SEGMENTATION_CLASS_DIR = "SegmentationClass"
 SEGMENTATION_OBJECT_DIR = "SegmentationObject"
 IMAGESETS_DIR = "ImageSets"
-IMAGESETS_MAIN_DIR = f"{IMAGESETS_DIR}/Main"
-IMAGESETS_SEGMENTATION_DIR = f"{IMAGESETS_DIR}/Segmentation"
+IMAGESETS_MAIN_DIR = f"{IMAGESETS_DIR}/Main"  # Used for detection
+IMAGESETS_SEGMENTATION_DIR = f"{IMAGESETS_DIR}/Segmentation"  # Used for segmentation
 IMAGESETS_ACTION_DIR = f"{IMAGESETS_DIR}/Action"
 IMAGESETS_LAYOUT_DIR = f"{IMAGESETS_DIR}/Layout"
+
+# --- Output Directory Names ---
+OUTPUT_IMAGES_DIR = "images"
+OUTPUT_LABELS_DETECT_DIR = "labels_detect"
+OUTPUT_LABELS_SEGMENT_DIR = "labels_segment"
 
 # --- VOC Classes ---
 VOC_CLASSES = [
@@ -147,3 +153,120 @@ def parse_voc_xml(
         logger.debug(f"No valid objects belonging to known classes found in {xml_path}")
 
     return objects, (img_width, img_height)
+
+
+# --- Environment and Path Utilities ---
+
+# Removed load_voc_root_from_env - Handled in individual scripts
+
+
+def get_voc_dir(voc_root: Path, year: str) -> Path:
+    """Get the path to the specific VOC year directory (e.g., VOC_ROOT/VOCdevkit/VOC2012)."""
+    # return voc_root / f"VOC{year}"
+    return voc_root / "VOCdevkit" / f"VOC{year}"
+
+
+def get_image_set_path(voc_dir: Path, task_type: str, tag: str) -> Path:
+    """Get the path to an ImageSet file based on task type and tag.
+
+    Args:
+        voc_dir (Path): Path to the specific VOC year directory (e.g., VOCdevkit/VOC2012).
+        task_type (str): 'detect' or 'segment'.
+        tag (str): The ImageSet tag (e.g., 'train', 'val').
+
+    Returns:
+        Path: The full path to the ImageSet .txt file.
+
+    Raises:
+        ValueError: If task_type is invalid.
+    """
+    if task_type == "detect":
+        imageset_subdir = IMAGESETS_MAIN_DIR
+    elif task_type == "segment":
+        imageset_subdir = IMAGESETS_SEGMENTATION_DIR
+    else:
+        raise ValueError(f"Invalid task_type: {task_type}. Must be 'detect' or 'segment'.")
+    return voc_dir / imageset_subdir / f"{tag}.txt"
+
+
+def get_image_path(voc_dir: Path, image_id: str) -> Path:
+    """Get the path to a JPEG image within the VOC structure."""
+    return voc_dir / JPEG_IMAGES_DIR / f"{image_id}.jpg"
+
+
+def get_annotation_path(voc_dir: Path, image_id: str) -> Path:
+    """Get the path to an XML annotation file within the VOC structure."""
+    return voc_dir / ANNOTATIONS_DIR / f"{image_id}.xml"
+
+
+def get_segmentation_mask_path(voc_dir: Path, image_id: str) -> Path:
+    """Get the path to a segmentation mask PNG file within the VOC structure."""
+    return voc_dir / SEGMENTATION_OBJECT_DIR / f"{image_id}.png"
+
+
+def get_output_image_dir(output_root: Path, year: str, tag: str) -> Path:
+    """Get the output directory path for images for a given year and tag."""
+    return output_root / OUTPUT_IMAGES_DIR / f"{tag}{year}"
+
+
+def get_output_detect_label_dir(output_root: Path, year: str, tag: str) -> Path:
+    """Get the output directory path for detection labels for a given year and tag."""
+    return output_root / OUTPUT_LABELS_DETECT_DIR / f"{tag}{year}"
+
+
+def get_output_segment_label_dir(output_root: Path, year: str, tag: str) -> Path:
+    """Get the output directory path for segmentation labels for a given year and tag."""
+    return output_root / OUTPUT_LABELS_SEGMENT_DIR / f"{tag}{year}"
+
+
+# --- Image Set Reading Utilities ---
+
+
+def read_image_ids(
+    imageset_path: Path, num_samples: Optional[int] = None, seed: Optional[int] = 42
+) -> List[str]:
+    """Reads image IDs from an ImageSet file, with optional random sampling.
+
+    Args:
+        imageset_path (Path): Path to the ImageSet .txt file.
+        num_samples (Optional[int], optional): Number of samples to randomly select.
+                                             If None, reads all IDs. Defaults to None.
+        seed (Optional[int], optional): Random seed for sampling. Defaults to 42.
+
+    Returns:
+        List[str]: List of image IDs (potentially sampled).
+
+    Raises:
+        FileNotFoundError: If the imageset_path does not exist.
+        IOError: If the file cannot be read.
+    """
+    if not imageset_path.exists():
+        raise FileNotFoundError(f"ImageSet file not found: {imageset_path}")
+
+    try:
+        with open(imageset_path, "r") as f:
+            # Reads lines, strips whitespace, takes first element if line has multiple cols
+            # (some VOC sets have a second column like -1 or 1)
+            all_ids = [line.strip().split()[0] for line in f if line.strip()]
+    except IOError as e:
+        logger.error(f"Could not read ImageSet file {imageset_path}: {e}")
+        raise  # Re-raise the exception
+
+    if not all_ids:
+        logger.warning(f"No image IDs found in {imageset_path}.")
+        return []
+
+    if num_samples is not None and num_samples > 0:
+        if num_samples >= len(all_ids):
+            logger.info(
+                f"Requested sample size ({num_samples}) >= total IDs ({len(all_ids)}). Returning all IDs."
+            )
+            return all_ids
+        else:
+            if seed is not None:
+                random.seed(seed)
+            sampled_ids = random.sample(all_ids, num_samples)
+            logger.info(f"Sampled {len(sampled_ids)} IDs from {imageset_path} (seed={seed}).")
+            return sampled_ids
+    else:
+        return all_ids

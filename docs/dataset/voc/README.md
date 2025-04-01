@@ -125,8 +125,9 @@ names:
 
 ## Conversion Scripts
 
-- `src/utils/data_converter/detect_voc2yolo.py`: Converts original VOC XML annotations (from `VOCdevkit`) into the `labels_detect` YOLO bounding box format.
-- `src/utils/data_converter/segment_voc2yolo.py`: Converts original VOC segmentation masks (from `VOCdevkit`) and XML annotations into the `labels_segment` YOLO polygon format.
+- `src/utils/data_converter/voc2yolo_detect_labels.py`: Converts original VOC XML annotations (from `VOCdevkit`) into the `labels_detect` YOLO bounding box format.
+- `src/utils/data_converter/voc2yolo_segment_labels.py`: Converts original VOC segmentation masks (from `VOCdevkit`) and XML annotations into the `labels_segment` YOLO polygon format.
+- `src/utils/data_converter/voc2yolo_images.py`: Copies original JPEG images (from `VOCdevkit/.../JPEGImages`) into the top-level `images/` directory, structured by `<tag><year>` (e.g., `images/train2012/`), based on the image IDs listed in the `VOCdevkit/.../ImageSets/Main/<tag>.txt` file for the specified years and tags.
 
 ## Testing the Converters
 

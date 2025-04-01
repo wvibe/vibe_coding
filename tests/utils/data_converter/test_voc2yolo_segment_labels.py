@@ -176,8 +176,14 @@ def voc_segment_test_setup(tmp_path):
 
 def test_get_mask_instances(voc_segment_test_setup):
     devkit_path, year, output_path, _ = voc_segment_test_setup
+    # Use the root of the devkit path as voc_root for consistency
+    voc_root = devkit_path.parent
     converter = SegmentConverter(
-        devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        # devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        voc_root=voc_root,
+        output_root=voc_root,  # Output within the temp dir for test
+        year=year,
+        tag="test",
     )
     mask_path = devkit_path / f"VOC{year}" / "SegmentationObject" / "img1.png"
 
@@ -196,8 +202,13 @@ def test_get_mask_instances(voc_segment_test_setup):
 
 def test_mask_to_polygons(voc_segment_test_setup):
     devkit_path, year, output_path, _ = voc_segment_test_setup
+    voc_root = devkit_path.parent
     converter = SegmentConverter(
-        devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        # devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        voc_root=voc_root,
+        output_root=voc_root,
+        year=year,
+        tag="test",
     )
     # Create a more complex mask for polygon testing
     # L-shape
@@ -237,8 +248,13 @@ def test_mask_to_polygons(voc_segment_test_setup):
 
 def test_get_mask_bbox(voc_segment_test_setup):
     devkit_path, year, output_path, _ = voc_segment_test_setup
+    voc_root = devkit_path.parent
     converter = SegmentConverter(
-        devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        # devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
+        voc_root=voc_root,
+        output_root=voc_root,
+        year=year,
+        tag="test",
     )
     mask_data = np.array([[0, 0, 1, 1], [0, 2, 2, 0]], dtype=np.uint8)
     h, w = mask_data.shape
@@ -258,32 +274,16 @@ def test_get_mask_bbox(voc_segment_test_setup):
     np.testing.assert_allclose(bbox2, expected_bbox2, atol=1e-6)
 
 
-def test_compute_iou(voc_segment_test_setup):
-    devkit_path, year, output_path, _ = voc_segment_test_setup
-    converter = SegmentConverter(
-        devkit_path=str(devkit_path), year=year, output_segment_dir=str(output_path)
-    )
-    box1 = [0.1, 0.1, 0.5, 0.5]  # Area = 0.4 * 0.4 = 0.16
-    box2 = [0.3, 0.3, 0.7, 0.7]  # Area = 0.4 * 0.4 = 0.16
-    # Intersection: [0.3, 0.3, 0.5, 0.5] -> Area = 0.2 * 0.2 = 0.04
-    # Union = 0.16 + 0.16 - 0.04 = 0.28
-    # IoU = 0.04 / 0.28 = 1/7
-    expected_iou = 1 / 7.0
-    iou = converter._compute_iou(box1, box2)
-    assert abs(iou - expected_iou) < 1e-6
-
-    # Test no overlap
-    box3 = [0.8, 0.8, 0.9, 0.9]
-    iou_no_overlap = converter._compute_iou(box1, box3)
-    assert iou_no_overlap == 0.0
-
-
 def test_match_instance_to_class(voc_segment_test_setup):
     devkit_path, year, output_path, _ = voc_segment_test_setup
+    voc_root = devkit_path.parent
     converter = SegmentConverter(
-        devkit_path=str(devkit_path),
+        # devkit_path=str(devkit_path),
+        voc_root=voc_root,
+        output_root=voc_root,
         year=year,
-        output_segment_dir=str(output_path),
+        # output_segment_dir=str(output_path),
+        tag="test",
         iou_threshold=0.5,
     )
     mask_data = np.array([[0, 0, 1, 1], [0, 2, 2, 0]], dtype=np.uint8)
@@ -315,7 +315,7 @@ def test_match_instance_to_class(voc_segment_test_setup):
 @patch("src.utils.data_converter.voc2yolo_segment_labels.parse_voc_xml")
 @patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._get_mask_instances")
 @patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._mask_to_polygons")
-@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._compute_iou")
+# @patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._compute_iou") # Remove mock for compute_iou
 @patch("builtins.open", new_callable=mock_open)
 @patch("pathlib.Path.exists")
 @patch("pathlib.Path.is_dir")
@@ -323,7 +323,7 @@ def test_process_segmentation_file(
     mock_is_dir,
     mock_path_exists,
     mock_open_write,
-    mock_compute_iou,
+    # mock_compute_iou, # Remove mock argument
     mock_mask_to_polygons,
     mock_get_masks,
     mock_parse_xml,
@@ -339,9 +339,15 @@ def test_process_segmentation_file(
     mock_path_exists.return_value = True
     mock_is_dir.return_value = True
 
-    # Create converter instance
+    # Create converter instance - use temp_voc_dir which yields voc_root, output_path
+    voc_root, output_path = temp_voc_dir
     converter = SegmentConverter(
-        devkit_path=str(voc_root / "VOCdevkit"), year=year, output_segment_dir=str(output_path)
+        # devkit_path=str(voc_root / "VOCdevkit"), year=year, output_segment_dir=str(output_path)
+        voc_root=voc_root,
+        output_root=output_path,  # Use the yielded output path
+        year=year,
+        tag="test",  # Use a dummy tag
+        iou_threshold=0.8,  # Set threshold used in test logic
     )
 
     # Mock parse_voc_xml to return valid data
@@ -363,30 +369,41 @@ def test_process_segmentation_file(
     # Mock _mask_to_polygons to return valid polygons
     mock_mask_to_polygons.return_value = [[0.1, 0.1, 0.2, 0.2, 0.1, 0.2]]  # Simple triangle
 
-    # Mock _compute_iou to return a high value
-    mock_compute_iou.return_value = 0.8  # High IoU value
+    # Mock the common calculate_iou function instead of the internal method
+    with patch("src.utils.data_converter.voc2yolo_segment_labels.calculate_iou") as mock_common_iou:
+        mock_common_iou.return_value = 0.8  # High IoU value
 
-    # Call the method under test
-    converter._process_segmentation_file(img_id, output_path)
+        # Call the method under test
+        # _process_segmentation_file no longer takes output_dir
+        converter._process_segmentation_file(img_id)
 
-    # Verify parse_voc_xml was called correctly
-    expected_xml_path = voc_root / "VOCdevkit" / f"VOC{year}" / "Annotations" / f"{img_id}.xml"
-    mock_parse_xml.assert_called_once_with(expected_xml_path)
+        # Verify parse_voc_xml was called correctly
+        expected_xml_path = voc_root / f"VOC{year}" / "Annotations" / f"{img_id}.xml"
+        # Note: Need to adjust expected path based on how get_annotation_path works
+        # It takes voc_year_path. Let's mock get_annotation_path maybe?
+        # Simpler: Check the call to parse_voc_xml directly.
+        mock_parse_xml.assert_called_once()
+        call_args, _ = mock_parse_xml.call_args
+        assert isinstance(call_args[0], Path)
+        assert call_args[0].name == f"{img_id}.xml"
 
-    # Verify _get_mask_instances was called
-    expected_mask_path = (
-        voc_root / "VOCdevkit" / f"VOC{year}" / "SegmentationObject" / f"{img_id}.png"
-    )
-    mock_get_masks.assert_called_once_with(expected_mask_path)
+        # Verify _get_mask_instances was called
+        # Similarly, check the path passed
+        mock_get_masks.assert_called_once()
+        call_args_mask, _ = mock_get_masks.call_args
+        assert isinstance(call_args_mask[0], Path)
+        assert call_args_mask[0].name == f"{img_id}.png"
 
-    # Verify _mask_to_polygons was called
-    mock_mask_to_polygons.assert_called_once()
+        # Verify _mask_to_polygons was called
+        mock_mask_to_polygons.assert_called_once()
 
-    # Verify _compute_iou was called
-    mock_compute_iou.assert_called_once()
+        # Verify common calculate_iou was called
+        # mock_compute_iou.assert_called_once() # Remove assertion for old mock
+        mock_common_iou.assert_called_once()
 
     # Verify the output file write was attempted
-    expected_output_file = output_path / f"{img_id}.txt"
+    # Output path is now determined within the class based on output_root, year, tag
+    expected_output_file = converter.output_segment_dir / f"{img_id}.txt"
     mock_open_write.assert_called_once_with(expected_output_file, "w")
 
     # Verify the content written

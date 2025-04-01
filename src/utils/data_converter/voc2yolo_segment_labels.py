@@ -5,33 +5,47 @@ Convert Pascal VOC Segmentation Annotations to YOLO Format for a Specific ImageS
 Reads segmentation masks (PNG) and XML annotations from the specified VOCdevkit
 structure based on a given year and ImageSet tag (from ImageSets/Segmentation).
 Outputs YOLO segmentation format labels (.txt) with normalized polygon coordinates
-directly into the specified output directory.
+directly into the specified output directory under labels_segment/<tag+year>.
 
 Usage:
     python src/utils/data_converter/voc2yolo_segment_labels.py \
-        --devkit-path /path/to/VOCdevkit \
+        --voc-root /path/to/VOC \
+        --output-root /path/to/output \
         --year 2012 \
         --tag trainval \
-        --output-dir /path/to/output/labels_segment \
         --iou-threshold 0.5
 """
 
 import argparse
 import logging
+
+# Need os and load_dotenv here now
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+from dotenv import load_dotenv
 from tqdm import tqdm
 
-# Import common utilities from the renamed file
+# Moved load_dotenv to top level
+load_dotenv()  # Load .env variables
+
+from src.utils.common.iou import calculate_iou  # Import the common IoU function
+
+# Import common utilities from voc2yolo_utils
 from src.utils.data_converter.voc2yolo_utils import (
-    ANNOTATIONS_DIR,  # Use constant
-    IMAGESETS_SEGMENTATION_DIR,  # Use constant for Segmentation sets
-    SEGMENTATION_OBJECT_DIR,  # Use constant
+    ANNOTATIONS_DIR,
+    SEGMENTATION_OBJECT_DIR,
     VOC_CLASS_TO_ID,
+    get_annotation_path,
+    get_image_set_path,
+    get_output_segment_label_dir,
+    get_segmentation_mask_path,
+    get_voc_dir,
     parse_voc_xml,
+    read_image_ids,
 )
 
 # Configure logging
@@ -49,41 +63,49 @@ class VOC2YOLOConverter:
     """Convert VOC dataset annotations (masks) to YOLO segmentation format for a specific tag."""
 
     def __init__(
-        self, devkit_path: str, year: str, output_segment_dir: str, iou_threshold: float = 0.5
+        self,
+        voc_root: Path,
+        output_root: Path,
+        year: str,
+        tag: str,
+        iou_threshold: float = 0.5,
     ):
         """
         Initialize the converter.
 
         Args:
-            devkit_path: Path to the VOCdevkit directory.
+            voc_root: Path to the VOC dataset root directory.
+            output_root: Path to the root directory for output.
             year: Year of the dataset (e.g., '2007', '2012').
-            output_segment_dir: Directory to save YOLO segmentation format labels (flat structure).
+            tag: ImageSet tag to process (e.g., 'train').
             iou_threshold: IoU threshold for matching mask instances to XML boxes.
         """
-        self.devkit_path = Path(devkit_path)
+        self.voc_root = voc_root
+        self.output_root = output_root
         self.year = year
-        self.output_segment_dir = Path(output_segment_dir)
+        self.tag = tag
         self.iou_threshold = iou_threshold
-        self.voc_year_path = self.devkit_path / f"VOC{self.year}"
 
-        # Verify paths
-        if not self.devkit_path.exists() or not self.devkit_path.is_dir():
+        # Use utility functions to get paths
+        self.voc_year_path = get_voc_dir(self.voc_root, self.year)
+        self.output_segment_dir = get_output_segment_label_dir(
+            self.output_root, self.year, self.tag
+        )
+
+        # Verify input path for the year exists
+        if not self.voc_year_path.exists() or not self.voc_year_path.is_dir():
             raise ValueError(
-                f"VOCdevkit path does not exist or is not a directory: {self.devkit_path}"
-            )
-        if not self.voc_year_path.exists():
-            raise ValueError(
-                f"VOC year directory does not exist within devkit: {self.voc_year_path}"
+                f"VOC year directory does not exist or is not a directory: {self.voc_year_path}"
             )
 
         # Ensure output directory exists
         self.output_segment_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use imported constants
         self.class_to_id = VOC_CLASS_TO_ID
-        # self.classes = VOC_CLASSES # Not strictly needed if only using IDs
 
-        logger.info(f"Initialized converter for VOCdevkit: {self.devkit_path}, Year: {self.year}")
+        logger.info(
+            f"Initialized converter for VOC Root: {self.voc_root}, Year: {self.year}, Tag: {self.tag}"
+        )
         logger.info(f"Outputting segmentation labels to: {self.output_segment_dir}")
 
     def _get_mask_instances(self, mask_path: Path) -> Optional[Dict[int, np.ndarray]]:
@@ -206,49 +228,6 @@ class VOC2YOLOConverter:
             np.clip(norm_ymax, 0.0, 1.0),
         ]
 
-    def _compute_iou(self, box1: List[float], box2: List[float]) -> float:
-        """
-        Compute Intersection over Union (IoU) between two bounding boxes.
-        Assumes boxes are in [xmin, ymin, xmax, ymax] format (absolute or normalized).
-
-        Args:
-            box1: First bounding box [xmin, ymin, xmax, ymax].
-            box2: Second bounding box [xmin, ymin, xmax, ymax].
-
-        Returns:
-            IoU score (float between 0.0 and 1.0).
-        """
-        x1_min, y1_min, x1_max, y1_max = box1
-        x2_min, y2_min, x2_max, y2_max = box2
-
-        # Calculate intersection coordinates
-        inter_xmin = max(x1_min, x2_min)
-        inter_ymin = max(y1_min, y2_min)
-        inter_xmax = min(x1_max, x2_max)
-        inter_ymax = min(y1_max, y2_max)
-
-        # Calculate intersection area
-        inter_width = max(0, inter_xmax - inter_xmin)
-        inter_height = max(0, inter_ymax - inter_ymin)
-        intersection_area = inter_width * inter_height
-
-        if intersection_area == 0:
-            return 0.0
-
-        # Calculate union area
-        box1_area = (x1_max - x1_min) * (y1_max - y1_min)
-        box2_area = (x2_max - x2_min) * (y2_max - y2_min)
-        union_area = box1_area + box2_area - intersection_area
-
-        if union_area == 0:
-            # Avoid division by zero; should only happen if both boxes have zero area
-            return 0.0
-
-        iou = intersection_area / union_area
-
-        # Clamp IoU to [0, 1] due to potential floating point inaccuracies
-        return np.clip(iou, 0.0, 1.0)
-
     def _match_instance_to_class(
         self,
         instance_mask: np.ndarray,
@@ -292,7 +271,7 @@ class VOC2YOLOConverter:
                 xml_bbox_abs[3] / img_height,  # xmax, ymax
             ]
 
-            iou = self._compute_iou(mask_bbox_norm, xml_bbox_norm)
+            iou = calculate_iou(mask_bbox_norm, xml_bbox_norm)  # Use common function
 
             if iou > best_iou:
                 best_iou = iou
@@ -309,18 +288,17 @@ class VOC2YOLOConverter:
             )
             return None
 
-    def _process_segmentation_file(self, img_id: str, output_dir: Path):
+    def _process_segmentation_file(self, img_id: str):
         """
         Process a single image's segmentation mask and XML to generate YOLO label file.
-        Writes output directly to the specified flat output_dir.
+        Writes output directly to the class instance's output_segment_dir.
 
         Args:
             img_id: The image identifier (filename without extension).
-            output_dir: The flat output directory to save the label file.
         """
-        # Construct paths using self.voc_year_path and imported constants
-        mask_path = self.voc_year_path / SEGMENTATION_OBJECT_DIR / f"{img_id}.png"
-        xml_path = self.voc_year_path / ANNOTATIONS_DIR / f"{img_id}.xml"
+        # Construct paths using self.voc_year_path and utilities
+        mask_path = get_segmentation_mask_path(self.voc_year_path, img_id)
+        xml_path = get_annotation_path(self.voc_year_path, img_id)
 
         # 1. Check if mask exists
         if not mask_path.exists():
@@ -376,9 +354,9 @@ class VOC2YOLOConverter:
                 poly_str = " ".join(map(lambda x: f"{x:.6f}", poly))
                 output_lines.append(f"{class_id} {poly_str}")
 
-        # 5. Write output file (directly to output_dir)
+        # 5. Write output file (to self.output_segment_dir)
         if output_lines:
-            output_path = output_dir / f"{img_id}.txt"  # Flat output
+            output_path = self.output_segment_dir / f"{img_id}.txt"
             try:
                 with open(output_path, "w") as f:
                     f.write("\n".join(output_lines) + "\n")
@@ -391,83 +369,95 @@ class VOC2YOLOConverter:
             logger.info(f"No valid instances processed/matched for {img_id}, no output written.")
             return False
 
-    # Replace the old convert method with one that processes a single tag
-    def convert_single_tag(self, tag: str):
-        """Convert a specific ImageSet tag (e.g., train, val) for the initialized year."""
-        logger.info(f"Processing tag: {tag} for year {self.year}")
+    def convert(self):
+        """Convert the specific ImageSet tag for the initialized year."""
+        logger.info(f"Processing tag: {self.tag} for year {self.year}")
 
-        # Use correct ImageSet directory and other constants
-        imageset_file = self.voc_year_path / IMAGESETS_SEGMENTATION_DIR / f"{tag}.txt"
-        segmentation_dir = self.voc_year_path / SEGMENTATION_OBJECT_DIR
-        annotations_dir = self.voc_year_path / ANNOTATIONS_DIR
-
-        # Check necessary files/dirs
-        if not imageset_file.exists():
-            logger.error(f"ImageSet file not found: {imageset_file}. Cannot process tag '{tag}'.")
-            # Check if the Main directory equivalent exists as a fallback or hint?
-            imageset_main_file = self.voc_year_path / IMAGESETS_MAIN_DIR / f"{tag}.txt"
-            if imageset_main_file.exists():
-                logger.warning(
-                    f"Note: ImageSet file *does* exist in Main directory: {imageset_main_file}"
-                )
-            return
-        # Segmentation objects might not exist for all images/tags (e.g., test set)
-        if not segmentation_dir.exists():
-            logger.warning(
-                f"SegmentationObject directory not found: {segmentation_dir}. Output may be incomplete for tag '{tag}'."
-            )
-        if not annotations_dir.exists():
-            logger.error(
-                f"Annotations directory not found: {annotations_dir}. Cannot process tag '{tag}'."
-            )
-            return
-
-        # Read image IDs
         try:
-            with open(imageset_file, "r") as f:
-                img_ids = [line.strip().split()[0] for line in f if line.strip()]
-            if not img_ids:
-                logger.warning(f"No image IDs found in {imageset_file}.")
+            imageset_file = get_image_set_path(
+                self.voc_year_path, task_type="segment", tag=self.tag
+            )
+
+            # Basic validation for required input directories/files
+            annotations_dir = self.voc_year_path / ANNOTATIONS_DIR  # Defined in utils
+            segmentation_dir = self.voc_year_path / SEGMENTATION_OBJECT_DIR  # Defined in utils
+
+            # Segmentation objects might not exist for all images/tags (e.g., test set)
+            if not segmentation_dir.exists():
+                logger.warning(
+                    f"SegmentationObject directory not found: {segmentation_dir}. Output may be incomplete for tag '{self.tag}'."
+                )
+            if not annotations_dir.exists():
+                logger.error(
+                    f"Annotations directory not found: {annotations_dir}. Cannot process tag '{self.tag}'."
+                )
                 return
-        except IOError as e:
-            logger.error(f"Could not read ImageSet file {imageset_file}: {e}")
+
+            # Read image IDs using utility
+            img_ids = read_image_ids(imageset_file)
+
+        except FileNotFoundError as e:
+            logger.error(f"Error reading image set file: {e}")
+            # Try checking the 'Main' directory as a hint
+            try:
+                imageset_main_file = get_image_set_path(
+                    self.voc_year_path, task_type="detect", tag=self.tag
+                )
+                if imageset_main_file.exists():
+                    logger.warning(
+                        f"Note: ImageSet file *does* exist in Main directory: {imageset_main_file}"
+                    )
+            except ValueError:  # Should not happen if task_type='detect'
+                pass
+            return
+        except (ValueError, IOError) as e:
+            logger.error(f"Error setting up conversion: {e}")
             return
 
-        logger.info(f"Found {len(img_ids)} image IDs for tag '{tag}'. Converting...")
+        if not img_ids:
+            logger.warning(f"No image IDs found in {imageset_file}. Exiting.")
+            return
+
+        logger.info(f"Found {len(img_ids)} image IDs for tag '{self.tag}'. Converting...")
 
         success_count = 0
         fail_count = 0
         # Process each image ID
-        for img_id in tqdm(img_ids, desc=f"Converting {self.year}/{tag}"):
+        for img_id in tqdm(img_ids, desc=f"Converting {self.year}/{self.tag}"):
             try:
                 # Process file, outputting directly to self.output_segment_dir
-                success = self._process_segmentation_file(img_id, self.output_segment_dir)
+                success = self._process_segmentation_file(img_id)
                 if success:
                     success_count += 1
                 else:
                     fail_count += 1
             except Exception as e:
                 logger.error(
-                    f"Unexpected error processing image ID {img_id} for tag {tag}: {e}",
+                    f"Unexpected error processing image ID {img_id} for tag {self.tag}: {e}",
                     exc_info=True,
                 )
                 fail_count += 1
 
-        logger.info(f"Finished processing tag '{tag}':")
+        logger.info(f"Finished processing tag '{self.tag}':")
         logger.info(f"  Successfully converted: {success_count}")
         logger.info(f"  Failed/Skipped: {fail_count}")
-        logger.info(f"Output labels saved to: {self.output_segment_dir}")
 
 
-if __name__ == "__main__":
+def parse_args():
     parser = argparse.ArgumentParser(
         description="Convert Pascal VOC segmentation masks for a specific ImageSet tag to YOLO format."
     )
     parser.add_argument(
-        "--devkit-path",
+        "--voc-root",
         type=str,
-        required=True,
-        help="Path to the VOCdevkit directory (e.g., /path/to/VOC/VOCdevkit).",
+        default=None,
+        help="Path to the VOC dataset root directory (containing VOCdevkit). If not set, uses VOC_ROOT from .env.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help="Path to the root directory for output labels. Defaults to --voc-root if not specified.",
     )
     parser.add_argument(
         "--year",
@@ -483,25 +473,77 @@ if __name__ == "__main__":
         help="ImageSet tag to process (from ImageSets/Segmentation, e.g., train, val, trainval)",
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        required=True,
-        help="Path to the flat output directory for segmentation label files",
-    )
-    parser.add_argument(
         "--iou_threshold",
         type=float,
         default=0.5,
         help="IoU threshold for matching mask instances to XML bounding boxes (default: 0.5).",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # Instantiate converter
-    converter = VOC2YOLOConverter(
-        devkit_path=args.devkit_path,
-        year=args.year,
-        output_segment_dir=args.output_dir,
-        iou_threshold=args.iou_threshold,
-    )
-    # Convert the specified tag
-    converter.convert_single_tag(args.tag)
+
+def _determine_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional[Path]]:
+    """Determine and validate VOC root and output root paths."""
+    # Determine VOC Root Path
+    if args.voc_root:
+        voc_root_str = args.voc_root
+        logger.info(f"Using specified --voc-root: {voc_root_str}")
+    else:
+        voc_root_str = os.getenv("VOC_ROOT")
+        if not voc_root_str:
+            logger.error(
+                "VOC root not specified via --voc-root and VOC_ROOT not found in environment."
+            )
+            return None, None
+        logger.info(f"Using VOC_ROOT from environment: {voc_root_str}")
+
+    try:
+        voc_root = Path(voc_root_str).expanduser()
+        if not voc_root.exists() or not voc_root.is_dir():
+            raise ValueError(f"Determined VOC root path is invalid: {voc_root}")
+    except ValueError as e:
+        logger.error(f"Error validating VOC root path: {e}")
+        return None, None
+
+    # Determine Output Root Path
+    if args.output_root:
+        output_root_str = args.output_root
+        logger.info(f"Using specified --output-root: {output_root_str}")
+    else:
+        output_root_str = voc_root_str  # Default to voc_root if not specified
+        logger.info(f"--output-root not specified, defaulting to VOC root: {output_root_str}")
+
+    try:
+        output_root = Path(output_root_str).expanduser()
+    except Exception as e:
+        logger.error(f"Error processing output root path '{output_root_str}': {e}")
+        return voc_root, None
+
+    return voc_root, output_root
+
+
+def main():
+    args = parse_args()
+    # load_dotenv()  # Load .env variables (Moved)
+
+    voc_root, output_root = _determine_paths(args)
+    if not voc_root or not output_root:
+        return  # Error logged in helper
+
+    try:
+        # Instantiate and run converter
+        converter = VOC2YOLOConverter(
+            voc_root=voc_root,
+            output_root=output_root,
+            year=args.year,
+            tag=args.tag,
+            iou_threshold=args.iou_threshold,
+        )
+        converter.convert()
+    except ValueError as e:
+        logger.error(f"Initialization error: {e}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during conversion: {e}", exc_info=True)
+
+
+if __name__ == "__main__":
+    main()

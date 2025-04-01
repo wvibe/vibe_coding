@@ -118,15 +118,17 @@ def sample_bad_xml_invalid_coords():
 def test_convert_annotation_success(temp_dir_fixture, sample_good_xml):
     """Test successful conversion of a valid XML file."""
     xml_path = temp_dir_fixture / "good.xml"
-    txt_path = temp_dir_fixture / "good.txt"
+    output_txt_path = temp_dir_fixture / "good.txt"
     sample_good_xml.write(xml_path, encoding="utf-8")
 
-    result = convert_annotation(xml_path, txt_path)
+    # Pass the directory, not the full file path
+    result = convert_annotation(xml_path, temp_dir_fixture)
 
     assert result is True
-    assert txt_path.exists()
+    # Check if the expected output file exists in the directory
+    assert output_txt_path.exists()
 
-    with open(txt_path, "r") as f:
+    with open(output_txt_path, "r") as f:
         lines = f.readlines()
 
     assert len(lines) == 2  # parse_voc_xml filters unknown classes, so only 2 objects remain
@@ -145,27 +147,31 @@ def test_convert_annotation_success(temp_dir_fixture, sample_good_xml):
 def test_convert_annotation_missing_size(temp_dir_fixture, sample_bad_xml_missing_size):
     """Test XML conversion failure when size tag is missing."""
     xml_path = temp_dir_fixture / "bad_size.xml"
-    txt_path = temp_dir_fixture / "bad_size.txt"
+    output_txt_path = temp_dir_fixture / "bad_size.txt"
     sample_bad_xml_missing_size.write(xml_path, encoding="utf-8")
 
-    result = convert_annotation(xml_path, txt_path)
+    # Pass the directory
+    result = convert_annotation(xml_path, temp_dir_fixture)
 
     assert result is False
-    assert not txt_path.exists()  # Output file should not be created or should be removed
+    # Output file should not be created
+    assert not output_txt_path.exists()
 
 
 def test_convert_annotation_invalid_coords(temp_dir_fixture, sample_bad_xml_invalid_coords):
     """Test XML conversion with invalid coordinates (should skip object)."""
     xml_path = temp_dir_fixture / "bad_coords.xml"
-    txt_path = temp_dir_fixture / "bad_coords.txt"
+    output_txt_path = temp_dir_fixture / "bad_coords.txt"
     sample_bad_xml_invalid_coords.write(xml_path, encoding="utf-8")
 
-    result = convert_annotation(xml_path, txt_path)
+    # Pass the directory
+    result = convert_annotation(xml_path, temp_dir_fixture)
 
     assert result is True  # Conversion itself succeeds, even if objects are skipped
-    assert txt_path.exists()
+    # Check if the expected output file exists in the directory
+    assert output_txt_path.exists()
 
-    with open(txt_path, "r") as f:
+    with open(output_txt_path, "r") as f:
         lines = f.readlines()
 
     assert len(lines) == 0  # The only object had invalid coords, so file should be empty
@@ -174,9 +180,10 @@ def test_convert_annotation_invalid_coords(temp_dir_fixture, sample_bad_xml_inva
 def test_convert_annotation_file_not_found(temp_dir_fixture):
     """Test XML conversion failure when input file doesn't exist."""
     xml_path = temp_dir_fixture / "nonexistent.xml"
-    txt_path = temp_dir_fixture / "nonexistent.txt"
+    output_txt_path = temp_dir_fixture / "nonexistent.txt"
 
-    result = convert_annotation(xml_path, txt_path)
+    # Pass the directory
+    result = convert_annotation(xml_path, temp_dir_fixture)
 
     assert result is False
-    assert not txt_path.exists()
+    assert not output_txt_path.exists()

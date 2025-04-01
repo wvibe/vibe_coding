@@ -33,8 +33,5 @@ pytest>=7.0.0
 black>=23.0.0
 flake8>=6.0.0
 
-# Added for reading image dimensions
-Pillow>=9.0.0
-
 # Added for ruff
 ruff>=0.1.0

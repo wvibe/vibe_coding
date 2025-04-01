@@ -1,46 +1,6 @@
 import numpy as np  # Make sure numpy is imported at the top
 
-
-def calculate_iou(box1, box2):
-    """Calculates the Intersection over Union (IoU) between two bounding boxes.
-
-    Args:
-        box1 (list or tuple): The first bounding box in format [x_min, y_min, x_max, y_max].
-        box2 (list or tuple): The second bounding box in format [x_min, y_min, x_max, y_max].
-
-    Returns:
-        float: The IoU value, ranging from 0.0 to 1.0. Returns 0.0 if there is no
-               overlap or if the union area is zero.
-    """
-    # Determine the coordinates of the intersection rectangle
-    x_left = max(box1[0], box2[0])
-    y_top = max(box1[1], box2[1])
-    x_right = min(box1[2], box2[2])
-    y_bottom = min(box1[3], box2[3])
-
-    # Check if there is overlap
-    if x_right < x_left or y_bottom < y_top:
-        return 0.0
-
-    # Calculate the area of intersection rectangle
-    intersection_area = (x_right - x_left) * (y_bottom - y_top)
-
-    # Calculate the area of both bounding boxes
-    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
-    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
-
-    # Calculate the area of union
-    union_area = box1_area + box2_area - intersection_area
-
-    # Compute the IoU
-    if union_area == 0:
-        # Handle division by zero (e.g., if both boxes have zero area)
-        return 0.0
-    else:
-        iou = intersection_area / union_area
-        # Clamp IoU to [0, 1] to handle potential floating point issues if needed
-        # iou = np.clip(iou, 0.0, 1.0)
-        return iou
+from src.utils.common.iou import calculate_iou
 
 
 def match_predictions(predictions, ground_truths, iou_threshold):
@@ -291,7 +251,7 @@ def calculate_map_by_size(predictions, ground_truths, gt_areas, size_ranges, iou
 
     for size_name, (min_area, max_area) in size_ranges.items():
         # Ensure max_area is float for comparison
-        max_area = float(max_area) if max_area is not None else float('inf')
+        max_area = float(max_area) if max_area is not None else float("inf")
 
         # Find indices of ground truths within the current size range
         gt_indices_in_range = np.where((gt_areas_np >= min_area) & (gt_areas_np < max_area))[0]
@@ -306,7 +266,9 @@ def calculate_map_by_size(predictions, ground_truths, gt_areas, size_ranges, iou
 
         # Run matching using ALL predictions against the filtered GT subset
         # Note: match_predictions internally calculates num_gt_per_class for the subset
-        match_results_subset, num_gt_subset = match_predictions(predictions, gt_subset, iou_threshold)
+        match_results_subset, num_gt_subset = match_predictions(
+            predictions, gt_subset, iou_threshold
+        )
 
         # Calculate PR data for the subset
         pr_data_subset = calculate_pr_data(match_results_subset, num_gt_subset)
@@ -314,7 +276,7 @@ def calculate_map_by_size(predictions, ground_truths, gt_areas, size_ranges, iou
         # Calculate AP per class for the subset
         ap_scores_subset = {}
         for class_id, pr_data in pr_data_subset.items():
-            ap = calculate_ap(pr_data['precision'], pr_data['recall'])
+            ap = calculate_ap(pr_data["precision"], pr_data["recall"])
             ap_scores_subset[class_id] = ap
 
         # Calculate mAP for this size category

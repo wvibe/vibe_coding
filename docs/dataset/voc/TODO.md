@@ -31,23 +31,30 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
   ```
 
 ### 2. Code Refactoring
-- [x] Rename `voc2yolo.py` -> `segment_voc2yolo.py`
+- [x] Rename `voc2yolo.py` -> `voc2yolo_segment_labels.py`
 - [x] Remove image copying logic
 - [x] Add image existence verification (integrated into scripts)
 - [x] Implement instance-class matching logic (IoU based)
 - [x] Update `segment_voc2yolo.py` output to `labels_segment` directory
 - [x] Implement actual mask reading and polygon conversion in `segment_voc2yolo.py`
+- [x] Implement actual mask reading and polygon conversion in `voc2yolo_segment_labels.py`
 - [x] Identify and move detection script -> `detect_voc2yolo.py`
+- [x] Identify and move detection script -> `voc2yolo_detect_labels.py`
 - [x] Adapt `detect_voc2yolo.py` for project structure (`labels_detect` output, no image copy)
-- [ ] Refactor common functions from `detect_voc2yolo.py` and `segment_voc2yolo.py` into `converter_utils.py`
+- [x] Adapt `voc2yolo_detect_labels.py` for project structure (`labels_detect` output, no image copy)
+- [x] Refactor common functions (esp. path construction, XML parsing) from `voc2yolo_detect_labels.py`/`voc2yolo_segment_labels.py` scripts into `voc2yolo_utils.py`.
+- [x] Ensure scripts load VOC_ROOT from .env (using python-dotenv).
 
 ### 3. Testing
 - [x] Create unit tests for `segment_voc2yolo.py` core functions
+- [x] Create unit tests for `voc2yolo_segment_labels.py` core functions
 - [x] Add test data fixtures (XML, Mask)
 - [x] Add test cases for edge cases (segmentation)
 - [x] Update tests for directory structure & segmentation logic
 - [x] Create unit tests for `detect_voc2yolo.py` core functions
+- [x] Create unit tests for `voc2yolo_detect_labels.py` core functions
 - [x] Add test cases for edge cases (detection)
+- [ ] Update README.md to include `voc2yolo_images.py` and visualization scripts.
 
 ### 4. Documentation
 - [x] Rename `explanation.md` to `README.md`
@@ -64,20 +71,29 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
   - [x] Coordinate normalization (0-1 range) in `_parse_xml` and `convert_box`
   - [x] Class ID mapping
   - [x] File existence checks (imagesets, annotations, masks)
+- [ ] Investigate memory optimization for reading/processing large masks if needed.
 
 ### 6. Performance Optimization (Future)
 - [ ] Add option for parallel processing (e.g., `multiprocessing`) to `convert` methods for faster processing of large splits.
-- [ ] Investigate memory optimization for reading/processing large masks if needed.
+
+### 7. Image Handling and Visualization
+- [x] Add `opencv-python` and `python-dotenv` to requirements.txt
+- [x] Implement `voc2yolo_images.py` to copy images based on image sets.
+- [ ] Add visualization drawing utilities (bbox, polygon, mask overlay, colors) to `voc2yolo_utils.py`.
+- [ ] Implement `vocdev_detect_viz.py` (visualize VOC XML annotations).
+- [ ] Implement `vocdev_segment_viz.py` (visualize VOC mask annotations).
+- [ ] Implement `yolo_detect_viz.py` (visualize YOLO detection labels).
+- [ ] Implement `yolo_segment_viz.py` (visualize YOLO segmentation labels).
+
+### 8. Cleanup
+- [x] Create `src/utils/common/` directory.
+- [x] Create `src/utils/common/iou.py` and consolidate IoU logic.
+- [x] Create `src/utils/common/bbox_format.py` and move format conversion.
+- [x] Refactor `metrics/detection.py` to use common IoU.
+- [x] Refactor `data_converter/voc2yolo_segment_labels.py` to use common IoU.
+- [x] Delete `src/utils/bbox/bbox.py`.
+- [x] Add tests for common utilities (`iou.py`, `bbox_format.py`).
 
 ## Notes
 - Both scripts now primarily read from the `VOCdevkit` structure.
-- Ensure `VOCdevkit` is present in the `/home/wmu/vibe/hub/datasets/VOC` directory.
-- Images are assumed to exist either in `VOCdevkit/.../JPEGImages` or the top-level `images/` directory.
-
-## Dependencies
-- numpy
-- opencv-python
-- pathlib
-- xml.etree.ElementTree
-- logging
-- tqdm
+- Ensure `VOCdevkit`
