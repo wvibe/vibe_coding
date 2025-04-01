@@ -134,5 +134,49 @@ A script is provided to train or fine-tune YOLOv8 models on configured datasets.
 
 4.  **Output:** Training progress will be displayed in the terminal. Results, including trained model weights (`best.pt`, `last.pt`) and logs, will be saved to the directory specified by the `--project` and `--name` parameters. If wandb is enabled and configured, metrics will also be logged there.
 
+## Data Conversion (VOC to YOLO)
+
+Scripts are provided to convert Pascal VOC datasets (detection and segmentation annotations) into the YOLO format required by many training libraries.
+
+### Detection Labels
+
+To convert VOC XML annotations (bounding boxes) for a specific year and ImageSet tag (e.g., `trainval` from `ImageSets/Main/`) into YOLO detection format (`.txt` files containing `class_id x_center y_center width height`), use the following script:
+
+```bash
+python src/utils/data_converter/voc2yolo_detect_labels.py \
+    --devkit-path /path/to/your/VOCdevkit \
+    --year 2012 \
+    --tag trainval \
+    --output-dir /path/to/output/labels_detect
+```
+
+- `--devkit-path`: Path to the root `VOCdevkit` folder.
+- `--year`: Dataset year (e.g., `2007`, `2012`).
+- `--tag`: The ImageSet tag to process (e.g., `train`, `val`, `test`, `trainval`). The script looks for `<tag>.txt` inside `VOCdevkit/VOC<year>/ImageSets/Main/`.
+- `--output-dir`: The directory where the resulting YOLO label files (`<image_id>.txt`) will be saved directly (flat structure).
+
+### Segmentation Labels
+
+To convert VOC segmentation annotations (instance masks from `.png` files in `SegmentationObject/`, matched with XML object info) for a specific year and ImageSet tag (e.g., `trainval` from `ImageSets/Segmentation/`) into YOLO segmentation format (`.txt` files containing `class_id norm_x1 norm_y1 norm_x2 norm_y2 ...`), use the following script:
+
+```bash
+python src/utils/data_converter/voc2yolo_segment_labels.py \
+    --devkit-path /path/to/your/VOCdevkit \
+    --year 2012 \
+    --tag trainval \
+    --output-dir /path/to/output/labels_segment \
+    --iou-threshold 0.5
+```
+
+- `--devkit-path`: Path to the root `VOCdevkit` folder.
+- `--year`: Dataset year (e.g., `2007`, `2012`).
+- `--tag`: The ImageSet tag to process (e.g., `train`, `val`, `trainval`). The script looks for `<tag>.txt` inside `VOCdevkit/VOC<year>/ImageSets/Segmentation/`.
+- `--output-dir`: The directory where the resulting YOLO label files (`<image_id>.txt`) will be saved directly (flat structure).
+- `--iou-threshold` (Optional): The IoU threshold used to match mask instances to bounding boxes in the XML file (default: 0.5).
+
+**Note on Segmentation Data:** Ensure that the `SegmentationObject` directory exists and contains the necessary `.png` masks for the specified year and tag. Not all images listed in `ImageSets/Segmentation/` might have corresponding masks, and the script will log skips for missing masks.
+
+**Note on Instance vs. Class IDs:** The pixel values in the `SegmentationObject` PNG masks represent *instance IDs* (unique for each object instance in an image, regardless of class), not *class IDs*. The conversion script uses Intersection over Union (IoU) between the mask's bounding box and the bounding boxes defined in the corresponding XML file to determine the correct *class ID* for each instance mask/polygon.
+
 ---
 Happy Coding! ✨

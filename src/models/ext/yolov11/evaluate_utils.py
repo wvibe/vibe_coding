@@ -469,14 +469,19 @@ def _save_results_json(
                 ),
             ):
                 return int(obj)
-            elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            elif isinstance(obj, np.floating):
                 return float(obj)
-            elif isinstance(obj, (np.complex_, np.complex64, np.complex128)):
+            elif isinstance(obj, (np.complex128, np.complex64)):
                 return {"real": obj.real, "imag": obj.imag}
             elif isinstance(obj, (np.bool_)):
                 return bool(obj)
             elif isinstance(obj, (np.void)):
                 return None  # Or other representation?
+            # Check specific float types if np.floating isn't enough or causes issues
+            elif isinstance(obj, (np.float64, np.float16, np.float32)):  # Removed np.float_
+                return float(obj)
+            elif isinstance(obj, Path):
+                return str(obj)
             # Add handling for other non-serializable types if needed
             return str(obj)  # Fallback to string representation
 

@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -144,12 +145,16 @@ def test_gpu_memory_mock_success(mock_dev_count, mock_current_dev, mock_max_mem,
     mock_max_mem.assert_called_with(device=0)
 
 
-@patch("torch.cuda.is_available")
-@patch("torch.cuda.device_count")
-def test_gpu_memory_device_out_of_range(mock_dev_count, mock_is_available):
-    """Test GPU memory check with invalid device index."""
-    mock_is_available.return_value = True
-    mock_dev_count.return_value = 1  # Only device 0 exists
+@patch("torch.cuda.is_available", return_value=True)
+@patch("torch.cuda.device_count", return_value=1)
+@patch("torch.cuda.max_memory_allocated", side_effect=RuntimeError("Simulated CUDA error"))
+def test_gpu_memory_device_out_of_range(mock_alloc, mock_count, mock_avail, caplog):
+    """Tests handling when the requested device index is out of range."""
+    with caplog.at_level(logging.ERROR):
+        memory = get_peak_gpu_memory_mb(
+            device=1
+        )  # Request device 1 when count is 1 (so index 0 is valid)
 
-    memory = get_peak_gpu_memory_mb(device="cuda:1")
-    assert memory is None
+    assert "CUDA device index 1 out of range" in caplog.text
+    # The function should return None when the device is out of range
+    assert memory is None  # Corrected Assertion
