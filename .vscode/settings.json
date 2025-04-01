@@ -23,5 +23,8 @@
 
     "terminal.integrated.env.osx": {
         "PYTHONPATH": "${workspaceFolder}/src"
-    }
+    },
+    "python.testing.pytestArgs": [
+        "tests"
+    ]
 }
