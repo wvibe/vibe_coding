@@ -13,11 +13,12 @@ import logging
 import os
 import random
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 from dotenv import load_dotenv
+from scipy.stats import mode  # Add mode import
 from tqdm import tqdm
 
 # Project utilities
@@ -25,14 +26,13 @@ from src.utils.common.image_annotate import (
     get_color,
     overlay_mask,  # Use this to draw masks
 )
-from src.utils.common.iou import calculate_iou  # Added for matching
 from src.utils.data_converter.voc2yolo_utils import (
-    get_annotation_path,  # Added for XML loading
+    VOC_CLASSES,  # Add this import
     get_image_path,
     get_image_set_path,
-    get_segmentation_mask_path,  # Use this for masks
+    get_segm_cls_mask_path,  # Updated name
+    get_segm_inst_mask_path,  # Updated name
     get_voc_dir,
-    parse_voc_xml,  # Added for XML parsing
     read_image_ids,
 )
 
@@ -107,7 +107,16 @@ def parse_arguments() -> argparse.Namespace:
             "(e.g., '0.25,0.5,0.75'). Reports average if not set."
         ),
     )
-    # Removed --show-difficult argument
+    # Add back the --show-difficult argument
+    parser.add_argument(
+        "--show-difficult",
+        action="store_true",
+        help=(
+            "Visualize boundaries/difficult regions (value 255) with 'Unk' label. "
+            "In VOC segmentation, 255 typically marks object boundaries or "
+            "difficult-to-segment pixels."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling.")
 
     return parser.parse_args()
@@ -208,7 +217,7 @@ def get_target_image_list(
         try:
             year_voc_dir = get_voc_dir(base_voc_root, first_year)
             img_path = get_image_path(year_voc_dir, args.image_id)
-            mask_path = get_segmentation_mask_path(year_voc_dir, args.image_id)
+            mask_path = get_segm_inst_mask_path(year_voc_dir, args.image_id)
             if not img_path.exists():
                 logger.error(f"Image file not found: {img_path}")
                 return []
@@ -247,6 +256,181 @@ def get_target_image_list(
     return ids_to_process
 
 
+def generate_instance_label(
+    instance_id: int,
+    instance_mask: np.ndarray,
+    class_mask: Optional[np.ndarray],
+    image_id: str = "",
+) -> str:
+    """Generate label text combining class name and instance ID from masks.
+
+    Args:
+        instance_id: Numeric identifier from instance mask
+        instance_mask: 2D array from SegmentationObject mask
+        class_mask: 2D array from SegmentationClass mask (optional)
+        image_id: Image ID for error context
+
+    Returns:
+        Formatted label string "ClassName.InstanceID"
+    """
+    class_name = "Unknown"
+    if class_mask is not None:
+        try:
+            # Get pixels belonging to this instance
+            instance_pixels = instance_mask == instance_id
+            class_pixels = class_mask[instance_pixels]
+
+            # Filter to valid class pixels (0=background, 255=void/ignore)
+            valid_class_pixels = class_pixels[(class_pixels > 0) & (class_pixels < 255)]
+
+            if valid_class_pixels.size > 0:
+                # Get the most common class ID for this instance
+                mode_result = mode(valid_class_pixels, keepdims=False)
+                if mode_result.count > 0:
+                    class_id = mode_result.mode
+                    logger.debug(
+                        f"Instance {instance_id} in {image_id}: Most common class ID {class_id}"
+                    )
+
+                    # In PASCAL VOC, class IDs are 1-20, corresponding to the 20 classes
+                    if 1 <= class_id <= len(VOC_CLASSES):
+                        class_name = VOC_CLASSES[class_id - 1]
+                        logger.debug(
+                            f"Instance {instance_id} in {image_id}: Mapped to class '{class_name}'"
+                        )
+                    else:
+                        logger.debug(
+                            f"Instance {instance_id} in {image_id}: Invalid class ID {class_id}, "
+                            f"not in range 1-{len(VOC_CLASSES)}"
+                        )
+        except Exception as e:
+            logger.debug(f"Error processing instance {instance_id} in {image_id}: {e}")
+
+    return f"{class_name}.{instance_id}"
+
+
+def _load_image_and_masks(
+    voc_dir: Path, image_id: str
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], bool, bool]:
+    """Load image and segmentation masks from files.
+
+    Args:
+        voc_dir: VOC directory path
+        image_id: Image identifier
+
+    Returns:
+        Tuple containing:
+        - image: Loaded image or None if failed
+        - mask_instance: Loaded instance mask or None if failed
+        - mask_class: Loaded class mask or None if failed
+        - mask_instance_load_success: Whether instance mask was loaded successfully
+        - mask_class_load_success: Whether class mask was loaded successfully
+    """
+    # Get file paths
+    image_path = get_image_path(voc_dir, image_id)
+    mask_instance_path = get_segm_inst_mask_path(voc_dir, image_id)
+    mask_class_path = get_segm_cls_mask_path(voc_dir, image_id)
+
+    # Load image
+    image = cv2.imread(str(image_path))
+    if image is None:
+        logger.warning(f"Failed to load image: {image_path}. Skipping.")
+        return None, None, None, False, False
+
+    # Import PIL for handling palette-mode PNG masks
+    from PIL import Image
+
+    # Load instance mask using PIL to properly handle palette-mode PNG
+    mask_instance = None
+    mask_instance_load_success = False
+    try:
+        mask_instance = np.array(Image.open(str(mask_instance_path)))
+        mask_instance_load_success = True
+        logger.debug(f"Successfully loaded instance mask with PIL: {mask_instance_path}")
+        logger.debug(f"Instance mask unique values: {np.unique(mask_instance)}")
+    except Exception as e:
+        logger.warning(
+            f"Failed to load instance segmentation mask with PIL: {mask_instance_path}. Error: {e}."
+        )
+        # Removed OpenCV fallback
+
+    # Load class mask using PIL to properly handle palette-mode PNG
+    mask_class = None
+    mask_class_load_success = False
+    try:
+        mask_class = np.array(Image.open(str(mask_class_path)))
+        mask_class_load_success = True
+        logger.debug(f"Successfully loaded class mask with PIL: {mask_class_path}")
+        logger.debug(f"Class mask unique values: {np.unique(mask_class)}")
+    except Exception as e:
+        logger.warning(
+            f"Failed to load class segmentation mask with PIL: {mask_class_path}. Error: {e}. "
+            "Class names may be 'Unknown'."
+        )
+        # Removed OpenCV fallback
+
+    return image, mask_instance, mask_class, mask_instance_load_success, mask_class_load_success
+
+
+def _draw_instance_masks(
+    image: np.ndarray,
+    mask_instance: np.ndarray,
+    mask_class: Optional[np.ndarray],
+    image_id: str,
+    show_difficult: bool = False,
+) -> Tuple[np.ndarray, int]:
+    """Draw instance masks on the image.
+
+    Args:
+        image: Original image to draw on
+        mask_instance: Instance segmentation mask
+        mask_class: Class segmentation mask (can be None)
+        image_id: Image identifier for logging
+        show_difficult: Whether to show difficult/void regions (value 255)
+
+    Returns:
+        Tuple of (drawn_image, number_of_instances_found)
+    """
+    # Find unique instances in the mask
+    if show_difficult:
+        # Include 255 (difficult/void) if requested
+        instance_ids = np.unique(mask_instance[mask_instance > 0])
+    else:
+        # Exclude 0 (background) and 255 (void/difficult)
+        instance_ids = np.unique(mask_instance[(mask_instance > 0) & (mask_instance != 255)])
+
+    num_instances = len(instance_ids)
+
+    # Create a copy of the image to draw on
+    image_to_draw = image.copy()
+
+    if num_instances > 0:
+        logger.debug(f"Found instances {instance_ids} in image {image_id}")
+        for instance_id in sorted(instance_ids):
+            # Create binary mask for the current instance
+            instance_pixel_mask = mask_instance == instance_id
+            binary_mask = instance_pixel_mask.astype(np.uint8) * 255
+
+            # Get color based on instance ID
+            color = get_color(instance_id)
+
+            # For difficult/void regions (255), use a special label
+            if instance_id == 255 and show_difficult:
+                label_text = "Unk.255"
+            else:
+                # Determine class name via mask lookup
+                label_text = generate_instance_label(
+                    instance_id, mask_instance, mask_class, image_id
+                )
+
+            # Overlay the mask with the label
+            overlay_mask(image_to_draw, binary_mask, label=label_text, color=color, alpha=0.3)
+    else:
+        logger.debug(f"No instances found in mask for {image_id}")
+
+    return image_to_draw, num_instances
+
+
 def process_and_visualize_image(
     image_id: str,
     year: str,
@@ -255,118 +439,40 @@ def process_and_visualize_image(
     output_dir: Path,
     do_save: bool,
     do_display: bool,
-) -> Tuple[bool, Optional[int], bool, bool]:
+    show_difficult: bool = False,
+) -> Tuple[bool, bool, Optional[int], bool, bool]:
     """Loads image and mask, draws masks, and saves/displays the image.
 
     Returns:
-        Tuple: (mask_load_success, num_instances_found, save_success, display_success)
+        Tuple: (mask_instance_load_success, mask_class_load_success,
+                num_instances_found, save_success, display_success)
                Returns counts as None if mask loading failed.
     """
     save_success = False
     display_success = False
     num_instances_found: Optional[int] = None
-    mask_load_success = False
-    xml_load_success = False  # Track XML loading
-    objects_from_xml = None  # Store parsed XML objects
 
     try:
         voc_dir = get_voc_dir(voc_root, year)
-        image_path = get_image_path(voc_dir, image_id)
-        mask_path = get_segmentation_mask_path(voc_dir, image_id)
-        xml_path = get_annotation_path(voc_dir, image_id)  # Get XML path
 
-        # Load Image
-        image = cv2.imread(str(image_path))
-        if image is None:
-            logger.warning(f"Failed to load image: {image_path}. Skipping.")
-            return mask_load_success, num_instances_found, save_success, display_success
+        # Load image and masks
+        image, mask_instance, mask_class, mask_instance_load_success, mask_class_load_success = (
+            _load_image_and_masks(voc_dir, image_id)
+        )
 
-        # Load Mask
-        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            logger.warning(f"Failed to load segmentation mask: {mask_path}. Skipping drawing.")
-            # Still return False for mask_load_success, but 0 instances
-            return False, 0, save_success, display_success
+        if image is None or not mask_instance_load_success:
+            return mask_instance_load_success, mask_class_load_success, 0, False, False
 
-        mask_load_success = True  # Mark mask as successfully loaded
+        # Draw instance masks
+        image_to_draw, num_instances_found = _draw_instance_masks(
+            image, mask_instance, mask_class, image_id, show_difficult
+        )
 
-        # Load and Parse XML Annotation
-        try:
-            if xml_path.exists():
-                objects_from_xml, _ = parse_voc_xml(xml_path)
-                if objects_from_xml is not None:
-                    xml_load_success = True
-                    logger.debug(f"Successfully loaded and parsed XML: {xml_path}")
-                else:
-                    logger.warning(f"Failed to parse objects from XML: {xml_path}")
-            else:
-                logger.warning(
-                    f"XML annotation not found: {xml_path}. Cannot determine class names."
-                )
-        except Exception as e:
-            logger.error(f"Error loading/parsing XML {xml_path}: {e}")
-
-        # Find unique instances (non-zero pixel values)
-        instance_ids = np.unique(mask[mask > 0])
-        num_instances_found = len(instance_ids)
-
-        # Draw Annotations (Masks)
-        image_to_draw = image.copy()
-        if num_instances_found > 0:
-            logger.debug(f"Found instances {instance_ids} in {mask_path}")
-            for instance_id in instance_ids:
-                # Create binary mask for the current instance (0/255 for overlay_mask)
-                binary_mask = (mask == instance_id).astype(np.uint8) * 255
-
-                # Get color based on instance ID
-                color = get_color(instance_id)
-
-                # --- Determine Class Name via IoU Matching ---
-                class_name = "Unknown"
-                best_iou = 0.0
-
-                # Calculate bounding box for the current instance mask
-                rows, cols = np.where(binary_mask > 0)
-                mask_bbox = None
-                if len(rows) > 0:
-                    xmin, xmax = np.min(cols), np.max(cols)
-                    ymin, ymax = np.min(rows), np.max(rows)
-                    mask_bbox = np.array([xmin, ymin, xmax, ymax])
-
-                if xml_load_success and objects_from_xml is not None and mask_bbox is not None:
-                    for obj in objects_from_xml:
-                        xml_bbox = np.array(obj["bbox"])  # Already [xmin, ymin, xmax, ymax]
-                        iou = calculate_iou(mask_bbox, xml_bbox)
-                        # Match if IoU is highest so far and above threshold
-                        if iou > best_iou and iou >= 0.5:
-                            best_iou = iou
-                            class_name = obj["name"]
-
-                    if class_name != "Unknown":
-                        logger.debug(
-                            f"Matched Inst {instance_id} to class '{class_name}' (IoU: {best_iou:.2f})"
-                        )
-                    else:
-                        logger.debug(
-                            f"Could not match Inst {instance_id} to XML object (best IoU: {best_iou:.2f})"
-                        )
-
-                # Format label including class name if found
-                label_text = f"{class_name}.{instance_id}"
-
-                # Overlay the mask with the updated label
-                overlay_mask(
-                    image_to_draw, binary_mask, label=label_text, color=color, alpha=0.3
-                )  # Use new label
-        else:
-            logger.debug(f"No instances found in mask {mask_path}")
-
-        # Save or Display
+        # Save or display the image
         if do_save:
             save_subdir = output_dir / f"{tag}{year}"
             save_subdir.mkdir(parents=True, exist_ok=True)
-            # Updated filename suffix
-            save_path = save_subdir / f"{image_id}_voc_segment.png"
+            save_path = save_subdir / f"{image_id}.png"
             try:
                 cv2.imwrite(str(save_path), image_to_draw)
                 save_success = True
@@ -384,15 +490,42 @@ def process_and_visualize_image(
             finally:
                 cv2.destroyAllWindows()
 
-        # Return status and stats
-        return mask_load_success, num_instances_found, save_success, display_success
+        return (
+            mask_instance_load_success,
+            mask_class_load_success,
+            num_instances_found,
+            save_success,
+            display_success,
+        )
 
     except FileNotFoundError as e:
         logger.error(f"File not found error for {image_id}: {e}. Skipping.")
-        return False, None, save_success, display_success
+        return False, False, None, False, False
     except Exception as e:
         logger.error(f"Unexpected error processing {image_id}: {e}", exc_info=True)
-        return False, None, save_success, display_success
+        return False, False, None, False, False
+
+
+def track_class_mask_distribution(
+    mask: np.ndarray, value_distribution: Dict[int, int], image_id: str
+) -> None:
+    """Track the distribution of class values in a mask array.
+
+    For each unique value in the mask, increment the count in value_distribution.
+
+    Args:
+        mask: The mask array to analyze.
+        value_distribution: Dictionary mapping pixel values to count of images containing the value.
+        image_id: Image identifier for logging.
+    """
+    if mask is None:
+        return
+
+    unique_values = set(np.unique(mask))
+    logger.debug(f"Class mask for {image_id} has values: {unique_values}")
+
+    for value in unique_values:
+        value_distribution[value] = value_distribution.get(value, 0) + 1
 
 
 def main():
@@ -408,34 +541,63 @@ def main():
         # --- Identify Images ---
         ids_to_process = get_target_image_list(args, base_voc_root, voc_devkit_root)
         if not ids_to_process:
-            return  # Exit cleanly if no images found
+            return
 
         # --- Determine Output Actions ---
         is_single_image_mode = args.image_id is not None
         do_display = is_single_image_mode
         do_save = not is_single_image_mode
+        show_difficult = args.show_difficult
 
         # --- Initialize Stats & Resources ---
         instances_per_image: List[int] = []
         images_processed = 0
-        mask_read_success = 0
+        mask_instance_read_success = 0
+        mask_class_read_success = 0
         images_saved = 0
         images_displayed = 0
         total_instances_found = 0
+
+        # Initialize value distribution tracking for class masks only
+        class_mask_value_distribution: Dict[int, int] = {}
 
         # --- Processing Loop ---
         logger.info("Starting visualization processing...")
         for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
             images_processed += 1
 
-            mask_success, num_instances, saved, displayed = process_and_visualize_image(
-                image_id,
-                year,
-                tag,
-                base_voc_root,  # Pass base root for finding year-specific VOC dir
-                output_dir,
-                do_save,
-                do_display,
+            # Analyze class mask distribution
+            try:
+                voc_dir = get_voc_dir(base_voc_root, year)
+                mask_class_path = get_segm_cls_mask_path(voc_dir, image_id)
+
+                from PIL import Image  # Keep import local for potential lazy loading
+
+                try:
+                    mask_class = np.array(Image.open(str(mask_class_path)))
+                    track_class_mask_distribution(
+                        mask_class, class_mask_value_distribution, image_id
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to analyze class mask for {image_id}: {e}")
+
+                # Removed instance mask analysis
+
+            except Exception as e:
+                logger.debug(f"Failed to get paths for mask analysis for {image_id}: {e}")
+
+            # Process and visualize the image
+            instance_success, class_success, num_instances, saved, displayed = (
+                process_and_visualize_image(
+                    image_id,
+                    year,
+                    tag,
+                    base_voc_root,
+                    output_dir,
+                    do_save,
+                    do_display,
+                    show_difficult,
+                )
             )
 
             if saved:
@@ -443,11 +605,13 @@ def main():
             if displayed:
                 images_displayed += 1
 
-            if mask_success:
-                mask_read_success += 1
+            if instance_success:
+                mask_instance_read_success += 1
                 if num_instances is not None:
                     instances_per_image.append(num_instances)
                     total_instances_found += num_instances
+            if class_success:
+                mask_class_read_success += 1
 
         # --- Statistics Reporting ---
         report_statistics(
@@ -455,44 +619,45 @@ def main():
             instances_per_image,
             len(ids_to_process),
             images_processed,
-            mask_read_success,
+            mask_instance_read_success,
+            mask_class_read_success,
             images_saved,
             images_displayed,
             total_instances_found,
+            class_mask_value_distribution,
         )
 
     except (ValueError, FileNotFoundError) as e:
         logger.error(f"Path setup failed: {e}")
-        # Optionally exit with non-zero status
-        # sys.exit(1)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
-        # sys.exit(1)
 
 
 def report_statistics(
     args: argparse.Namespace,
-    instances_per_image: List[int],  # Updated stats list name
+    instances_per_image: List[int],
     num_targeted: int,
     num_processed: int,
-    num_mask_success: int,  # Updated stat name
+    num_mask_instance_success: int,
+    num_mask_class_success: int,
     num_saved: int,
     num_displayed: int,
-    total_instances: int,  # Updated stat name
+    total_instances: int,
+    class_mask_value_distribution: Dict[int, int],
 ) -> None:
     """Calculates and logs processing and annotation statistics."""
     logger.info("--- Processing Complete ---")
     logger.info(f"Total images targeted: {num_targeted}")
     logger.info(f"Images processed attempt: {num_processed}")
-    logger.info(f"Segmentation masks successfully read: {num_mask_success}")  # Updated message
+    logger.info(f"Instance segmentation masks successfully read: {num_mask_instance_success}")
+    logger.info(f"Class segmentation masks successfully read: {num_mask_class_success}")
     logger.info(f"Images saved: {num_saved}")
     logger.info(f"Images displayed: {num_displayed}")
 
+    # Report instance statistics
     if instances_per_image:
         instances_arr = np.array(instances_per_image)
-        logger.info(
-            "--- Instance Statistics (per successfully processed mask) ---"
-        )  # Updated header
+        logger.info("--- Instance Statistics (per successfully processed mask) ---")
         if args.percentiles:
             try:
                 percentiles_str = args.percentiles.split(",")
@@ -500,35 +665,48 @@ def report_statistics(
                 if not all(0 <= p <= 100 for p in percentiles):
                     raise ValueError("Percentiles must be between 0 and 1.")
 
-                instance_percentiles = np.percentile(
-                    instances_arr, percentiles
-                )  # Calc instance percentiles
+                instance_percentiles = np.percentile(instances_arr, percentiles)
                 logger.info(f"Percentiles requested: {[f'{p / 100:.2f}' for p in percentiles]}")
                 logger.info(
                     f"Instance count percentiles: {np.round(instance_percentiles, 2).tolist()}"
-                )  # Log instance percentiles
+                )
 
             except ValueError as e:
                 logger.error(
                     f"Invalid format or value for --percentiles: {e}. "
                     "Use comma-separated floats between 0 and 1. Reporting averages instead."
                 )
-                # Fallback to average
-                logger.info(
-                    f"Average instances per image: {instances_arr.mean():.2f}"
-                )  # Log instance average
+                logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
         else:
-            # Report averages if percentiles not requested
-            logger.info(
-                f"Average instances per image: {instances_arr.mean():.2f}"
-            )  # Log instance average
+            logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
     else:
-        logger.info(
-            "No instance statistics generated (no masks successfully processed)."
-        )  # Updated message
+        logger.info("No instance statistics generated (no instance masks successfully processed).")
     logger.info(
-        f"Total object instances found across all processed masks: {total_instances}"
-    )  # Updated message
+        f"Total object instances found across all processed instance masks: {total_instances}"
+    )
+
+    # Report class mask value distributions
+    if class_mask_value_distribution:
+        logger.info("--- Class Mask Value Distribution ---")
+        logger.info("Showing count of images containing each class value:")
+
+        # Check for unexpected class values (21-254)
+        unexpected_values_found = {}
+        for value, count in class_mask_value_distribution.items():
+            if 21 <= value <= 254:
+                unexpected_values_found[value] = count
+
+        if unexpected_values_found:
+            logger.warning("Found unexpected class values (21-254) in some images:")
+            for value, count in sorted(unexpected_values_found.items()):
+                logger.warning(f"  Unexpected class value {value}: {count} images")
+
+        # Report counts for each valid class (1-20)
+        for value in range(1, 21):
+            if value in class_mask_value_distribution and value <= len(VOC_CLASSES):
+                count = class_mask_value_distribution[value]
+                class_name = VOC_CLASSES[value - 1]
+                logger.info(f"  Class value {value} ({class_name}): {count} images")
 
 
 if __name__ == "__main__":
