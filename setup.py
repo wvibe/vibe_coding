@@ -18,6 +18,7 @@ setup(
         "pillow>=10.0.0",
         "albumentations>=1.0.0",
         "opencv-python>=4.9.0",
+        "ultralytics>=8.0.0",
         # Transformers/NLP
         "transformers>=4.0.0",
         "datasets>=2.0.0",

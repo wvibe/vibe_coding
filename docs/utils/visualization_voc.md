@@ -163,7 +163,7 @@ python -m src.utils.visualization.yolo_detect_viz \
     [--sample-count N] \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
-    [--output-subdir visual_detect] \
+    [--output-subdir OUTPUT_SUBDIR] \
     [--percentiles 0.25,0.5,0.75] \
     [--seed 42]
 ```

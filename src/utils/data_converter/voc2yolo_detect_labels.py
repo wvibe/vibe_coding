@@ -16,19 +16,12 @@ Usage:
 
 import argparse
 import logging
-
-# Need os and load_dotenv here now
 import os
-
-# import os # No longer needed
 from pathlib import Path
 from typing import Optional, Tuple
 
 from dotenv import load_dotenv
 from tqdm import tqdm
-
-# Moved load_dotenv to top level
-load_dotenv()  # Load .env variables
 
 from src.utils.data_converter.voc2yolo_utils import (
     VOC_CLASS_TO_ID,
@@ -36,10 +29,12 @@ from src.utils.data_converter.voc2yolo_utils import (
     get_image_set_path,
     get_output_detect_label_dir,
     get_voc_dir,
-    # load_voc_root_from_env, # Removed
     parse_voc_xml,
     read_image_ids,
 )
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -88,38 +83,53 @@ def _determine_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Convert VOC XML annotations for a specific ImageSet tag to YOLO detection format."
+        description="Convert VOC XML annotations to YOLO detection format."
     )
     parser.add_argument(
         "--voc-root",
         type=str,
         default=None,
-        help="Path to the VOC dataset root directory (containing VOCdevkit). If not set, uses VOC_ROOT from .env.",
+        help=(
+            "Path to the VOC dataset root directory (containing VOCdevkit). "
+            "If not set, uses VOC_ROOT from .env."
+        ),
     )
     parser.add_argument(
         "--output-root",
         type=str,
         default=None,
-        help="Path to the root directory for output labels. Defaults to --voc-root if not specified.",
+        help=(
+            "Path to the root directory for output labels. Defaults to --voc-root if not specified."
+        ),
     )
     parser.add_argument(
-        "--year",
+        "--years",
         type=str,
         required=True,
-        choices=["2007", "2012"],  # Add more years if needed
-        help="Year of the VOC dataset (e.g., 2007, 2012)",
+        help=("Comma-separated list of years to process (e.g., 2007,2012)."),
     )
     parser.add_argument(
-        "--tag",
+        "--tags",
         type=str,
         required=True,
-        help="ImageSet tag to process (e.g., train, val, test, trainval, person_trainval)",
+        help=(
+            "Comma-separated list of ImageSet tags to process "
+            "(e.g., train,val,test). Uses ImageSets/Main."
+        ),
     )
     return parser.parse_args()
 
 
 def convert_box(size, box):
-    """Convert VOC bounding box (xmin, xmax, ymin, ymax) to YOLO format (x_center, y_center, width, height, normalized)."""
+    """Convert VOC bounding box (xmin, xmax, ymin, ymax) to YOLO format.
+
+    Args:
+        size: Tuple of (width, height) of the image
+        box: Tuple of (xmin, ymin, xmax, ymax) in absolute coordinates
+
+    Returns:
+        Tuple of (x_center, y_center, width, height) in normalized coordinates
+    """
     dw, dh = 1.0 / size[0], 1.0 / size[1]  # width, height
     # XML box is xmin, ymin, xmax, ymax - careful with indices from parse_voc_xml
     # parse_voc_xml returns bbox=[xmin, ymin, xmax, ymax]
@@ -131,7 +141,7 @@ def convert_box(size, box):
     return x_center * dw, y_center * dh, width * dw, height * dh
 
 
-def convert_annotation(xml_path: Path, output_label_dir: Path):
+def convert_annotation(xml_path: Path, output_label_dir: Path) -> bool:
     """Convert a single VOC XML annotation to a YOLO txt file in the specified directory."""
     # Construct output path within the target directory
     out_path = output_label_dir / f"{xml_path.stem}.txt"
@@ -177,7 +187,8 @@ def convert_annotation(xml_path: Path, output_label_dir: Path):
                     and 0 < bb_yolo[3] <= 1
                 ):
                     logger.warning(
-                        f"Skipping object '{cls_name}' in {xml_path.name}: Invalid normalized coordinates {bb_yolo}."
+                        f"Skipping object '{cls_name}' in {xml_path.name}: "
+                        f"Invalid normalized coordinates {bb_yolo}."
                     )
                     continue
 
@@ -186,33 +197,33 @@ def convert_annotation(xml_path: Path, output_label_dir: Path):
         return True
     except Exception as e:
         logger.error(f"Error writing annotation file {out_path} for {xml_path.name}: {e}")
-        # Optional: Clean up partially written file? Decided against for simplicity.
-        # if out_path.exists():
-        #     try:
-        #         os.remove(out_path)
-        #     except OSError:
-        #         logger.error(f"Failed to remove partial output file: {out_path}")
         return False
 
 
-def main():
-    args = parse_args()
-    # load_dotenv() # Load .env variables (Moved)
+def convert_split(
+    voc_root: Path,
+    output_root: Path,
+    year: str,
+    tag: str,
+) -> tuple[int, int]:
+    """Convert annotations for a specific year and tag.
 
-    voc_root, output_root = _determine_paths(args)
-    if not voc_root or not output_root:
-        return  # Error logged in helper function
+    Args:
+        voc_root: Path to VOC dataset root directory
+        output_root: Path to output root directory
+        year: Dataset year (e.g., '2007')
+        tag: ImageSet tag (e.g., 'train', 'val')
 
-    year = args.year
-    tag = args.tag
-
-    logger.info("Starting VOC to YOLO detection conversion.")
-    logger.info(f"Processing Year: {year}, Tag: {tag}")
+    Returns:
+        Tuple of (success_count, fail_count)
+    """
+    logger.info(f"--- Processing Year: {year}, Tag: {tag} ---")
+    success_count = fail_count = 0
 
     try:
         # Use utility functions to get paths
         voc_year_path = get_voc_dir(voc_root, year)
-        imageset_file = get_image_set_path(voc_year_path, task_type="detect", tag=tag)
+        imageset_file = get_image_set_path(voc_year_path, set_type="detect", tag=tag)
         output_label_dir = get_output_detect_label_dir(output_root, year, tag)
 
         # Create output directory
@@ -224,22 +235,20 @@ def main():
 
     except FileNotFoundError as e:
         logger.error(f"Error setting up paths: {e}")
-        return
+        return 0, 0
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
-        return
+        return 0, 0
     except IOError as e:
         logger.error(f"Error reading imageset file: {e}")
-        return
+        return 0, 0
 
     if not image_ids:
-        logger.warning(f"No image IDs found or read from {imageset_file}. Exiting.")
-        return
+        logger.warning(f"No image IDs found or read from {imageset_file}. Skipping.")
+        return 0, 0
 
     logger.info(f"Found {len(image_ids)} image IDs. Converting annotations...")
 
-    success_count = 0
-    fail_count = 0
     # Process images defined in the specific tag file
     for image_id in tqdm(image_ids, desc=f"Processing {year}/{tag}"):
         try:
@@ -263,9 +272,52 @@ def main():
             )
             fail_count += 1
 
+    logger.info(
+        f"Finished converting for {year}/{tag}: Success {success_count}, Failed {fail_count}"
+    )
+    return success_count, fail_count
+
+
+def main() -> None:
+    """Main execution function."""
+    args = parse_args()
+
+    voc_root, output_root = _determine_paths(args)
+    if not voc_root or not output_root:
+        return  # Error logged in helper function
+
+    # Parse comma-separated lists
+    try:
+        years = [y.strip() for y in args.years.split(",") if y.strip()]
+        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+        if not years or not tags:
+            raise ValueError("Years and Tags arguments cannot be empty.")
+    except Exception as e:
+        logger.error(f"Error parsing --years or --tags argument: {e}")
+        return
+
+    logger.info("Starting VOC to YOLO detection conversion.")
+    logger.info(f"Years to process: {years}")
+    logger.info(f"Tags to process: {tags}")
+
+    total_success = 0
+    total_fail = 0
+
+    # Process each year and tag combination
+    for year in years:
+        for tag in tags:
+            try:
+                s, f = convert_split(voc_root, output_root, year, tag)
+                total_success += s
+                total_fail += f
+            except Exception as e:
+                logger.error(
+                    f"Critical error during processing of {year}/{tag}: {e}", exc_info=True
+                )
+
     logger.info("\nConversion completed!")
-    logger.info(f"Successfully converted: {success_count}")
-    logger.info(f"Failed/Skipped: {fail_count}")
+    logger.info(f"Overall success count: {total_success}")
+    logger.info(f"Overall failed count: {total_fail}")
 
 
 if __name__ == "__main__":

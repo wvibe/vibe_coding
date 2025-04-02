@@ -4,15 +4,16 @@ This document clarifies the expected structure and format for the Pascal VOC dat
 
 ## Location
 
-- The root directory for the VOC dataset is expected to be `/home/wmu/vibe/hub/datasets/VOC`.
-  - If using environment variables (e.g., in scripts or configs), use `$VOC_ROOT` which should point to this location.
+- The root directory for the VOC dataset is expected to be `${VOC_ROOT}` (which points to `${DATASETS_ROOT}/VOC`).
+  - This location is defined in the project's `.env` file
+  - The full path resolves to `${VHUB_ROOT}/datasets/VOC`
 
 ## Structure
 
 The dataset should be organized as follows:
 
 ```
-/home/wmu/vibe/hub/datasets/VOC/
+${VOC_ROOT}/
 ├── images/                      # Contains all JPG image files
 │   ├── train2007/
 │   │   ├── 000001.jpg
@@ -101,15 +102,15 @@ The dataset should be organized as follows:
 ### Detection Benchmark (`detection_benchmark.yaml`)
 ```yaml
 dataset:
-  test_images_dir: "/home/wmu/vibe/hub/datasets/VOC/images/test2007" # Or path via $VOC_ROOT
-  annotations_dir: "/home/wmu/vibe/hub/datasets/VOC/labels_detect/test2007" # Or path via $VOC_ROOT
+  test_images_dir: "${VOC_ROOT}/images/test2007" # Or path via $VOC_ROOT
+  annotations_dir: "${VOC_ROOT}/labels_detect/test2007" # Or path via $VOC_ROOT
   annotation_format: "yolo_txt"
   # ... other settings ...
 ```
 
 ### Segmentation Training (Hypothetical Ultralytics Config)
 ```yaml
-path: /home/wmu/vibe/hub/datasets/VOC # Dataset root directory
+path: ${VOC_ROOT} # Dataset root directory
 train: images/train2012 # Relative path to training images
 val: images/val2012   # Relative path to validation images
 
@@ -133,7 +134,7 @@ names:
     - Example usage (sampling 100 images):
       ```bash
       python -m src.utils.data_converter.voc2yolo_images \
-          --voc-root /path/to/VOC \
+          --voc-root ${VOC_ROOT} \
           --output-root /path/to/output \
           --years 2012 \
           --tags train \

@@ -1,45 +1,44 @@
 #!/usr/bin/env python3
 """
-Convert Pascal VOC Segmentation Annotations to YOLO Format for a Specific ImageSet.
+Convert Pascal VOC Segmentation Annotations to YOLO Format for Specific ImageSets.
 
 Reads segmentation masks (PNG) and XML annotations from the specified VOCdevkit
-structure based on a given year and ImageSet tag (from ImageSets/Segmentation).
+structure based on given years and ImageSet tags (from ImageSets/Segmentation).
 Outputs YOLO segmentation format labels (.txt) with normalized polygon coordinates
 directly into the specified output directory under labels_segment/<tag+year>.
 
 Usage:
-    python src/utils/data_converter/voc2yolo_segment_labels.py \
-        --voc-root /path/to/VOC \
-        --output-root /path/to/output \
-        --year 2012 \
-        --tag trainval \
-        --iou-threshold 0.5
+    python src/utils/data_converter/voc2yolo_segment_labels.py \\
+        --voc-root /path/to/VOC \\
+        --output-root /path/to/output \\
+        --years 2012 \\
+        --tags train,val
 """
 
 import argparse
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 from dotenv import load_dotenv
+from PIL import Image
+from scipy.stats import mode
 from tqdm import tqdm
-
-from src.utils.common.iou import calculate_iou
 
 # Import common utilities from voc2yolo_utils (moved here)
 from src.utils.data_converter.voc2yolo_utils import (
     ANNOTATIONS_DIR,
     SEGMENTATION_OBJECT_DIR,
     VOC_CLASS_TO_ID,
-    get_annotation_path,
+    VOC_CLASSES,
     get_image_set_path,
     get_output_segment_label_dir,
+    get_segm_cls_mask_path,
     get_segm_inst_mask_path,
     get_voc_dir,
-    parse_voc_xml,
     read_image_ids,
 )
 
@@ -65,7 +64,6 @@ class VOC2YOLOConverter:
         output_root: Path,
         year: str,
         tag: str,
-        iou_threshold: float = 0.5,
     ):
         """
         Initialize the converter.
@@ -75,13 +73,11 @@ class VOC2YOLOConverter:
             output_root: Path to the root directory for output.
             year: Year of the dataset (e.g., '2007', '2012').
             tag: ImageSet tag to process (e.g., 'train').
-            iou_threshold: IoU threshold for matching mask instances to XML boxes.
         """
         self.voc_root = voc_root
         self.output_root = output_root
         self.year = year
         self.tag = tag
-        self.iou_threshold = iou_threshold
 
         # Use utility functions to get paths
         self.voc_year_path = get_voc_dir(self.voc_root, self.year)
@@ -101,7 +97,8 @@ class VOC2YOLOConverter:
         self.class_to_id = VOC_CLASS_TO_ID
 
         logger.info(
-            f"Initialized converter for VOC Root: {self.voc_root}, Year: {self.year}, Tag: {self.tag}"
+            "Initialized converter for VOC Root: "
+            f"{self.voc_root}, Year: {self.year}, Tag: {self.tag}"
         )
         logger.info(f"Outputting segmentation labels to: {self.output_segment_dir}")
 
@@ -117,10 +114,13 @@ class VOC2YOLOConverter:
             Excludes background (0) and boundary (255).
         """
         try:
-            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-            if mask is None:
-                raise IOError("cv2.imread returned None")
-        except (IOError, cv2.error) as e:
+            # Read the palette-mode PNG using PIL
+            mask_img = Image.open(str(mask_path))
+            # Convert to numpy array - this will give us the palette indices
+            mask = np.array(mask_img)
+            logger.debug(f"Successfully loaded instance mask with PIL: {mask_path}")
+            logger.debug(f"Instance mask unique values: {np.unique(mask)}")
+        except Exception as e:
             logger.error(f"Failed to read or decode mask: {mask_path}, Error: {e}")
             return None
 
@@ -160,7 +160,7 @@ class VOC2YOLOConverter:
             logger.warning("Cannot normalize polygons for zero-dimension mask.")
             return []
 
-        for i, contour in enumerate(contours):
+        for contour in contours:  # Removed unused 'i' variable
             # Check if contour is likely significant using defined constant
             if cv2.contourArea(contour) < MIN_CONTOUR_AREA:
                 continue
@@ -184,7 +184,6 @@ class VOC2YOLOConverter:
                 # Check again if polygon still has >= 3 unique points after normalization/clipping
                 if len(normalized_polygon) >= 6:
                     polygons.append(normalized_polygon)
-            # else: logger.debug(f"Skipping approximated contour with < 3 points.")
 
         return polygons
 
@@ -227,90 +226,154 @@ class VOC2YOLOConverter:
 
     def _match_instance_to_class(
         self,
-        instance_mask: np.ndarray,
-        xml_objects: List[Dict[str, Any]],
-        img_dims: Tuple[int, int],
+        binary_mask: np.ndarray,
+        class_mask: np.ndarray,
+        instance_id: int,
+        img_id: str,
     ) -> Optional[str]:
         """
-        Match a mask instance to an object class from XML annotations using IoU.
+        Determine the class name for a given instance mask by finding the
+        most frequent valid class ID within the instance region in the class mask.
 
         Args:
-            instance_mask: Binary mask for the specific instance.
-            xml_objects: List of objects parsed from XML (dicts with 'name', 'bbox').
-            img_dims: Tuple of (image_width, image_height) from XML.
+            binary_mask: Binary mask (0/1) for the specific instance.
+            class_mask: The full SegmentationClass mask containing class IDs.
+            instance_id: The ID of the instance being matched.
+            img_id: Image ID for logging.
 
         Returns:
-            The matched class name (str) or None if no suitable match is found.
+            The matched class name (str) or None if no valid class is found.
         """
-        if not xml_objects:
-            logger.warning("Cannot match instance: No XML objects provided.")
-            return None
-
-        mask_bbox_norm = self._get_mask_bbox(instance_mask)
-        if mask_bbox_norm is None:
-            logger.warning("Cannot match instance: Failed to get bounding box from mask.")
-            return None
-
-        best_iou = -1.0
-        best_match_class = None
-        # Keep track of used XML objects to handle multiple instances of same class
-        # This basic version doesn't prevent assigning multiple masks to the same XML box,
-        # A more complex assignment (e.g., Hungarian algorithm) could be used if needed.
-        img_width, img_height = img_dims
-
-        for xml_obj in xml_objects:
-            xml_bbox_abs = xml_obj["bbox"]
-            # Normalize XML bbox for IoU calculation
-            xml_bbox_norm = [
-                xml_bbox_abs[0] / img_width,
-                xml_bbox_abs[1] / img_height,  # xmin, ymin
-                xml_bbox_abs[2] / img_width,
-                xml_bbox_abs[3] / img_height,  # xmax, ymax
-            ]
-
-            iou = calculate_iou(mask_bbox_norm, xml_bbox_norm)  # Use common function
-
-            if iou > best_iou:
-                best_iou = iou
-                best_match_class = xml_obj["name"]
-
-        if best_iou >= self.iou_threshold:
-            logger.debug(
-                f"Matched instance mask (bbox: {mask_bbox_norm}) to XML class '{best_match_class}' (IoU: {best_iou:.4f})"
+        if binary_mask.shape != class_mask.shape:
+            logger.error(
+                f"Mismatch in shapes between instance mask {binary_mask.shape} and "
+                f"class mask {class_mask.shape} for img {img_id}, instance {instance_id}."
             )
-            return best_match_class
-        else:
+            return None
+
+        # Get class mask pixels corresponding to the instance mask pixels
+        instance_pixels = class_mask[binary_mask == 1]
+
+        if instance_pixels.size == 0:
             logger.warning(
-                f"Could not match instance mask (bbox: {mask_bbox_norm}). Best IoU ({best_iou:.4f}) below threshold ({self.iou_threshold})."
+                f"Instance {instance_id} in {img_id} has no corresponding pixels"
+                f" in the binary mask."
             )
             return None
 
-    def _process_segmentation_file(self, img_id: str):
+        # Filter out background (0) and boundary (255)
+        valid_class_pixels = instance_pixels[(instance_pixels > 0) & (instance_pixels != 255)]
+
+        if valid_class_pixels.size == 0:
+            logger.warning(
+                f"Instance {instance_id} in {img_id} only overlaps with background/boundary pixels."
+            )
+            return None
+
+        # Find the most frequent valid class ID
+        try:
+            mode_result = mode(valid_class_pixels)
+            # Handle scalar vs array output from mode depending on scipy version
+            if np.isscalar(mode_result.mode):
+                most_common_id = int(mode_result.mode)
+            elif mode_result.mode.size > 0:
+                most_common_id = int(mode_result.mode[0])  # Use the first mode if multiple
+            else:
+                logger.warning(
+                    f"Could not determine mode class ID for instance {instance_id} in {img_id}. "
+                    f"Valid pixels: {valid_class_pixels}"
+                )
+                return None
+        except Exception as e:
+            logger.error(
+                f"Error finding mode class ID for instance {instance_id} in {img_id}: {e}. "
+                f"Valid pixels: {valid_class_pixels}",
+                exc_info=True,
+            )
+            return None
+
+        # Convert class ID to class name
+        try:
+            # Find the class name corresponding to the ID (VOC IDs are 1-based in list)
+            # Need to find the key (class name) for the value (ID)
+            # Rebuild VOC_ID_TO_CLASS if needed, or iterate VOC_CLASSES
+            # Assuming VOC_CLASSES is 0-indexed list, ID 1 = VOC_CLASSES[0]
+            # But VOC standard uses 1-20. Let's use the imported VOC_CLASSES list directly.
+            if 1 <= most_common_id < len(VOC_CLASSES) + 1:
+                class_name = VOC_CLASSES[most_common_id - 1]  # Adjust ID to 0-based index
+                logger.debug(
+                    f"Matched instance {instance_id} in {img_id} to class '{class_name}'"
+                    f" (ID: {most_common_id})"
+                )
+                return class_name
+            else:
+                logger.warning(
+                    f"Most common class ID {most_common_id} for instance {instance_id} "
+                    f"in {img_id} is out of range for VOC_CLASSES."
+                )
+                return None
+        except IndexError:
+            logger.error(
+                f"Internal error: Class ID {most_common_id} out of bounds for VOC_CLASSES list.",
+                exc_info=True,
+            )
+            return None
+
+    def _process_instance(
+        self, instance_id: int, binary_mask: np.ndarray, class_mask: np.ndarray, img_id: str
+    ) -> Optional[List[str]]:
+        """Process a single instance and return its YOLO format lines."""
+        polygons = self._mask_to_polygons(binary_mask)
+        if not polygons:
+            logger.debug(f"No valid polygons for instance {instance_id} in {img_id}.")
+            return None
+
+        matched_class = self._match_instance_to_class(binary_mask, class_mask, instance_id, img_id)
+        if matched_class is None:
+            logger.warning(f"Skipping instance {instance_id} in {img_id} due to failed matching.")
+            return None
+
+        try:
+            class_id = self.class_to_id[matched_class]
+        except KeyError:
+            logger.error(f"Internal error: Matched unknown class '{matched_class}' for {img_id}.")
+            return None
+
+        output_lines = []
+        for poly in polygons:
+            poly_str = " ".join(map(lambda x: f"{x:.6f}", poly))
+            output_lines.append(f"{class_id} {poly_str}")
+        return output_lines
+
+    def _process_segmentation_file(self, img_id: str) -> bool:
         """
         Process a single image's segmentation mask and XML to generate YOLO label file.
         Writes output directly to the class instance's output_segment_dir.
 
         Args:
             img_id: The image identifier (filename without extension).
+
+        Returns:
+            bool: True if processing was successful, False otherwise.
         """
         # Construct paths using self.voc_year_path and utilities
         mask_path = get_segm_inst_mask_path(self.voc_year_path, img_id)
-        xml_path = get_annotation_path(self.voc_year_path, img_id)
+        class_mask_path = get_segm_cls_mask_path(self.voc_year_path, img_id)
 
         # 1. Check if mask exists
         if not mask_path.exists():
             logger.info(f"Segmentation mask not found: {mask_path}, skipping image {img_id}.")
-            return False  # Indicate skipped
-
-        # 2. Parse XML using utility function
-        xml_objects, img_dims = parse_voc_xml(xml_path)
-        if xml_objects is None or img_dims is None:
-            logger.warning(f"Skipping image {img_id} due to XML parsing error or missing info.")
             return False
 
-        if not xml_objects:
+        # 2. Load class mask
+        try:
+            class_mask = np.array(Image.open(str(class_mask_path)))
+            logger.debug(f"Successfully loaded class mask with PIL: {class_mask_path}")
+            logger.debug(f"Class mask unique values: {np.unique(class_mask)}")
+        except Exception as e:
             logger.warning(
-                f"No valid objects found in XML {xml_path} for {img_id}, skipping mask processing."
+                f"Failed to load class segmentation mask with PIL: {class_mask_path}. "
+                f"Error: {e}. Class names may be 'Unknown'."
             )
             return False
 
@@ -327,31 +390,11 @@ class VOC2YOLOConverter:
         # 4. Process each instance
         output_lines = []
         for instance_id, binary_mask in instance_masks.items():
-            polygons = self._mask_to_polygons(binary_mask)
-            if not polygons:
-                logger.debug(f"No valid polygons for instance {instance_id} in {img_id}.")
-                continue
+            instance_lines = self._process_instance(instance_id, binary_mask, class_mask, img_id)
+            if instance_lines:
+                output_lines.extend(instance_lines)
 
-            matched_class = self._match_instance_to_class(binary_mask, xml_objects, img_dims)
-            if matched_class is None:
-                logger.warning(
-                    f"Skipping instance {instance_id} in {img_id} due to failed matching."
-                )
-                continue
-
-            try:
-                class_id = self.class_to_id[matched_class]
-            except KeyError:
-                logger.error(
-                    f"Internal error: Matched unknown class '{matched_class}' for {img_id}."
-                )
-                continue
-
-            for poly in polygons:
-                poly_str = " ".join(map(lambda x: f"{x:.6f}", poly))
-                output_lines.append(f"{class_id} {poly_str}")
-
-        # 5. Write output file (to self.output_segment_dir)
+        # 5. Write output file
         if output_lines:
             output_path = self.output_segment_dir / f"{img_id}.txt"
             try:
@@ -366,63 +409,63 @@ class VOC2YOLOConverter:
             logger.info(f"No valid instances processed/matched for {img_id}, no output written.")
             return False
 
-    def convert(self):
-        """Convert the specific ImageSet tag for the initialized year."""
-        logger.info(f"Processing tag: {self.tag} for year {self.year}")
+    def _validate_directories(self) -> bool:
+        """Validate required directories exist."""
+        annotations_dir = self.voc_year_path / ANNOTATIONS_DIR
+        segmentation_dir = self.voc_year_path / SEGMENTATION_OBJECT_DIR
 
-        try:
-            imageset_file = get_image_set_path(
-                self.voc_year_path, task_type="segment", tag=self.tag
+        if not segmentation_dir.exists():
+            logger.warning(
+                f"SegmentationObject directory not found: {segmentation_dir}. "
+                f"Output may be incomplete for tag '{self.tag}'."
             )
+        if not annotations_dir.exists():
+            logger.error(
+                f"Annotations directory not found: {annotations_dir}. "
+                f"Cannot process tag '{self.tag}'."
+            )
+            return False
+        return True
 
-            # Basic validation for required input directories/files
-            annotations_dir = self.voc_year_path / ANNOTATIONS_DIR  # Defined in utils
-            segmentation_dir = self.voc_year_path / SEGMENTATION_OBJECT_DIR  # Defined in utils
+    def _get_image_ids_for_tag(self) -> Optional[List[str]]:
+        """Reads image IDs for the current tag, handling file errors."""
+        try:
+            # Get image set file
+            imageset_file = get_image_set_path(self.voc_year_path, set_type="segment", tag=self.tag)
 
-            # Segmentation objects might not exist for all images/tags (e.g., test set)
-            if not segmentation_dir.exists():
-                logger.warning(
-                    f"SegmentationObject directory not found: {segmentation_dir}. Output may be incomplete for tag '{self.tag}'."
-                )
-            if not annotations_dir.exists():
-                logger.error(
-                    f"Annotations directory not found: {annotations_dir}. Cannot process tag '{self.tag}'."
-                )
-                return
-
-            # Read image IDs using utility
+            # Read image IDs
             img_ids = read_image_ids(imageset_file)
+            if not img_ids:
+                logger.warning(f"No image IDs found in {imageset_file}. Returning empty list.")
+                return []  # Return empty list instead of None
+
+            logger.info(f"Found {len(img_ids)} image IDs for tag '{self.tag}'.")
+            return img_ids
 
         except FileNotFoundError as e:
             logger.error(f"Error reading image set file: {e}")
             # Try checking the 'Main' directory as a hint
             try:
                 imageset_main_file = get_image_set_path(
-                    self.voc_year_path, task_type="detect", tag=self.tag
+                    self.voc_year_path, set_type="detect", tag=self.tag
                 )
                 if imageset_main_file.exists():
                     logger.warning(
                         f"Note: ImageSet file *does* exist in Main directory: {imageset_main_file}"
                     )
-            except ValueError:  # Should not happen if task_type='detect'
+            except ValueError:  # Should not happen if set_type='detect'
                 pass
-            return
-        except (ValueError, IOError) as e:
-            logger.error(f"Error setting up conversion: {e}")
-            return
+            return None  # Indicate failure to read IDs
+        except (ValueError, IOError) as e:  # Catch errors from read_image_ids
+            logger.error(f"Error reading image IDs from {imageset_file}: {e}")
+            return None  # Indicate failure
 
-        if not img_ids:
-            logger.warning(f"No image IDs found in {imageset_file}. Exiting.")
-            return
-
-        logger.info(f"Found {len(img_ids)} image IDs for tag '{self.tag}'. Converting...")
-
+    def _process_image_list(self, img_ids: List[str]) -> Tuple[int, int]:
+        """Processes a list of image IDs and returns success/fail counts."""
         success_count = 0
         fail_count = 0
-        # Process each image ID
         for img_id in tqdm(img_ids, desc=f"Converting {self.year}/{self.tag}"):
             try:
-                # Process file, outputting directly to self.output_segment_dir
                 success = self._process_segmentation_file(img_id)
                 if success:
                     success_count += 1
@@ -434,46 +477,88 @@ class VOC2YOLOConverter:
                     exc_info=True,
                 )
                 fail_count += 1
+        return success_count, fail_count
 
-        logger.info(f"Finished processing tag '{self.tag}':")
-        logger.info(f"  Successfully converted: {success_count}")
-        logger.info(f"  Failed/Skipped: {fail_count}")
+    def convert(self) -> Tuple[int, int]:
+        """
+        Convert the specific ImageSet tag for the initialized year.
+
+        Returns:
+            Tuple[int, int]: (success_count, fail_count) for this tag.
+        """
+        logger.info(f"--- Processing Year: {self.year}, Tag: {self.tag} ---")
+        initial_fail_count = 0  # Count failures before processing images
+
+        try:
+            # Validate directories
+            if not self._validate_directories():
+                return 0, 1  # Return 1 failure if dirs invalid
+
+            # Get image IDs
+            img_ids = self._get_image_ids_for_tag()
+            if img_ids is None:
+                # Error logged in _get_image_ids_for_tag
+                return 0, 1  # Return 1 failure if IDs couldn't be read
+            if not img_ids:
+                # Warning logged, but not a failure for the overall process
+                return 0, 0  # No images to process
+
+            # Process images
+            logger.info(f"Converting {len(img_ids)} images...")
+            success_count, fail_count = self._process_image_list(img_ids)
+
+            logger.info(f"Finished processing tag '{self.tag}':")
+            logger.info(f"  Successfully converted: {success_count}")
+            logger.info(f"  Failed/Skipped: {fail_count}")
+
+            return success_count, fail_count + initial_fail_count
+
+        except Exception as e:  # Catch unexpected errors during setup/validation
+            logger.error(
+                f"Unexpected error during setup for {self.year}/{self.tag}: {e}", exc_info=True
+            )
+            return 0, 1  # Indicate failure
 
 
 def parse_args():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert Pascal VOC segmentation masks for a specific ImageSet tag to YOLO format."
+        description=(
+            "Convert Pascal VOC segmentation masks for specific ImageSet tags to YOLO format."
+        )
     )
     parser.add_argument(
         "--voc-root",
         type=str,
         default=None,
-        help="Path to the VOC dataset root directory (containing VOCdevkit). If not set, uses VOC_ROOT from .env.",
+        help=(
+            "Path to the VOC dataset root directory (containing VOCdevkit). "
+            "If not set, uses VOC_ROOT from .env."
+        ),
     )
     parser.add_argument(
         "--output-root",
         type=str,
         default=None,
-        help="Path to the root directory for output labels. Defaults to --voc-root if not specified.",
+        help=(
+            "Path to the root directory for output labels. Defaults to --voc-root if not specified."
+        ),
     )
     parser.add_argument(
-        "--year",
+        "--years",
         type=str,
         required=True,
-        choices=["2007", "2012"],  # Add more years if needed
-        help="Year of the VOC dataset (e.g., 2007, 2012)",
+        # choices=["2007", "2012"], # Removed choices constraint
+        help="Comma-separated list of years of the VOC dataset (e.g., 2007,2012)",
     )
     parser.add_argument(
-        "--tag",
+        "--tags",
         type=str,
         required=True,
-        help="ImageSet tag to process (from ImageSets/Segmentation, e.g., train, val, trainval)",
-    )
-    parser.add_argument(
-        "--iou_threshold",
-        type=float,
-        default=0.5,
-        help="IoU threshold for matching mask instances to XML bounding boxes (default: 0.5).",
+        help=(
+            "Comma-separated list of ImageSet tags to process "
+            "(from ImageSets/Segmentation, e.g., train,val,trainval)"
+        ),
     )
     return parser.parse_args()
 
@@ -520,26 +605,58 @@ def _determine_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional
 
 def main():
     args = parse_args()
-    # load_dotenv()  # Load .env variables (Moved)
+    # load_dotenv() # Already called globally
 
     voc_root, output_root = _determine_paths(args)
     if not voc_root or not output_root:
         return  # Error logged in helper
 
+    # Parse comma-separated lists
     try:
-        # Instantiate and run converter
-        converter = VOC2YOLOConverter(
-            voc_root=voc_root,
-            output_root=output_root,
-            year=args.year,
-            tag=args.tag,
-            iou_threshold=args.iou_threshold,
-        )
-        converter.convert()
-    except ValueError as e:
-        logger.error(f"Initialization error: {e}")
+        years = [y.strip() for y in args.years.split(",") if y.strip()]
+        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+        if not years or not tags:
+            raise ValueError("Years and Tags arguments cannot be empty.")
     except Exception as e:
-        logger.error(f"An unexpected error occurred during conversion: {e}", exc_info=True)
+        logger.error(f"Error parsing --years or --tags argument: {e}")
+        return
+
+    logger.info("Starting VOC to YOLO segmentation conversion.")
+    logger.info(f"Years to process: {years}")
+    logger.info(f"Tags to process: {tags}")
+
+    total_success = 0
+    total_fail = 0
+
+    # Process each year and tag combination
+    for year in years:
+        for tag in tags:
+            try:
+                # Instantiate and run converter for this specific combo
+                converter = VOC2YOLOConverter(
+                    voc_root=voc_root,
+                    output_root=output_root,
+                    year=year,
+                    tag=tag,
+                )
+                s, f = converter.convert()
+                total_success += s
+                total_fail += f
+            except ValueError as e:
+                logger.error(f"Initialization error for {year}/{tag}: {e}")
+                # Decide how to count failures here, maybe increment total_fail?
+                # For now, just log and continue. Failure count handled inside convert.
+            except Exception as e:
+                logger.error(
+                    f"An unexpected error occurred during conversion for {year}/{tag}: {e}",
+                    exc_info=True,
+                )
+                # Increment fail count if an unexpected error occurs outside convert()
+                total_fail += 1  # Or estimate based on expected number of images?
+
+    logger.info("\nConversion completed!")
+    logger.info(f"Overall success count: {total_success}")
+    logger.info(f"Overall failed/skipped count: {total_fail}")
 
 
 if __name__ == "__main__":

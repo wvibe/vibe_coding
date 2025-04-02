@@ -153,57 +153,56 @@ To create `.txt` label files compatible with YOLO-based training and evaluation 
 ### Usage
 
 ```bash
-python -m src.utils.data_converter.voc2yolo_segment_labels \
-    --years <YEARS> \
-    --tags <TAGS> \
-    [--voc-root /path/to/VOC] \
-    [--output-root /path/to/output] \
-    [--skip-difficult] \
-    [--iou-threshold 0.5]
+python -m src.utils.data_converter.voc2yolo_segment_labels \\
+    --years <YEARS> \\
+    --tags <TAGS> \\
+    [--voc-root /path/to/VOC] \\
+    [--output-root /path/to/output]
 ```
 
-- `--years`, `--tags`, `--voc-root`, `--output-root`, `--skip-difficult`: Similar to `voc2yolo_detect_labels.py`.
-- `--iou-threshold`: (Optional) The IoU threshold used to match mask instances to XML bounding boxes to determine the class label (default: 0.5).
+- `--years`, `--tags`, `--voc-root`, `--output-root`: Similar to `voc2yolo_detect_labels.py`.
+- ~`--skip-difficult`~: (Removed - Difficulty is not directly handled as class is from class mask).
+- ~`--iou-threshold`~: (Removed - Class matching uses class mask, not IoU with XML bbox).
 
 ### Logic
 
-This conversion is more complex because the VOC segmentation masks (`SegmentationObject`) identify object *instances* by pixel value (1, 2, 3...), but don't directly contain class information. The class information is only in the XML linked via bounding boxes.
+This conversion relies on matching instance IDs from `SegmentationObject` masks with class IDs from `SegmentationClass` masks.
 
 1.  Parses arguments.
 2.  Determines paths.
 3.  Reads image IDs (using `ImageSets/Segmentation/<tag>.txt`).
 4.  For each image ID:
-    - Constructs paths to XML (`Annotations`), segmentation mask (`SegmentationObject`), and optionally the image (`JPEGImages` - needed for dimensions if XML fails).
-    - Parses the XML using `parse_voc_xml` to get image dimensions and a list of ground truth objects (`name`, `bbox`, `difficult`). If XML parsing fails, attempt to get dimensions from the image file.
-    - Loads the segmentation mask PNG (`cv2.imread` with `IMREAD_GRAYSCALE`).
-    - Finds unique non-zero pixel values in the mask; these are the instance IDs.
+    - Constructs paths to instance mask (`SegmentationObject/<id>.png`) and class mask (`SegmentationClass/<id>.png`).
+    - Loads the instance mask using PIL (to preserve palette indices).
+    - Loads the class mask (e.g., using PIL or cv2).
+    - Finds unique non-background/non-boundary pixel values in the instance mask; these are the instance IDs.
     - Initializes an empty list for label lines.
-    - For each unique `instance_id` found in the mask:
+    - For each unique `instance_id` found in the instance mask:
         - Create a binary mask isolating only the pixels belonging to this instance.
-        - Find contours (`cv2.findContours`) of this binary mask.
-        - Select the largest contour (usually the main object outline).
         - **Crucially: Determine the Class:**
-            - Calculate the bounding box of the instance contour.
-            - Compare this instance bounding box to all ground truth bounding boxes *of the same instance ID (inferred positionally or via matching - check exact logic)* **Correction**: Compare instance bbox to *all* GT boxes from XML using IoU.
-            - Find the GT box from the XML with the highest IoU overlap with the instance box.
-            - If the highest IoU is above `--iou-threshold`:
-                - Get the class name associated with that best-matching GT box.
-                - Get the `difficult` status of that GT box.
-            - Else (no match above threshold): Log a warning and skip this instance (cannot determine class).
-        - If class was determined and (not `--skip-difficult` or the object is not difficult):
-            - Convert the instance contour points to a flat list `[x1, y1, x2, y2, ...]`. Simplify the polygon slightly if needed (`cv2.approxPolyDP`). Ensure minimum number of points (e.g., 3).
-            - Normalize the polygon coordinates using image dimensions.
-            - Get the class index using `VOC_CLASS_TO_ID`.
-            - Format the YOLO label line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`.
-            - Add the formatted line to the list.
+            - Find all pixels in the *class mask* that correspond to the instance's binary mask.
+            - Determine the most frequent non-background/non-boundary class ID among these pixels using `scipy.stats.mode`.
+            - If a valid modal class ID is found, convert it to the class name (from `VOC_CLASSES`) and then to the class index (from `VOC_CLASS_TO_ID`).
+            - If no valid modal class ID can be found (e.g., instance only overlaps background/boundary), log a warning and skip this instance.
+        - If class was determined:
+            - Find contours (`cv2.findContours`) of the instance's binary mask.
+            - For each contour (representing a polygon, potentially including holes if `RETR_TREE` was used, but typically `RETR_EXTERNAL` is sufficient):
+                - Check if contour area is above a minimum threshold.
+                - Simplify the polygon slightly using `cv2.approxPolyDP`.
+                - Ensure minimum number of points (e.g., 3).
+                - Convert the contour points to a flat list `[x1, y1, x2, y2, ...]`.
+                - Normalize the polygon coordinates using image dimensions (obtained implicitly from mask shape).
+                - Format the YOLO label line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`.
+                - Add the formatted line to the list.
     - Write all formatted label lines to the output `.txt` file (`<output_root>/labels_segment/<tag><year>/<id>.txt`).
 5.  Reports summary statistics.
 
 ### Input
 
-- `VOCdevkit/<YEAR>/Annotations/<id>.xml` (For class names, difficult status, GT boxes)
 - `VOCdevkit/<YEAR>/SegmentationObject/<id>.png` (Instance masks)
+- `VOCdevkit/<YEAR>/SegmentationClass/<id>.png` (Class masks - Used for class lookup)
 - `VOCdevkit/<YEAR>/ImageSets/Segmentation/<tag>.txt` (Lists of image IDs)
+- ~`VOCdevkit/<YEAR>/Annotations/<id>.xml`~ (No longer directly used for class lookup in this script)
 
 ### Output
 
