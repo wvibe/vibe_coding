@@ -186,9 +186,7 @@ def get_voc_dir(voc_root: Path, year: str) -> Path:
     return voc_root / "VOCdevkit" / f"VOC{year}"
 
 
-def get_image_set_path(
-    voc_dir: Path, set_type: str, tag: str
-) -> Path:
+def get_image_set_path(voc_dir: Path, set_type: str, tag: str) -> Path:
     """Construct the path to an ImageSet file within a specific year's directory.
 
     Args:
@@ -223,9 +221,30 @@ def get_annotation_path(voc_dir: Path, image_id: str) -> Path:
     return voc_dir / ANNOTATIONS_DIR / f"{image_id}.xml"
 
 
-def get_segmentation_mask_path(voc_dir: Path, image_id: str) -> Path:
-    """Get the path to a segmentation mask PNG file within the VOC structure."""
+def get_segm_inst_mask_path(voc_dir: Path, image_id: str) -> Path:
+    """Get path to the instance segmentation mask (SegmentationObject) for an image.
+
+    Args:
+        voc_dir: Path to the VOC directory for a specific year
+        image_id: Image ID
+
+    Returns:
+        Path to the segmentation mask file
+    """
     return voc_dir / SEGMENTATION_OBJECT_DIR / f"{image_id}.png"
+
+
+def get_segm_cls_mask_path(voc_dir: Path, image_id: str) -> Path:
+    """Get path to the class segmentation mask (SegmentationClass) for an image.
+
+    Args:
+        voc_dir: Path to the VOC directory for a specific year
+        image_id: Image ID
+
+    Returns:
+        Path to the segmentation class mask file
+    """
+    return voc_dir / SEGMENTATION_CLASS_DIR / f"{image_id}.png"
 
 
 def get_output_image_dir(output_root: Path, year: str, tag: str) -> Path:

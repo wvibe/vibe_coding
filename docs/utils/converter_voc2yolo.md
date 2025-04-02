@@ -27,7 +27,7 @@ To centralize common logic for:
     - Skips objects with unknown class names (not in `VOC_CLASSES`).
     - Performs basic validation on coordinates.
     - Returns a list of object dictionaries and the image dimensions.
-- **Path Getters (`get_voc_dir`, `get_image_set_path`, `get_image_path`, `get_annotation_path`, `get_segmentation_mask_path`, `get_output_..._dir`)**:
+- **Path Getters (`get_voc_dir`, `get_image_set_path`, `get_image_path`, `get_annotation_path`, `get_segm_inst_mask_path`, `get_segm_cls_mask_path`, `get_output_..._dir`)**:
     - Provide consistent methods for constructing absolute paths to specific files or directories within the VOC dataset structure (`VOCdevkit` or the processed output structure) based on root paths, year, and tag.
 - **`read_image_ids(imageset_path, ...)`:**
     - Reads image IDs from a standard VOC ImageSet `.txt` file.

@@ -310,7 +310,7 @@ def process_and_visualize_image(
         if do_save:
             save_subdir = output_dir / f"{tag}{year}"
             save_subdir.mkdir(parents=True, exist_ok=True)
-            save_path = save_subdir / f"{image_id}_voc_detect.png"
+            save_path = save_subdir / f"{image_id}.png"
             try:
                 cv2.imwrite(str(save_path), image_to_draw)
                 save_success = True
@@ -339,6 +339,69 @@ def process_and_visualize_image(
         return False, None, None, None, save_success, display_success
 
 
+def _initialize_processing_stats():
+    """Initialize statistics tracking for image processing."""
+    return {
+        "boxes_per_image": [],
+        "classes_per_image": [],
+        "difficult_per_image": [],
+        "images_processed": 0,
+        "xml_read_success": 0,
+        "images_saved": 0,
+        "images_displayed": 0,
+        "total_difficult_objs": 0,
+    }
+
+
+def _process_images(
+    ids_to_process,
+    base_voc_root,
+    output_dir,
+    class_name_to_id_map,
+    do_save,
+    do_display,
+    show_difficult,
+):
+    """Process a list of images and collect statistics."""
+    stats = _initialize_processing_stats()
+
+    logger.info("Starting visualization processing...")
+    for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
+        stats["images_processed"] += 1
+
+        xml_success, num_boxes, num_classes, num_difficult, saved, displayed = (
+            process_and_visualize_image(
+                image_id,
+                year,
+                tag,
+                base_voc_root,
+                output_dir,
+                class_name_to_id_map,
+                do_save,
+                do_display,
+                show_difficult,
+            )
+        )
+
+        if saved:
+            stats["images_saved"] += 1
+        if displayed:
+            stats["images_displayed"] += 1
+
+        if xml_success:
+            stats["xml_read_success"] += 1
+            # Append stats only if XML was successfully processed
+            if num_boxes is not None:
+                stats["boxes_per_image"].append(num_boxes)
+            if num_classes is not None:
+                stats["classes_per_image"].append(num_classes)
+            if num_difficult is not None:
+                stats["difficult_per_image"].append(num_difficult)
+                stats["total_difficult_objs"] += num_difficult
+
+    return stats
+
+
 def main():
     """Main execution function."""
     load_dotenv()
@@ -356,72 +419,35 @@ def main():
 
         # --- Determine Output Actions ---
         is_single_image_mode = args.image_id is not None
-        # Display only happens in single image mode
         do_display = is_single_image_mode
-        # Save only happens if NOT in single image mode
         do_save = not is_single_image_mode
 
-        # --- Initialize Stats & Resources ---
-        boxes_per_image: List[int] = []
-        classes_per_image: List[int] = []
-        difficult_per_image: List[int] = []
-        images_processed = 0
-        xml_read_success = 0
-        images_saved = 0
-        images_displayed = 0
-        total_difficult_objs = 0
-        # Use VOC_CLASSES for consistent color mapping
+        # --- Initialize Class Mapping ---
         class_name_to_id_map = {name: i for i, name in enumerate(VOC_CLASSES)}
 
-        # --- Processing Loop ---
-        logger.info("Starting visualization processing...")
-        for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
-            images_processed += 1
-
-            xml_success, num_boxes, num_classes, num_difficult, saved, displayed = (
-                process_and_visualize_image(
-                    image_id,
-                    year,
-                    tag,
-                    base_voc_root,
-                    output_dir,
-                    class_name_to_id_map,
-                    do_save,
-                    do_display,
-                    args.show_difficult,
-                )
-            )
-
-            if saved:
-                images_saved += 1
-            if displayed:
-                images_displayed += 1
-
-            if xml_success:
-                xml_read_success += 1
-                # Append stats only if XML was successfully processed
-                if num_boxes is not None:
-                    boxes_per_image.append(num_boxes)
-                if num_classes is not None:
-                    classes_per_image.append(num_classes)
-                if num_difficult is not None:
-                    difficult_per_image.append(num_difficult)
-                    total_difficult_objs += num_difficult
-            # Note: We don't have explicit save/display success counters from the helper
-            # We could add them, but for now just counting processed/xml_success
+        # --- Process Images ---
+        stats = _process_images(
+            ids_to_process,
+            base_voc_root,
+            output_dir,
+            class_name_to_id_map,
+            do_save,
+            do_display,
+            args.show_difficult,
+        )
 
         # --- Statistics Reporting ---
         report_statistics(
             args,
-            boxes_per_image,
-            classes_per_image,
-            difficult_per_image,
+            stats["boxes_per_image"],
+            stats["classes_per_image"],
+            stats["difficult_per_image"],
             len(ids_to_process),
-            images_processed,
-            xml_read_success,
-            images_saved,
-            images_displayed,
-            total_difficult_objs,
+            stats["images_processed"],
+            stats["xml_read_success"],
+            stats["images_saved"],
+            stats["images_displayed"],
+            stats["total_difficult_objs"],
         )
 
     except (ValueError, FileNotFoundError) as e:

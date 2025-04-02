@@ -343,7 +343,7 @@ class TestVocdevPathSetup(unittest.TestCase):
         # Calculate the expected paths
         expected_year_voc_dir = voc2yolo_utils.get_voc_dir(base_voc_root, args.year)
         expected_img_path = voc2yolo_utils.get_image_path(expected_year_voc_dir, args.image_id)
-        expected_mask_path = voc2yolo_utils.get_segmentation_mask_path(
+        expected_mask_path = voc2yolo_utils.get_segm_inst_mask_path(
             expected_year_voc_dir, args.image_id
         )
 
@@ -355,6 +355,28 @@ class TestVocdevPathSetup(unittest.TestCase):
         mock_exists.assert_has_calls(
             [call(expected_img_path), call(expected_mask_path)], any_order=True
         )
+
+    def test_segment_class_mask_path(self):
+        base = Path("/test/voc")
+        year = "2007"
+        img_id = "000001"
+
+        expected = base / "VOCdevkit/VOC2007/SegmentationClass/000001.png"
+        actual = voc2yolo_utils.get_segm_cls_mask_path(
+            voc2yolo_utils.get_voc_dir(base, year), img_id
+        )
+        self.assertEqual(actual, expected)
+
+    def test_segment_object_mask_path(self):
+        base = Path("/test/voc")
+        year = "2012"
+        img_id = "000002"
+
+        expected = base / "VOCdevkit/VOC2012/SegmentationObject/000002.png"
+        actual = voc2yolo_utils.get_segm_inst_mask_path(
+            voc2yolo_utils.get_voc_dir(base, year), img_id
+        )
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":
