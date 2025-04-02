@@ -66,13 +66,82 @@ python -m src.utils.visualization.vocdev_detect_viz \
 
 ---
 
+## `vocdev_segment_viz.py` - Visualize VOC Segmentation Ground Truth
+
+This script reads original Pascal VOC instance segmentation mask files (`SegmentationObject/*.png`) and overlays the masks onto the corresponding JPEG images from the `VOCdevkit`. It also attempts to associate each instance mask with its object class name by referencing the corresponding XML annotation file (`Annotations/*.xml`) using Intersection over Union (IoU) matching.
+
+### Purpose
+
+To visually verify the original VOC instance segmentation masks and check the alignment between instance masks and object annotations from the XML files. Allows inspection of individual images or batch processing for generating visual samples.
+
+### Usage
+
+```bash
+python -m src.utils.visualization.vocdev_segment_viz \
+    --year <YEARS> \
+    --tag <TAGS> \
+    [--image-id <ID>] \
+    [--sample-count N] \
+    [--voc-root /path/to/VOC] \
+    [--output-root /path/to/output] \
+    [--output-subdir visual_segment] \
+    [--percentiles 0.25,0.5,0.75] \
+    [--seed 42]
+```
+
+-   `--year`, `--tag`: Specify the VOC dataset year(s) and split tag(s) (e.g., '2007', 'train,val'). Uses `ImageSets/Segmentation/<tag>.txt` to find relevant image IDs.
+-   `--image-id`: Visualize a single specific image ID. Enables interactive display mode.
+-   `--sample-count`: Randomly sample N images from the specified splits for batch processing. Batch mode saves images.
+-   `--voc-root`: Path to the root directory containing `VOCdevkit`. Defaults to `$VOC_ROOT`.
+-   `--output-root`: Root directory for saving visualizations (batch mode). Defaults to the `VOCdevkit` directory within `--voc-root`.
+-   `--output-subdir`: Subdirectory within `--output-root` to save images (default: `visual_segment`). Structure: `<output_root>/<output_subdir>/<tag><year>/<image_id>_voc_segment.png`.
+-   `--percentiles`: (Optional) Calculate and report statistics on instance counts per image using these percentiles. Reports averages if not specified.
+-   `--seed`: Random seed for sampling.
+
+### Logic
+
+1.  Parses arguments and sets up paths.
+2.  Determines the list of target image IDs based on `--image-id` or `--year`/`--tag` (reading from `ImageSets/Segmentation/<tag>.txt`). Applies sampling.
+3.  Iterates through target image IDs.
+4.  For each ID:
+    -   Constructs paths to the JPEG image (`JPEGImages`), segmentation mask (`SegmentationObject`), and XML annotation (`Annotations`).
+    -   Loads the image and the grayscale segmentation mask using OpenCV.
+    -   Loads and parses the XML annotation using `voc2yolo_utils.parse_voc_xml`.
+    -   Finds unique non-zero pixel values (instance IDs) in the mask.
+    -   For each instance ID:
+        -   Creates a binary mask for the specific instance.
+        -   Calculates the bounding box `[xmin, ymin, xmax, ymax]` of the binary mask.
+        -   Compares this bounding box to all object bounding boxes from the parsed XML using `common.iou.calculate_iou`.
+        -   Identifies the XML object with the highest IoU, if the IoU is >= 0.5.
+        -   Retrieves the class name from the matched XML object (defaults to "Unknown" if no match or XML is missing/invalid).
+        -   Formats a label as `{class_name}.{instance_id}` (e.g., `car.1`).
+        -   Overlays the binary mask onto a copy of the image using `common.image_annotate.overlay_mask` with the generated label, a unique color per instance ID, and an alpha value of `0.3` for transparency.
+    -   If in single-image mode, displays the image.
+    -   If in batch mode, saves the visualized image.
+5.  Reports summary statistics about processed images and instance counts.
+
+### Input
+
+-   `VOCdevkit/<YEAR>/JPEGImages/<id>.jpg`
+-   `VOCdevkit/<YEAR>/SegmentationObject/<id>.png`
+-   `VOCdevkit/<YEAR>/Annotations/<id>.xml` (Optional, for class names)
+-   `VOCdevkit/<YEAR>/ImageSets/Segmentation/<tag>.txt`
+
+### Output
+
+-   Displays image via OpenCV window (single image mode).
+-   Saves visualized images to `<output_root>/<output_subdir>/<tag><year>/` (batch mode).
+-   Logs processing and instance statistics to the console.
+
+---
+
 ## Future Visualization Scripts (Planned)
 
 The following visualization scripts are planned based on the [VOC Dataset Conversion TODO](./../dataset/voc/TODO.md):
 
 1.  **`vocdev_segment_viz.py`:**
     -   **Purpose:** Visualize the original VOC instance segmentation masks (`SegmentationObject`) overlaid on the images. This script would read the `.png` mask files and potentially the XML for context (though masks themselves don't store class names directly in VOC). It would help verify the raw segmentation data.
-    -   **Status:** Not yet implemented.
+    -   **Status:** Implemented.
 
 2.  **`yolo_detect_viz.py`:**
     -   **Purpose:** Visualize the generated YOLO *detection* labels (`labels_detect/`). This script would read the `.txt` files containing `<class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>` lines, denormalize the coordinates based on the corresponding image dimensions, and draw the resulting bounding boxes and class labels onto the images stored in the project's `images/` directory. This is crucial for verifying the correctness of the `voc2yolo_detect_labels.py` conversion.

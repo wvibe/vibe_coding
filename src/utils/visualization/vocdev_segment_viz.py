@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Visualize Pascal VOC Ground Truth Detection Annotations.
+Visualize Pascal VOC Ground Truth Segmentation Masks.
 
-Reads VOC XML annotation files and draws the bounding boxes
-and class labels onto the corresponding images.
+Reads VOC segmentation mask files (`SegmentationObject`) and overlays them
+onto the corresponding images from `VOCdevkit`.
 Supports processing single images (with display) or batches (saving images).
-Optionally calculates and reports statistics on annotations per image.
+Optionally calculates and reports statistics on instances per image.
 """
 
 import argparse
@@ -21,14 +21,18 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 # Project utilities
-from src.utils.common.image_annotate import draw_box, get_color
+from src.utils.common.image_annotate import (
+    get_color,
+    overlay_mask,  # Use this to draw masks
+)
+from src.utils.common.iou import calculate_iou  # Added for matching
 from src.utils.data_converter.voc2yolo_utils import (
-    VOC_CLASSES,  # Use this for consistent class mapping if needed?
-    get_annotation_path,
+    get_annotation_path,  # Added for XML loading
     get_image_path,
     get_image_set_path,
+    get_segmentation_mask_path,  # Use this for masks
     get_voc_dir,
-    parse_voc_xml,  # Already parses required info
+    parse_voc_xml,  # Added for XML parsing
     read_image_ids,
 )
 
@@ -40,7 +44,7 @@ logger = logging.getLogger(__name__)
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Visualize Pascal VOC ground truth detection annotations."
+        description="Visualize Pascal VOC ground truth segmentation masks."  # Updated desc
     )
 
     parser.add_argument(
@@ -86,12 +90,12 @@ def parse_arguments() -> argparse.Namespace:
         "--output-root",
         type=str,
         default=None,
-        help="Root directory for saving visualizations. Defaults to voc-root.",
+        help="Root directory for saving visualizations. Defaults to the VOCdevkit directory.",
     )
     parser.add_argument(
         "--output-subdir",
         type=str,
-        default="visual_detect",  # Changed default name slightly
+        default="visual_segment",  # Changed default subdir
         help="Subdirectory within output-root to save visualizations.",
     )
     parser.add_argument(
@@ -99,15 +103,11 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default=None,
         help=(
-            "Comma-separated list of percentiles (0-1) for stats "
+            "Comma-separated list of percentiles (0-1) for instance count stats "
             "(e.g., '0.25,0.5,0.75'). Reports average if not set."
         ),
     )
-    parser.add_argument(
-        "--show-difficult",
-        action="store_true",
-        help="Add a '*' marker to labels for objects marked as difficult.",
-    )
+    # Removed --show-difficult argument
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling.")
 
     return parser.parse_args()
@@ -169,21 +169,21 @@ def _get_batch_image_ids(
                 # Construct the year-specific VOC directory path
                 voc_dir = get_voc_dir(base_voc_root, year)
                 # Pass the year-specific voc_dir to the utility function
-                imageset_path = get_image_set_path(voc_dir, set_type="detect", tag=tag)
+                imageset_path = get_image_set_path(voc_dir, set_type="segment", tag=tag)
                 # Use read_image_ids from the imported utils module
                 image_ids = read_image_ids(imageset_path)
                 if image_ids:
                     all_ids_found.extend([(img_id, year, tag) for img_id in image_ids])
                 else:
                     logger.warning(
-                        f"No image IDs found for Detection {year}/{tag} in {imageset_path}"
+                        f"No image IDs found for Segmentation {year}/{tag} in {imageset_path}"
                     )
             except FileNotFoundError:
                 logger.error(
-                    f"Could not find ImageSet file for Detection {year}/{tag}: {imageset_path}"
+                    f"Could not find ImageSet file for Segmentation {year}/{tag}: {imageset_path}"
                 )
             except Exception as e:
-                logger.error(f"Error reading ImageSet for Detection {year}/{tag}: {e}")
+                logger.error(f"Error reading ImageSet for Segmentation {year}/{tag}: {e}")
     return all_ids_found
 
 
@@ -200,19 +200,20 @@ def get_target_image_list(
         return []
 
     if args.image_id:
-        # Single image mode - path checking uses base_voc_root + year
+        # Single image mode
         first_year = years[0]
         first_tag = tags[0]
         logger.info(f"Single image mode: Processing {args.image_id} from {first_year}/{first_tag}")
+        # Basic path check for image and mask
         try:
             year_voc_dir = get_voc_dir(base_voc_root, first_year)
             img_path = get_image_path(year_voc_dir, args.image_id)
-            xml_path = get_annotation_path(year_voc_dir, args.image_id)
+            mask_path = get_segmentation_mask_path(year_voc_dir, args.image_id)
             if not img_path.exists():
                 logger.error(f"Image file not found: {img_path}")
                 return []
-            if not xml_path.exists():
-                logger.error(f"Annotation file not found: {xml_path}")
+            if not mask_path.exists():
+                logger.error(f"Segmentation mask file not found: {mask_path}")
                 return []
         except Exception as e:
             logger.error(f"Error checking paths for {args.image_id}: {e}")
@@ -220,17 +221,16 @@ def get_target_image_list(
         ids_to_process = [(args.image_id, first_year, first_tag)]
     else:
         # Batch mode (all or sampled)
-        # Pass base_voc_root to the helper, it will construct year-specific paths
         all_ids_found = _get_batch_image_ids(years, tags, base_voc_root)
 
         if not all_ids_found:
             logger.error(
-                "No image IDs found for any specified year/tag combination using Detection sets."
+                "No image IDs found for any specified year/tag combination using Segmentation sets."
             )
             return []
 
         logger.info(
-            f"Found {len(all_ids_found)} total image IDs across specified Detection splits."
+            f"Found {len(all_ids_found)} total image IDs across specified Segmentation splits."
         )
 
         # Apply sampling if requested
@@ -253,64 +253,120 @@ def process_and_visualize_image(
     tag: str,
     voc_root: Path,
     output_dir: Path,
-    class_name_to_id_map: dict,
     do_save: bool,
     do_display: bool,
-    show_difficult: bool,
-) -> Tuple[bool, Optional[int], Optional[int], Optional[int], bool, bool]:
-    """Loads, parses, draws, and saves/displays a single image.
+) -> Tuple[bool, Optional[int], bool, bool]:
+    """Loads image and mask, draws masks, and saves/displays the image.
 
     Returns:
-        Tuple: (xml_success, num_boxes, num_classes, num_difficult, save_success, display_success)
-               Returns counts as None if XML processing failed.
+        Tuple: (mask_load_success, num_instances_found, save_success, display_success)
+               Returns counts as None if mask loading failed.
     """
     save_success = False
     display_success = False
+    num_instances_found: Optional[int] = None
+    mask_load_success = False
+    xml_load_success = False  # Track XML loading
+    objects_from_xml = None  # Store parsed XML objects
+
     try:
         voc_dir = get_voc_dir(voc_root, year)
         image_path = get_image_path(voc_dir, image_id)
-        xml_path = get_annotation_path(voc_dir, image_id)
+        mask_path = get_segmentation_mask_path(voc_dir, image_id)
+        xml_path = get_annotation_path(voc_dir, image_id)  # Get XML path
 
         # Load Image
         image = cv2.imread(str(image_path))
         if image is None:
             logger.warning(f"Failed to load image: {image_path}. Skipping.")
-            return False, None, None, None, save_success, display_success
+            return mask_load_success, num_instances_found, save_success, display_success
 
-        # Parse XML
-        objects_list, img_dims = parse_voc_xml(xml_path)
-        if objects_list is None:
-            logger.warning(
-                f"Failed to parse or no valid objects in XML: {xml_path}. Skipping drawing."
-            )
-            return False, 0, 0, 0, save_success, display_success
+        # Load Mask
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            logger.warning(f"Failed to load segmentation mask: {mask_path}. Skipping drawing.")
+            # Still return False for mask_load_success, but 0 instances
+            return False, 0, save_success, display_success
 
-        # Collect stats
-        num_boxes = len(objects_list)
-        num_classes = len(set(o["name"] for o in objects_list))
-        num_difficult = sum(1 for o in objects_list if o.get("difficult", 0) == 1)
+        mask_load_success = True  # Mark mask as successfully loaded
 
-        # Draw Annotations
+        # Load and Parse XML Annotation
+        try:
+            if xml_path.exists():
+                objects_from_xml, _ = parse_voc_xml(xml_path)
+                if objects_from_xml is not None:
+                    xml_load_success = True
+                    logger.debug(f"Successfully loaded and parsed XML: {xml_path}")
+                else:
+                    logger.warning(f"Failed to parse objects from XML: {xml_path}")
+            else:
+                logger.warning(
+                    f"XML annotation not found: {xml_path}. Cannot determine class names."
+                )
+        except Exception as e:
+            logger.error(f"Error loading/parsing XML {xml_path}: {e}")
+
+        # Find unique instances (non-zero pixel values)
+        instance_ids = np.unique(mask[mask > 0])
+        num_instances_found = len(instance_ids)
+
+        # Draw Annotations (Masks)
         image_to_draw = image.copy()
-        for obj in objects_list:
-            class_name = obj["name"]
-            box = obj["bbox"]  # Already in [xmin, ymin, xmax, ymax] pixel format
-            is_difficult = obj.get("difficult", 0) == 1
+        if num_instances_found > 0:
+            logger.debug(f"Found instances {instance_ids} in {mask_path}")
+            for instance_id in instance_ids:
+                # Create binary mask for the current instance (0/255 for overlay_mask)
+                binary_mask = (mask == instance_id).astype(np.uint8) * 255
 
-            # Get color based on consistent class ID map
-            class_id = class_name_to_id_map.get(class_name, -1)
-            color = get_color(class_id if class_id != -1 else None)
+                # Get color based on instance ID
+                color = get_color(instance_id)
 
-            # Format label
-            label_text = f"{class_name}*" if show_difficult and is_difficult else class_name
+                # --- Determine Class Name via IoU Matching ---
+                class_name = "Unknown"
+                best_iou = 0.0
 
-            draw_box(image_to_draw, box, label_text, color=color)
+                # Calculate bounding box for the current instance mask
+                rows, cols = np.where(binary_mask > 0)
+                mask_bbox = None
+                if len(rows) > 0:
+                    xmin, xmax = np.min(cols), np.max(cols)
+                    ymin, ymax = np.min(rows), np.max(rows)
+                    mask_bbox = np.array([xmin, ymin, xmax, ymax])
+
+                if xml_load_success and objects_from_xml is not None and mask_bbox is not None:
+                    for obj in objects_from_xml:
+                        xml_bbox = np.array(obj["bbox"])  # Already [xmin, ymin, xmax, ymax]
+                        iou = calculate_iou(mask_bbox, xml_bbox)
+                        # Match if IoU is highest so far and above threshold
+                        if iou > best_iou and iou >= 0.5:
+                            best_iou = iou
+                            class_name = obj["name"]
+
+                    if class_name != "Unknown":
+                        logger.debug(
+                            f"Matched Inst {instance_id} to class '{class_name}' (IoU: {best_iou:.2f})"
+                        )
+                    else:
+                        logger.debug(
+                            f"Could not match Inst {instance_id} to XML object (best IoU: {best_iou:.2f})"
+                        )
+
+                # Format label including class name if found
+                label_text = f"{class_name}.{instance_id}"
+
+                # Overlay the mask with the updated label
+                overlay_mask(
+                    image_to_draw, binary_mask, label=label_text, color=color, alpha=0.3
+                )  # Use new label
+        else:
+            logger.debug(f"No instances found in mask {mask_path}")
 
         # Save or Display
         if do_save:
             save_subdir = output_dir / f"{tag}{year}"
             save_subdir.mkdir(parents=True, exist_ok=True)
-            save_path = save_subdir / f"{image_id}_voc_detect.png"
+            # Updated filename suffix
+            save_path = save_subdir / f"{image_id}_voc_segment.png"
             try:
                 cv2.imwrite(str(save_path), image_to_draw)
                 save_success = True
@@ -319,7 +375,7 @@ def process_and_visualize_image(
 
         if do_display:
             try:
-                cv2.imshow(f"VOC Detect Viz - {image_id}", image_to_draw)
+                cv2.imshow(f"VOC Segment Viz - {image_id}", image_to_draw)
                 logger.info(f"Displaying image {image_id}. Press any key to continue...")
                 cv2.waitKey(0)
                 display_success = True
@@ -329,14 +385,14 @@ def process_and_visualize_image(
                 cv2.destroyAllWindows()
 
         # Return status and stats
-        return True, num_boxes, num_classes, num_difficult, save_success, display_success
+        return mask_load_success, num_instances_found, save_success, display_success
 
     except FileNotFoundError as e:
         logger.error(f"File not found error for {image_id}: {e}. Skipping.")
-        return False, None, None, None, save_success, display_success
+        return False, None, save_success, display_success
     except Exception as e:
         logger.error(f"Unexpected error processing {image_id}: {e}", exc_info=True)
-        return False, None, None, None, save_success, display_success
+        return False, None, save_success, display_success
 
 
 def main():
@@ -356,40 +412,30 @@ def main():
 
         # --- Determine Output Actions ---
         is_single_image_mode = args.image_id is not None
-        # Display only happens in single image mode
         do_display = is_single_image_mode
-        # Save only happens if NOT in single image mode
         do_save = not is_single_image_mode
 
         # --- Initialize Stats & Resources ---
-        boxes_per_image: List[int] = []
-        classes_per_image: List[int] = []
-        difficult_per_image: List[int] = []
+        instances_per_image: List[int] = []
         images_processed = 0
-        xml_read_success = 0
+        mask_read_success = 0
         images_saved = 0
         images_displayed = 0
-        total_difficult_objs = 0
-        # Use VOC_CLASSES for consistent color mapping
-        class_name_to_id_map = {name: i for i, name in enumerate(VOC_CLASSES)}
+        total_instances_found = 0
 
         # --- Processing Loop ---
         logger.info("Starting visualization processing...")
         for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
             images_processed += 1
 
-            xml_success, num_boxes, num_classes, num_difficult, saved, displayed = (
-                process_and_visualize_image(
-                    image_id,
-                    year,
-                    tag,
-                    base_voc_root,
-                    output_dir,
-                    class_name_to_id_map,
-                    do_save,
-                    do_display,
-                    args.show_difficult,
-                )
+            mask_success, num_instances, saved, displayed = process_and_visualize_image(
+                image_id,
+                year,
+                tag,
+                base_voc_root,  # Pass base root for finding year-specific VOC dir
+                output_dir,
+                do_save,
+                do_display,
             )
 
             if saved:
@@ -397,64 +443,56 @@ def main():
             if displayed:
                 images_displayed += 1
 
-            if xml_success:
-                xml_read_success += 1
-                # Append stats only if XML was successfully processed
-                if num_boxes is not None:
-                    boxes_per_image.append(num_boxes)
-                if num_classes is not None:
-                    classes_per_image.append(num_classes)
-                if num_difficult is not None:
-                    difficult_per_image.append(num_difficult)
-                    total_difficult_objs += num_difficult
-            # Note: We don't have explicit save/display success counters from the helper
-            # We could add them, but for now just counting processed/xml_success
+            if mask_success:
+                mask_read_success += 1
+                if num_instances is not None:
+                    instances_per_image.append(num_instances)
+                    total_instances_found += num_instances
 
         # --- Statistics Reporting ---
         report_statistics(
             args,
-            boxes_per_image,
-            classes_per_image,
-            difficult_per_image,
+            instances_per_image,
             len(ids_to_process),
             images_processed,
-            xml_read_success,
+            mask_read_success,
             images_saved,
             images_displayed,
-            total_difficult_objs,
+            total_instances_found,
         )
 
     except (ValueError, FileNotFoundError) as e:
         logger.error(f"Path setup failed: {e}")
+        # Optionally exit with non-zero status
+        # sys.exit(1)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+        # sys.exit(1)
 
 
 def report_statistics(
     args: argparse.Namespace,
-    boxes_per_image: List[int],
-    classes_per_image: List[int],
-    difficult_per_image: List[int],
+    instances_per_image: List[int],  # Updated stats list name
     num_targeted: int,
     num_processed: int,
-    num_xml_success: int,
+    num_mask_success: int,  # Updated stat name
     num_saved: int,
     num_displayed: int,
-    total_difficult: int,
+    total_instances: int,  # Updated stat name
 ) -> None:
     """Calculates and logs processing and annotation statistics."""
     logger.info("--- Processing Complete ---")
     logger.info(f"Total images targeted: {num_targeted}")
     logger.info(f"Images processed attempt: {num_processed}")
-    logger.info(f"XML annotations successfully read: {num_xml_success}")
+    logger.info(f"Segmentation masks successfully read: {num_mask_success}")  # Updated message
     logger.info(f"Images saved: {num_saved}")
     logger.info(f"Images displayed: {num_displayed}")
 
-    if boxes_per_image:
-        boxes_arr = np.array(boxes_per_image)
-        classes_arr = np.array(classes_per_image)
-        difficult_arr = np.array(difficult_per_image)
-        logger.info("--- Annotation Statistics (per successfully processed XML) ---")
+    if instances_per_image:
+        instances_arr = np.array(instances_per_image)
+        logger.info(
+            "--- Instance Statistics (per successfully processed mask) ---"
+        )  # Updated header
         if args.percentiles:
             try:
                 percentiles_str = args.percentiles.split(",")
@@ -462,35 +500,35 @@ def report_statistics(
                 if not all(0 <= p <= 100 for p in percentiles):
                     raise ValueError("Percentiles must be between 0 and 1.")
 
-                box_percentiles = np.percentile(boxes_arr, percentiles)
-                class_percentiles = np.percentile(classes_arr, percentiles)
-                difficult_percentiles = np.percentile(difficult_arr, percentiles)
+                instance_percentiles = np.percentile(
+                    instances_arr, percentiles
+                )  # Calc instance percentiles
                 logger.info(f"Percentiles requested: {[f'{p / 100:.2f}' for p in percentiles]}")
-                logger.info(f"Box count percentiles: {np.round(box_percentiles, 2).tolist()}")
                 logger.info(
-                    f"Unique class count percentiles: {np.round(class_percentiles, 2).tolist()}"
-                )
-                logger.info(
-                    "Difficult obj count percentiles: "
-                    f"{np.round(difficult_percentiles, 2).tolist()}"
-                )
+                    f"Instance count percentiles: {np.round(instance_percentiles, 2).tolist()}"
+                )  # Log instance percentiles
+
             except ValueError as e:
                 logger.error(
                     f"Invalid format or value for --percentiles: {e}. "
                     "Use comma-separated floats between 0 and 1. Reporting averages instead."
                 )
-                # Fallback to average if percentiles are invalid
-                logger.info(f"Average boxes per image: {boxes_arr.mean():.2f}")
-                logger.info(f"Average unique classes per image: {classes_arr.mean():.2f}")
-                logger.info(f"Average difficult objects per image: {difficult_arr.mean():.2f}")
+                # Fallback to average
+                logger.info(
+                    f"Average instances per image: {instances_arr.mean():.2f}"
+                )  # Log instance average
         else:
             # Report averages if percentiles not requested
-            logger.info(f"Average boxes per image: {boxes_arr.mean():.2f}")
-            logger.info(f"Average unique classes per image: {classes_arr.mean():.2f}")
-            logger.info(f"Average difficult objects per image: {difficult_arr.mean():.2f}")
+            logger.info(
+                f"Average instances per image: {instances_arr.mean():.2f}"
+            )  # Log instance average
     else:
-        logger.info("No annotation statistics generated (no XMLs successfully processed).")
-    logger.info(f"Total difficult objects found across all processed XMLs: {total_difficult}")
+        logger.info(
+            "No instance statistics generated (no masks successfully processed)."
+        )  # Updated message
+    logger.info(
+        f"Total object instances found across all processed masks: {total_instances}"
+    )  # Updated message
 
 
 if __name__ == "__main__":

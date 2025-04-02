@@ -17,10 +17,14 @@ JPEG_IMAGES_DIR = "JPEGImages"
 SEGMENTATION_CLASS_DIR = "SegmentationClass"
 SEGMENTATION_OBJECT_DIR = "SegmentationObject"
 IMAGESETS_DIR = "ImageSets"
-IMAGESETS_MAIN_DIR = f"{IMAGESETS_DIR}/Main"  # Used for detection
-IMAGESETS_SEGMENTATION_DIR = f"{IMAGESETS_DIR}/Segmentation"  # Used for segmentation
+IMAGESETS_MAIN_DIR = Path("ImageSets") / "Main"
+IMAGESETS_SEGMENTATION_DIR = Path("ImageSets") / "Segmentation"
 IMAGESETS_ACTION_DIR = f"{IMAGESETS_DIR}/Action"
 IMAGESETS_LAYOUT_DIR = f"{IMAGESETS_DIR}/Layout"
+
+# Define subdirs relative to ImageSets
+MAIN_DIR = "Main"
+SEGMENTATION_DIR = "Segmentation"
 
 # --- Output Directory Names ---
 OUTPUT_IMAGES_DIR = "images"
@@ -182,27 +186,31 @@ def get_voc_dir(voc_root: Path, year: str) -> Path:
     return voc_root / "VOCdevkit" / f"VOC{year}"
 
 
-def get_image_set_path(voc_dir: Path, task_type: str, tag: str) -> Path:
-    """Get the path to an ImageSet file based on task type and tag.
+def get_image_set_path(
+    voc_dir: Path, set_type: str, tag: str
+) -> Path:
+    """Construct the path to an ImageSet file within a specific year's directory.
 
     Args:
-        voc_dir (Path): Path to the specific VOC year directory (e.g., VOCdevkit/VOC2012).
-        task_type (str): 'detect' or 'segment'.
-        tag (str): The ImageSet tag (e.g., 'train', 'val').
+        voc_dir: Path to the specific VOC year directory (e.g., /path/to/VOCdevkit/VOC2012).
+        set_type: The type of image set ('detect' or 'segment'). Corresponds to subdirs 'Main' or 'Segmentation'.
+        tag: The dataset tag (e.g., 'train', 'val', 'test').
 
     Returns:
-        Path: The full path to the ImageSet .txt file.
+        Path to the imageset file.
 
     Raises:
-        ValueError: If task_type is invalid.
+        ValueError: If set_type is invalid.
     """
-    if task_type == "detect":
-        imageset_subdir = IMAGESETS_MAIN_DIR
-    elif task_type == "segment":
-        imageset_subdir = IMAGESETS_SEGMENTATION_DIR
+    if set_type == "detect" or set_type == "main":
+        subdir = MAIN_DIR
+    elif set_type == "segment":
+        subdir = SEGMENTATION_DIR
     else:
-        raise ValueError(f"Invalid task_type: {task_type}. Must be 'detect' or 'segment'.")
-    return voc_dir / imageset_subdir / f"{tag}.txt"
+        raise ValueError(f"Invalid set_type '{set_type}'. Must be 'detect' or 'segment'.")
+
+    # Construct path relative to the year-specific voc_dir
+    return voc_dir / IMAGESETS_DIR / subdir / f"{tag}.txt"
 
 
 def get_image_path(voc_dir: Path, image_id: str) -> Path:
