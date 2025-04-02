@@ -82,7 +82,7 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
 - [x] Add visualization drawing utilities (bbox, polygon, mask overlay, colors) to `src/utils/common/image_annotate.py`.
 - [x] Implement `vocdev_detect_viz.py` (visualize VOC XML annotations).
 - [x] Implement `vocdev_segment_viz.py` (visualize VOC mask annotations).
-- [ ] Implement `yolo_detect_viz.py` (visualize YOLO detection labels).
+- [x] Implement `yolo_detect_viz.py` (visualize YOLO detection labels).
 - [ ] Implement `yolo_segment_viz.py` (visualize YOLO segmentation labels).
 - [ ] (Optional) Make IoU matching threshold configurable in `vocdev_segment_viz.py`.
 

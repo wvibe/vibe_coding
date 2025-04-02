@@ -43,3 +43,4 @@ def calculate_iou(box1: np.ndarray, box2: np.ndarray) -> float:
 
     # Ensure IoU is between 0 and 1
     return float(np.clip(iou, 0.0, 1.0))
+

@@ -58,3 +58,4 @@ def xyxy_to_xywh(box):
         x = x1 + w / 2
         y = y1 + h / 2
         return np.stack([x, y, w, h], axis=-1)
+
