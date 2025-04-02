@@ -18,8 +18,6 @@ Usage:
 
 import argparse
 import logging
-
-# Need os and load_dotenv here now
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,12 +27,9 @@ import numpy as np
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-# Moved load_dotenv to top level
-load_dotenv()  # Load .env variables
+from src.utils.common.iou import calculate_iou
 
-from src.utils.common.iou import calculate_iou  # Import the common IoU function
-
-# Import common utilities from voc2yolo_utils
+# Import common utilities from voc2yolo_utils (moved here)
 from src.utils.data_converter.voc2yolo_utils import (
     ANNOTATIONS_DIR,
     SEGMENTATION_OBJECT_DIR,
@@ -42,11 +37,13 @@ from src.utils.data_converter.voc2yolo_utils import (
     get_annotation_path,
     get_image_set_path,
     get_output_segment_label_dir,
-    get_segmentation_mask_path,
+    get_segm_inst_mask_path,
     get_voc_dir,
     parse_voc_xml,
     read_image_ids,
 )
+
+load_dotenv()  # Load .env variables
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -297,7 +294,7 @@ class VOC2YOLOConverter:
             img_id: The image identifier (filename without extension).
         """
         # Construct paths using self.voc_year_path and utilities
-        mask_path = get_segmentation_mask_path(self.voc_year_path, img_id)
+        mask_path = get_segm_inst_mask_path(self.voc_year_path, img_id)
         xml_path = get_annotation_path(self.voc_year_path, img_id)
 
         # 1. Check if mask exists
