@@ -260,7 +260,11 @@ def get_segm_cls_mask_path(voc_dir: Path, image_id: str) -> Path:
 
 
 def get_output_image_dir(output_root: Path, task_type: str, year: str, tag: str) -> Path:
-    """Get the output directory path for images for a given task, year and tag.
+    """Get the output directory path for images for a given task type, year, and tag.
+
+    Matches the structure defined in docs/dataset/voc/README.md:
+    - For detection: <output_root>/detect/images/<tag><year>
+    - For segmentation: <output_root>/segment/images/<tag><year>
 
     Args:
         output_root: The root directory for the processed dataset structure.
@@ -276,7 +280,7 @@ def get_output_image_dir(output_root: Path, task_type: str, year: str, tag: str)
     """
     if task_type not in ["detect", "segment"]:
         raise ValueError(f"Invalid task_type '{task_type}'. Must be 'detect' or 'segment'.")
-    # Use OUTPUT_IMAGES_SUBDIR constant for consistency
+    # Outputs to <output_root>/<task_type>/images/<tag><year>
     return output_root / task_type / OUTPUT_IMAGES_SUBDIR / f"{tag}{year}"
 
 
@@ -293,7 +297,7 @@ def get_output_detect_label_dir(output_root: Path, year: str, tag: str) -> Path:
     Returns:
         Path to the output detection label directory (e.g., <output_root>/detect/labels/train2007).
     """
-    # Use constants for consistency
+    # Updated to match the new structure: ${VOC_ROOT}/detect/labels/<tag><year>/
     return output_root / OUTPUT_DETECT_DIR_NAME / OUTPUT_LABELS_SUBDIR / f"{tag}{year}"
 
 
@@ -309,7 +313,7 @@ def get_output_segment_label_dir(output_root: Path, year: str, tag: str) -> Path
         Path to the output segmentation label directory
         (e.g., <output_root>/segment/labels/train2007).
     """
-    # Use constants for consistency
+    # Updated to match the new structure: ${VOC_ROOT}/segment/labels/<tag><year>/
     return output_root / OUTPUT_SEGMENT_DIR_NAME / OUTPUT_LABELS_SUBDIR / f"{tag}{year}"
 
 

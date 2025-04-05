@@ -9,6 +9,7 @@ import pytest
 # sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 # Import the functions/classes to be tested from the renamed files
 from src.utils.data_converter.voc2yolo_detect_labels import (
+    apply_sampling_across_splits,
     convert_annotation,
     convert_box,
 )
@@ -35,6 +36,38 @@ def test_convert_box():
 
     result_yolo = convert_box(img_size, voc_box)
     assert result_yolo == pytest.approx(expected_yolo)
+
+
+# --- Test sampling function --- #
+
+
+def test_apply_sampling_across_splits():
+    """Test the sampling function that selects a subset of image IDs."""
+    # Setup test data
+    all_image_ids_map = {
+        ("2007", "train"): ["img1", "img2", "img3", "img4", "img5"],
+        ("2007", "val"): ["img6", "img7", "img8"],
+        ("2012", "train"): ["img9", "img10"],
+    }
+    total_ids = 10
+
+    # Test no sampling (sample_count=None)
+    result = apply_sampling_across_splits(all_image_ids_map, None, total_ids, seed=42)
+    assert result == all_image_ids_map
+
+    # Test sampling more than available (should return all)
+    result = apply_sampling_across_splits(all_image_ids_map, 20, total_ids, seed=42)
+    assert result == all_image_ids_map
+
+    # Test sampling a subset
+    result = apply_sampling_across_splits(all_image_ids_map, 5, total_ids, seed=42)
+    assert sum(len(ids) for ids in result.values()) == 5
+
+    # Test sampling with consistent seed
+    result1 = apply_sampling_across_splits(all_image_ids_map, 3, total_ids, seed=42)
+    result2 = apply_sampling_across_splits(all_image_ids_map, 3, total_ids, seed=42)
+    # Both results should be the same with the same seed
+    assert result1 == result2
 
 
 # --- Fixtures for convert_annotation --- #
@@ -142,6 +175,10 @@ def test_convert_annotation_success(temp_dir_fixture, sample_good_xml):
     car_id = VOC_CLASSES.index("car")
     expected_box2 = convert_box((100, 100), [50.0, 60.0, 70.0, 80.0])
     assert lines[1].strip() == f"{car_id} {' '.join(map(str, expected_box2))}"
+
+    # Test for skipping existing files by running the conversion again
+    result = convert_annotation(xml_path, temp_dir_fixture)
+    assert result is True  # Still returns success for an existing file
 
 
 def test_convert_annotation_missing_size(temp_dir_fixture, sample_bad_xml_missing_size):

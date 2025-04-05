@@ -8,16 +8,19 @@ Outputs YOLO segmentation format labels (.txt) with normalized polygon coordinat
 directly into the specified output directory under labels_segment/<tag+year>.
 
 Usage:
-    python src/utils/data_converter/voc2yolo_segment_labels.py \\
+    python -m src.utils.data_converter.voc2yolo_segment_labels \\
         --voc-root /path/to/VOC \\
         --output-root /path/to/output \\
-        --years 2012 \\
-        --tags train,val
+        --years 2007,2012 \\
+        --tags train,val \\
+        [--sample-count 100] \\
+        [--seed 42]
 """
 
 import argparse
 import logging
 import os
+import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -64,6 +67,7 @@ class VOC2YOLOConverter:
         output_root: Path,
         year: str,
         tag: str,
+        image_ids: Optional[List[str]] = None,
     ):
         """
         Initialize the converter.
@@ -73,11 +77,14 @@ class VOC2YOLOConverter:
             output_root: Path to the root directory for output.
             year: Year of the dataset (e.g., '2007', '2012').
             tag: ImageSet tag to process (e.g., 'train').
+            image_ids: Optional list of specific image IDs to process.
+                If None, reads from ImageSet file.
         """
         self.voc_root = voc_root
         self.output_root = output_root
         self.year = year
         self.tag = tag
+        self.image_ids = image_ids
 
         # Use utility functions to get paths
         self.voc_year_path = get_voc_dir(self.voc_root, self.year)
@@ -360,6 +367,11 @@ class VOC2YOLOConverter:
         mask_path = get_segm_inst_mask_path(self.voc_year_path, img_id)
         class_mask_path = get_segm_cls_mask_path(self.voc_year_path, img_id)
 
+        # Check if output file already exists
+        output_path = self.output_segment_dir / f"{img_id}.txt"
+        if output_path.exists():
+            return "skipped"  # Return "skipped" instead of False to indicate file exists
+
         # 1. Check if mask exists
         if not mask_path.exists():
             logger.info(f"Segmentation mask not found: {mask_path}, skipping image {img_id}.")
@@ -396,7 +408,6 @@ class VOC2YOLOConverter:
 
         # 5. Write output file
         if output_lines:
-            output_path = self.output_segment_dir / f"{img_id}.txt"
             try:
                 with open(output_path, "w") as f:
                     f.write("\n".join(output_lines) + "\n")
@@ -460,15 +471,18 @@ class VOC2YOLOConverter:
             logger.error(f"Error reading image IDs from {imageset_file}: {e}")
             return None  # Indicate failure
 
-    def _process_image_list(self, img_ids: List[str]) -> Tuple[int, int]:
+    def _process_image_list(self, img_ids: List[str]) -> Tuple[int, int, int]:
         """Processes a list of image IDs and returns success/fail counts."""
         success_count = 0
+        skipped_count = 0
         fail_count = 0
         for img_id in tqdm(img_ids, desc=f"Converting {self.year}/{self.tag}"):
             try:
-                success = self._process_segmentation_file(img_id)
-                if success:
+                result = self._process_segmentation_file(img_id)
+                if result is True:
                     success_count += 1
+                elif result == "skipped":
+                    skipped_count += 1
                 else:
                     fail_count += 1
             except Exception as e:
@@ -477,14 +491,14 @@ class VOC2YOLOConverter:
                     exc_info=True,
                 )
                 fail_count += 1
-        return success_count, fail_count
+        return success_count, skipped_count, fail_count
 
-    def convert(self) -> Tuple[int, int]:
+    def convert(self) -> Tuple[int, int, int]:
         """
         Convert the specific ImageSet tag for the initialized year.
 
         Returns:
-            Tuple[int, int]: (success_count, fail_count) for this tag.
+            Tuple[int, int, int]: (success_count, skipped_count, fail_count) for this tag.
         """
         logger.info(f"--- Processing Year: {self.year}, Tag: {self.tag} ---")
         initial_fail_count = 0  # Count failures before processing images
@@ -492,32 +506,39 @@ class VOC2YOLOConverter:
         try:
             # Validate directories
             if not self._validate_directories():
-                return 0, 1  # Return 1 failure if dirs invalid
+                return 0, 0, 1  # Return 1 failure if dirs invalid
 
             # Get image IDs
-            img_ids = self._get_image_ids_for_tag()
-            if img_ids is None:
-                # Error logged in _get_image_ids_for_tag
-                return 0, 1  # Return 1 failure if IDs couldn't be read
-            if not img_ids:
-                # Warning logged, but not a failure for the overall process
-                return 0, 0  # No images to process
+            if self.image_ids is None:
+                # Read from ImageSet file if not provided
+                img_ids = self._get_image_ids_for_tag()
+                if img_ids is None:
+                    # Error logged in _get_image_ids_for_tag
+                    return 0, 0, 1  # Return 1 failure if IDs couldn't be read
+                if not img_ids:
+                    # Warning logged, but not a failure for the overall process
+                    return 0, 0, 0  # No images to process
+            else:
+                # Use the provided image IDs
+                img_ids = self.image_ids
+                logger.info(f"Using {len(img_ids)} provided image IDs for {self.year}/{self.tag}")
 
             # Process images
             logger.info(f"Converting {len(img_ids)} images...")
-            success_count, fail_count = self._process_image_list(img_ids)
+            success_count, skipped_count, fail_count = self._process_image_list(img_ids)
 
             logger.info(f"Finished processing tag '{self.tag}':")
             logger.info(f"  Successfully converted: {success_count}")
-            logger.info(f"  Failed/Skipped: {fail_count}")
+            logger.info(f"  Skipped (already exist): {skipped_count}")
+            logger.info(f"  Failed/Error: {fail_count}")
 
-            return success_count, fail_count + initial_fail_count
+            return success_count, skipped_count, fail_count + initial_fail_count
 
         except Exception as e:  # Catch unexpected errors during setup/validation
             logger.error(
                 f"Unexpected error during setup for {self.year}/{self.tag}: {e}", exc_info=True
             )
-            return 0, 1  # Indicate failure
+            return 0, 0, 1  # Indicate failure
 
 
 def parse_args():
@@ -539,7 +560,7 @@ def parse_args():
     parser.add_argument(
         "--output-root",
         type=str,
-        default=None,
+        default=None,  # Default to voc_root if not specified
         help=(
             "Path to the root directory for output labels. Defaults to --voc-root if not specified."
         ),
@@ -559,6 +580,19 @@ def parse_args():
             "Comma-separated list of ImageSet tags to process "
             "(from ImageSets/Segmentation, e.g., train,val,trainval)"
         ),
+    )
+    parser.add_argument(
+        "--sample-count",
+        type=int,
+        default=None,
+        help="(Optional) Randomly sample N images TOTAL across all specified splits. "
+        "If not set, processes all images.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for random sampling. Default: 42.",
     )
     return parser.parse_args()
 
@@ -603,6 +637,167 @@ def _determine_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional
     return voc_root, output_root
 
 
+def apply_sampling_across_splits(
+    all_image_ids_map: Dict[Tuple[str, str], List[str]],
+    sample_count: Optional[int],
+    total_ids_found: int,
+    seed: int,
+) -> Dict[Tuple[str, str], List[str]]:
+    """Apply random sampling across all collected image IDs if requested.
+
+    Args:
+        all_image_ids_map: Dictionary mapping (year, tag) tuples to lists of image IDs
+        sample_count: Number of samples to randomly select, or None to use all
+        total_ids_found: Total number of image IDs across all splits
+        seed: Random seed for sampling
+
+    Returns:
+        Dictionary mapping (year, tag) tuples to lists of sampled image IDs
+    """
+    if sample_count is not None and sample_count > 0:
+        if sample_count >= total_ids_found:
+            logger.info(
+                f"Sample count ({sample_count}) >= total images found ({total_ids_found}). "
+                f"Using all images."
+            )
+            return all_image_ids_map
+        else:
+            logger.info(
+                f"Sampling {sample_count} images randomly across all splits (Seed: {seed})."
+            )
+            # Create a flat list of (year, tag, image_id) tuples for sampling
+            flat_list = []
+            for (year, tag), ids in all_image_ids_map.items():
+                for img_id in ids:
+                    flat_list.append(((year, tag), img_id))
+
+            random.seed(seed)
+            sampled_list = random.sample(flat_list, sample_count)
+
+            # Reconstruct the map with only sampled IDs
+            final_image_ids_map = {}
+            for (year, tag), img_id in sampled_list:
+                split_key = (year, tag)
+                if split_key not in final_image_ids_map:
+                    final_image_ids_map[split_key] = []
+                final_image_ids_map[split_key].append(img_id)
+            return final_image_ids_map
+    else:
+        # No sampling requested or invalid sample count, use all found IDs
+        logger.info("No sampling requested or sample count is invalid/zero. Using all images.")
+        return all_image_ids_map
+
+
+def parse_comma_separated_args(args_str: str, arg_name: str) -> List[str]:
+    """Parse comma-separated arguments into a list of strings.
+
+    Args:
+        args_str: Comma-separated string to parse
+        arg_name: Name of the argument (for error messages)
+
+    Returns:
+        List of parsed values
+
+    Raises:
+        ValueError: If no valid values found
+    """
+    try:
+        values = [value.strip() for value in args_str.split(",") if value.strip()]
+        if not values:
+            raise ValueError(f"{arg_name} argument cannot be empty.")
+        return values
+    except Exception as e:
+        logger.error(f"Error parsing {arg_name} argument: {e}")
+        raise ValueError(f"Invalid {arg_name} format") from e
+
+
+def collect_image_ids(voc_root: Path, years: List[str], tags: List[str]) -> Tuple[Dict, int]:
+    """Collect all image IDs for the specified years and tags.
+
+    Args:
+        voc_root: Path to VOC dataset root
+        years: List of years to process
+        tags: List of tags to process
+
+    Returns:
+        Tuple of (image_ids_map, total_ids_found)
+    """
+    all_image_ids_map = {}
+    total_ids_found = 0
+
+    for year in years:
+        voc_year_path = get_voc_dir(voc_root, year)
+        for tag in tags:
+            split_key = (year, tag)
+            try:
+                # Get image IDs for this combination
+                imageset_file = get_image_set_path(voc_year_path, set_type="segment", tag=tag)
+                image_ids = read_image_ids(imageset_file)
+
+                if not image_ids:
+                    logger.warning(f"No image IDs found for {year}/{tag} in {imageset_file}")
+                    all_image_ids_map[split_key] = []
+                else:
+                    all_image_ids_map[split_key] = image_ids
+                    total_ids_found += len(image_ids)
+                    logger.debug(f"Found {len(image_ids)} IDs for {year}/{tag}")
+            except FileNotFoundError:
+                logger.warning(f"ImageSet file not found, skipping: {imageset_file}")
+                all_image_ids_map[split_key] = []
+            except Exception as e:
+                logger.error(f"Error reading ImageSet {imageset_file}: {e}")
+                all_image_ids_map[split_key] = []
+
+    return all_image_ids_map, total_ids_found
+
+
+def process_image_map(
+    voc_root: Path, output_root: Path, image_ids_map: Dict
+) -> Tuple[int, int, int]:
+    """Process all images in the ID map.
+
+    Args:
+        voc_root: Path to VOC dataset root
+        output_root: Path to output root
+        image_ids_map: Map of (year, tag) to list of image IDs
+
+    Returns:
+        Tuple of (total_success, total_skipped, total_fail)
+    """
+    total_success = 0
+    total_skipped = 0
+    total_fail = 0
+
+    for (year, tag), image_ids in image_ids_map.items():
+        if not image_ids:
+            continue
+        try:
+            # Instantiate and run converter for this specific combo
+            converter = VOC2YOLOConverter(
+                voc_root=voc_root,
+                output_root=output_root,
+                year=year,
+                tag=tag,
+                image_ids=image_ids,
+            )
+            s, sk, f = converter.convert()
+            total_success += s
+            total_skipped += sk
+            total_fail += f
+        except ValueError as e:
+            logger.error(f"Initialization error for {year}/{tag}: {e}")
+            # Failure count handled inside convert
+        except Exception as e:
+            logger.error(
+                f"An unexpected error occurred during conversion for {year}/{tag}: {e}",
+                exc_info=True,
+            )
+            # Increment fail count if an unexpected error occurs outside convert()
+            total_fail += 1
+
+    return total_success, total_skipped, total_fail
+
+
 def main():
     args = parse_args()
     # load_dotenv() # Already called globally
@@ -613,50 +808,40 @@ def main():
 
     # Parse comma-separated lists
     try:
-        years = [y.strip() for y in args.years.split(",") if y.strip()]
-        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-        if not years or not tags:
-            raise ValueError("Years and Tags arguments cannot be empty.")
-    except Exception as e:
-        logger.error(f"Error parsing --years or --tags argument: {e}")
+        years = parse_comma_separated_args(args.years, "years")
+        tags = parse_comma_separated_args(args.tags, "tags")
+    except ValueError as e:
+        logger.error(str(e))
         return
 
     logger.info("Starting VOC to YOLO segmentation conversion.")
     logger.info(f"Years to process: {years}")
     logger.info(f"Tags to process: {tags}")
 
-    total_success = 0
-    total_fail = 0
+    # --- Collect all image IDs --- #
+    try:
+        all_image_ids_map, total_ids_found = collect_image_ids(voc_root, years, tags)
+        if total_ids_found == 0:
+            logger.error("No image IDs found for any specified year/tag combination. Exiting.")
+            return
+    except Exception as e:
+        logger.error(f"Error collecting image IDs: {e}")
+        return
 
-    # Process each year and tag combination
-    for year in years:
-        for tag in tags:
-            try:
-                # Instantiate and run converter for this specific combo
-                converter = VOC2YOLOConverter(
-                    voc_root=voc_root,
-                    output_root=output_root,
-                    year=year,
-                    tag=tag,
-                )
-                s, f = converter.convert()
-                total_success += s
-                total_fail += f
-            except ValueError as e:
-                logger.error(f"Initialization error for {year}/{tag}: {e}")
-                # Decide how to count failures here, maybe increment total_fail?
-                # For now, just log and continue. Failure count handled inside convert.
-            except Exception as e:
-                logger.error(
-                    f"An unexpected error occurred during conversion for {year}/{tag}: {e}",
-                    exc_info=True,
-                )
-                # Increment fail count if an unexpected error occurs outside convert()
-                total_fail += 1  # Or estimate based on expected number of images?
+    # --- Apply Sampling (if requested) --- #
+    final_image_ids_map = apply_sampling_across_splits(
+        all_image_ids_map, args.sample_count, total_ids_found, args.seed
+    )
+
+    # --- Process Images --- #
+    total_success, total_skipped, total_fail = process_image_map(
+        voc_root, output_root, final_image_ids_map
+    )
 
     logger.info("\nConversion completed!")
     logger.info(f"Overall success count: {total_success}")
-    logger.info(f"Overall failed/skipped count: {total_fail}")
+    logger.info(f"Overall skipped count (files already exist): {total_skipped}")
+    logger.info(f"Overall failed/error count: {total_fail}")
 
 
 if __name__ == "__main__":

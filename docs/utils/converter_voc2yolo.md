@@ -111,32 +111,36 @@ python -m src.utils.data_converter.voc2yolo_detect_labels \
     --tags <TAGS> \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
-    [--skip-difficult]
+    [--sample-count N] \
+    [--seed <SEED>]
 ```
 
 - `--years`, `--tags`, `--voc-root`, `--output-root`: Similar to `voc2yolo_images.py`.
-- `--skip-difficult`: (Optional flag) If set, objects marked as 'difficult' in the XML will not be included in the output label files.
+- `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits. If not set, processes all images.
+- `--seed`: (Optional) Seed for random sampling (default: 42).
 
 ### Logic
 
 1.  Parses arguments.
 2.  Determines VOC root and output root paths.
-3.  Reads image IDs for the specified year/tag combinations (from `ImageSets/Main/<tag>.txt`).
-4.  For each image ID:
+3.  Parses comma-separated lists for years and tags.
+4.  Collects image IDs for each year/tag combination (from `ImageSets/Main/<tag>.txt`).
+5.  Optionally applies random sampling across all collected IDs if `--sample-count` is specified.
+6.  For each image ID:
     - Constructs the path to the corresponding XML file (`VOCdevkit/<YEAR>/Annotations/<id>.xml`).
     - Parses the XML using `parse_voc_xml` from `voc2yolo_utils` to get image dimensions and object list (`name`, `bbox`, `difficult`).
     - Constructs the output label file path using `get_output_detect_label_dir` from `voc2yolo_utils`: `<output_root>/detect/labels/<tag><year>/<id>.txt`.
     - Creates the output subdirectory if needed.
+    - Checks if output file already exists. If so, skips it and increments skipped count.
     - Initializes an empty list for label lines.
     - For each object extracted from the XML:
-        - If `--skip-difficult` is set and the object is difficult, continue to the next object.
         - Get the class name and look up its index using `VOC_CLASS_TO_ID`.
         - Get the bounding box `[xmin, ymin, xmax, ymax]`.
         - Convert the box coordinates to YOLO format (`center_x`, `center_y`, `width`, `height`) and normalize them using the image dimensions.
         - Format the YOLO label line: `<class_index> <cx_norm> <cy_norm> <w_norm> <h_norm>`.
         - Add the formatted line to the list.
     - Write all formatted label lines to the output `.txt` file.
-5.  Reports summary statistics.
+7.  Reports summary statistics including success, skipped (already existing), and failed counts.
 
 ### Input
 
@@ -161,25 +165,33 @@ To create `.txt` label files compatible with YOLO-based training and evaluation 
 ### Usage
 
 ```bash
-python -m src.utils.data_converter.voc2yolo_segment_labels \\
-    --years <YEARS> \\
-    --tags <TAGS> \\
-    [--voc-root /path/to/VOC] \\
-    [--output-root /path/to/output]
+python -m src.utils.data_converter.voc2yolo_segment_labels \
+    --years <YEARS> \
+    --tags <TAGS> \
+    [--voc-root /path/to/VOC] \
+    [--output-root /path/to/output] \
+    [--sample-count N] \
+    [--seed <SEED>]
 ```
 
 - `--years`, `--tags`, `--voc-root`, `--output-root`: Similar to `voc2yolo_detect_labels.py`.
+- `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits. If not set, processes all images.
+- `--seed`: (Optional) Seed for random sampling (default: 42).
 - ~`--skip-difficult`~: (Removed - Difficulty is not directly handled as class is from class mask).
 - ~`--iou-threshold`~: (Removed - Class matching uses class mask, not IoU with XML bbox).
 
 ### Logic
 
-This conversion relies on matching instance IDs from `SegmentationObject` masks with class IDs from `SegmentationClass` masks.
+This conversion relies on matching instance IDs from `SegmentationObject` masks with class IDs from `SegmentationClass` masks. The script has been refactored to improve modularity:
 
 1.  Parses arguments.
 2.  Determines paths.
-3.  Reads image IDs (using `ImageSets/Segmentation/<tag>.txt`).
-4.  For each image ID:
+3.  Parses comma-separated lists for years and tags.
+4.  Collects image IDs for each year/tag combination (from `ImageSets/Segmentation/<tag>.txt`).
+5.  Optionally applies random sampling across all collected IDs if `--sample-count` is specified.
+6.  Initializes a `VOC2YOLOConverter` for each year/tag combination.
+7.  For each image ID:
+    - Checks if output file already exists. If so, skips it and increments skipped count.
     - Constructs paths to instance mask (`SegmentationObject/<id>.png`) and class mask (`SegmentationClass/<id>.png`).
     - Loads the instance mask using PIL (to preserve palette indices).
     - Loads the class mask (e.g., using PIL or cv2).
@@ -203,7 +215,7 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
                 - Format the YOLO label line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`.
                 - Add the formatted line to the list.
     - Write all formatted label lines to the output `.txt` file using `get_output_segment_label_dir` from `voc2yolo_utils`: `<output_root>/segment/labels/<tag><year>/<id>.txt`.
-5.  Reports summary statistics.
+8.  Reports summary statistics including success, skipped (already existing), and failed counts.
 
 ### Input
 
