@@ -30,6 +30,13 @@ SEGMENTATION_DIR = "Segmentation"
 OUTPUT_IMAGES_DIR = "images"
 OUTPUT_LABELS_DETECT_DIR = "labels_detect"
 OUTPUT_LABELS_SEGMENT_DIR = "labels_segment"
+VOCDEVKIT_DIR = "VOCdevkit"
+
+# Project-specific output directory structure (relative to output_root)
+OUTPUT_DETECT_DIR_NAME = "detect"
+OUTPUT_SEGMENT_DIR_NAME = "segment"
+OUTPUT_IMAGES_SUBDIR = "images"
+OUTPUT_LABELS_SUBDIR = "labels"
 
 # --- VOC Classes ---
 VOC_CLASSES = [
@@ -80,9 +87,10 @@ def parse_voc_xml(
         xml_path: Path to the XML annotation file.
 
     Returns:
-        Tuple: (List of object dictionaries, (image_width, image_height)) or (None, None) if parsing fails.
+        Tuple: (List of object dictionaries, (image_width, image_height)) or (None, None)
+               if parsing fails.
                Object dictionary keys: 'name', 'bbox' ([xmin, ymin, xmax, ymax] absolute coords),
-                                     'difficult' (int, 0 or 1).
+               'difficult' (int, 0 or 1).
                Only includes objects whose class is in VOC_CLASSES.
     """
     try:
@@ -148,7 +156,8 @@ def parse_voc_xml(
                 raise ValueError("Invalid bbox coordinates relative to image size")
         except (ValueError, TypeError, AttributeError) as e:
             logger.warning(
-                f"Skipping object '{cls_name}' with invalid/missing bbox coordinates in {xml_path}: {e}"
+                f"Skipping object '{cls_name}' with invalid/missing bbox coordinates in "
+                f"{xml_path}: {e}"
             )
             continue
 
@@ -158,12 +167,14 @@ def parse_voc_xml(
             difficult = int(difficult_text)
             if difficult not in [0, 1]:
                 logger.warning(
-                    f"Invalid difficult flag '{difficult_text}' for object '{cls_name}' in {xml_path}. Assuming 0."
+                    f"Invalid difficult flag '{difficult_text}' for object '{cls_name}' in "
+                    f"{xml_path}. Assuming 0."
                 )
                 difficult = 0
         except ValueError:
             logger.warning(
-                f"Non-integer difficult flag '{difficult_text}' for object '{cls_name}' in {xml_path}. Assuming 0."
+                f"Non-integer difficult flag '{difficult_text}' for object '{cls_name}' in "
+                f"{xml_path}. Assuming 0."
             )
             difficult = 0
 
@@ -191,7 +202,8 @@ def get_image_set_path(voc_dir: Path, set_type: str, tag: str) -> Path:
 
     Args:
         voc_dir: Path to the specific VOC year directory (e.g., /path/to/VOCdevkit/VOC2012).
-        set_type: The type of image set ('detect' or 'segment'). Corresponds to subdirs 'Main' or 'Segmentation'.
+        set_type: The type of image set ('detect' or 'segment'). Corresponds to subdirs
+                 'Main' or 'Segmentation'.
         tag: The dataset tag (e.g., 'train', 'val', 'test').
 
     Returns:
@@ -247,19 +259,58 @@ def get_segm_cls_mask_path(voc_dir: Path, image_id: str) -> Path:
     return voc_dir / SEGMENTATION_CLASS_DIR / f"{image_id}.png"
 
 
-def get_output_image_dir(output_root: Path, year: str, tag: str) -> Path:
-    """Get the output directory path for images for a given year and tag."""
-    return output_root / OUTPUT_IMAGES_DIR / f"{tag}{year}"
+def get_output_image_dir(output_root: Path, task_type: str, year: str, tag: str) -> Path:
+    """Get the output directory path for images for a given task, year and tag.
+
+    Args:
+        output_root: The root directory for the processed dataset structure.
+        task_type: The task type ('detect' or 'segment').
+        year: The dataset year (e.g., '2007', '2012').
+        tag: The dataset tag (e.g., 'train', 'val', 'test').
+
+    Returns:
+        Path to the output image directory (e.g., <output_root>/detect/images/train2007).
+
+    Raises:
+        ValueError: If task_type is invalid.
+    """
+    if task_type not in ["detect", "segment"]:
+        raise ValueError(f"Invalid task_type '{task_type}'. Must be 'detect' or 'segment'.")
+    # Use OUTPUT_IMAGES_SUBDIR constant for consistency
+    return output_root / task_type / OUTPUT_IMAGES_SUBDIR / f"{tag}{year}"
 
 
 def get_output_detect_label_dir(output_root: Path, year: str, tag: str) -> Path:
-    """Get the output directory path for detection labels for a given year and tag."""
-    return output_root / OUTPUT_LABELS_DETECT_DIR / f"{tag}{year}"
+    """Get the output directory path for detection labels for a given year and tag.
+
+    Matches the structure defined in docs/dataset/voc/README.md.
+
+    Args:
+        output_root: The root directory for the processed dataset structure.
+        year: The dataset year (e.g., '2007', '2012').
+        tag: The dataset tag (e.g., 'train', 'val', 'test').
+
+    Returns:
+        Path to the output detection label directory (e.g., <output_root>/detect/labels/train2007).
+    """
+    # Use constants for consistency
+    return output_root / OUTPUT_DETECT_DIR_NAME / OUTPUT_LABELS_SUBDIR / f"{tag}{year}"
 
 
 def get_output_segment_label_dir(output_root: Path, year: str, tag: str) -> Path:
-    """Get the output directory path for segmentation labels for a given year and tag."""
-    return output_root / OUTPUT_LABELS_SEGMENT_DIR / f"{tag}{year}"
+    """Get the output directory path for segmentation labels for a given year and tag.
+
+    Args:
+        output_root: Path to the root directory where processed data will be saved.
+        year: The dataset year (e.g., '2007').
+        tag: The dataset tag (e.g., 'train', 'val').
+
+    Returns:
+        Path to the output segmentation label directory
+        (e.g., <output_root>/segment/labels/train2007).
+    """
+    # Use constants for consistency
+    return output_root / OUTPUT_SEGMENT_DIR_NAME / OUTPUT_LABELS_SUBDIR / f"{tag}{year}"
 
 
 # --- Image Set Reading Utilities ---
@@ -277,39 +328,43 @@ def read_image_ids(
         seed (Optional[int], optional): Random seed for sampling. Defaults to 42.
 
     Returns:
-        List[str]: List of image IDs (potentially sampled).
-
-    Raises:
-        FileNotFoundError: If the imageset_path does not exist.
-        IOError: If the file cannot be read.
+        List of image IDs (strings).
     """
-    if not imageset_path.exists():
-        raise FileNotFoundError(f"ImageSet file not found: {imageset_path}")
-
+    read_ids_list = []
     try:
-        with open(imageset_path, "r") as f:
-            # Reads lines, strips whitespace, takes first element if line has multiple cols
-            # (some VOC sets have a second column like -1 or 1)
-            all_ids = [line.strip().split()[0] for line in f if line.strip()]
-    except IOError as e:
-        logger.error(f"Could not read ImageSet file {imageset_path}: {e}")
-        raise  # Re-raise the exception
+        with open(imageset_path, "r", encoding="utf-8") as f:
+            # Use explicit loop for clarity and robustness
+            for line in f:
+                stripped_line = line.strip()
+                if stripped_line:
+                    parts = stripped_line.split()
+                    if parts:
+                        read_ids_list.append(parts[0])
+    except FileNotFoundError as err:
+        logger.error(f"ImageSet file not found: {imageset_path}")
+        raise FileNotFoundError(f"ImageSet file not found: {imageset_path}") from err
+    except Exception as e:
+        logger.error(f"Error reading ImageSet file {imageset_path}: {e}")
+        read_ids_list = []
 
-    if not all_ids:
-        logger.warning(f"No image IDs found in {imageset_path}.")
+    # Handle sampling logic *after* reading all IDs
+    if not read_ids_list:
+        logger.warning(f"No image IDs found or read from {imageset_path}.")
         return []
 
     if num_samples is not None and num_samples > 0:
-        if num_samples >= len(all_ids):
+        if num_samples >= len(read_ids_list):
             logger.info(
-                f"Requested sample size ({num_samples}) >= total IDs ({len(all_ids)}). Returning all IDs."
+                f"Requested sample size ({num_samples}) >= total IDs ({len(read_ids_list)}). "
+                f"Returning all IDs."
             )
-            return all_ids
+            return read_ids_list
         else:
             if seed is not None:
                 random.seed(seed)
-            sampled_ids = random.sample(all_ids, num_samples)
+            sampled_ids = random.sample(read_ids_list, num_samples)
             logger.info(f"Sampled {len(sampled_ids)} IDs from {imageset_path} (seed={seed}).")
             return sampled_ids
     else:
-        return all_ids
+        # Return all IDs if no sampling requested
+        return read_ids_list
