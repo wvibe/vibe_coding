@@ -44,13 +44,13 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--year",
+        "--years",
         type=str,
         required=True,
         help="Comma-separated list of dataset years (e.g., '2007', '2007,2012').",
     )
     parser.add_argument(
-        "--tag",
+        "--tags",
         type=str,
         required=True,
         help="Comma-separated list of dataset tags (e.g., 'train', 'val', 'train,val').",
@@ -192,8 +192,8 @@ def get_target_image_list(
 ) -> List[Tuple[str, str, str]]:
     """Determines the list of (image_id, year, tag) tuples to process."""
     ids_to_process = []
-    years = [y.strip() for y in args.year.split(",") if y.strip()]
-    tags = [t.strip() for t in args.tag.split(",") if t.strip()]
+    years = [y.strip() for y in args.years.split(",") if y.strip()]
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
     if not years or not tags:
         logger.error("No valid years or tags provided.")

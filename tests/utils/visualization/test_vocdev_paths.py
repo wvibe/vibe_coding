@@ -36,8 +36,8 @@ class TestVocdevPathSetup(unittest.TestCase):
             output_root=None,
             output_subdir="visual_test",
             image_id=None,  # Ensure image_id is None for batch tests
-            year="2007",
-            tag="train",  # Add default year/tag for convenience
+            years="2007",
+            tags="train",  # Add default year/tag for convenience
         )
 
     def _run_path_setup_test(
@@ -307,12 +307,12 @@ class TestVocdevPathSetup(unittest.TestCase):
     def test_detect_single_image_checks_annotation_path(self, mock_exists):
         # Arrange
         mock_exists.return_value = True
-        args = Namespace(year="2007", tag="train", image_id="000123", sample_count=-1)
+        args = Namespace(years="2007", tags="train", image_id="000123", sample_count=-1)
         base_voc_root = Path("/base/voc_detect")
         voc_devkit_dir = base_voc_root / "VOCdevkit"
 
         # Calculate the expected paths *without* mocking the get_* functions
-        expected_year_voc_dir = voc2yolo_utils.get_voc_dir(base_voc_root, args.year)
+        expected_year_voc_dir = voc2yolo_utils.get_voc_dir(base_voc_root, args.years)
         expected_img_path = voc2yolo_utils.get_image_path(expected_year_voc_dir, args.image_id)
         expected_anno_path = voc2yolo_utils.get_annotation_path(
             expected_year_voc_dir, args.image_id
@@ -336,12 +336,12 @@ class TestVocdevPathSetup(unittest.TestCase):
     def test_segment_single_image_checks_mask_path(self, mock_exists):
         # Arrange
         mock_exists.return_value = True
-        args = Namespace(year="2012", tag="val", image_id="000456", sample_count=-1)
+        args = Namespace(years="2012", tags="val", image_id="000456", sample_count=-1)
         base_voc_root = Path("/base/voc_segment")
         voc_devkit_dir = base_voc_root / "VOCdevkit"
 
         # Calculate the expected paths
-        expected_year_voc_dir = voc2yolo_utils.get_voc_dir(base_voc_root, args.year)
+        expected_year_voc_dir = voc2yolo_utils.get_voc_dir(base_voc_root, args.years)
         expected_img_path = voc2yolo_utils.get_image_path(expected_year_voc_dir, args.image_id)
         expected_mask_path = voc2yolo_utils.get_segm_inst_mask_path(
             expected_year_voc_dir, args.image_id

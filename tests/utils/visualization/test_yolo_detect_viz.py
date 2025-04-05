@@ -11,26 +11,26 @@ class TestYoloDetectVizPaths(unittest.TestCase):
     def setUp(self):
         """Set up common test variables."""
         self.mock_args = argparse.Namespace(
-            year="2012",
-            tag="val",
+            years="2012",
+            tags="val",
             image_id=None,
             sample_count=-1,
             voc_root="/fake/voc/root",
             output_root=None,  # Test default output root
-            output_subdir="visual_detect",
+            output_subdir="detect/visual",
             percentiles=None,
             seed=42,
         )
         self.base_voc_root = Path("/fake/voc/root")
-        self.output_base_dir = self.base_voc_root / "visual_detect"  # Default output
+        self.output_base_dir = self.base_voc_root / "detect" / "visual"  # Default output
         self.tag_year = "val2012"
-        self.image_dir = self.base_voc_root / "images" / self.tag_year
-        self.label_dir = self.base_voc_root / "labels_detect" / self.tag_year
+        self.image_dir = self.base_voc_root / "detect" / "images" / self.tag_year
+        self.label_dir = self.base_voc_root / "detect" / "labels" / self.tag_year
 
     @patch("pathlib.Path.is_dir")
     def test_setup_paths_default_output(self, mock_is_dir):
         """Test _setup_paths uses voc_root as output_root by default."""
-        mock_is_dir.return_value = True  # Simulate images/ and labels_detect/ dirs exist
+        mock_is_dir.return_value = True  # Simulate detect/images/ and detect/labels/ dirs exist
         voc_root_env = str(self.base_voc_root)
 
         with patch("pathlib.Path.mkdir") as mock_mkdir:
@@ -49,7 +49,7 @@ class TestYoloDetectVizPaths(unittest.TestCase):
         mock_is_dir.return_value = True
         custom_output = "/fake/output"
         self.mock_args.output_root = custom_output
-        expected_output_dir = Path(custom_output) / self.mock_args.output_subdir
+        expected_output_dir = Path(custom_output) / "detect" / "visual"
 
         with patch("pathlib.Path.mkdir") as mock_mkdir:
             base_root, output_root, output_dir = yolo_detect_viz._setup_paths(
@@ -212,18 +212,18 @@ class TestYoloDetectVizPaths(unittest.TestCase):
             year=year,
             tag=tag,
             voc_root=self.base_voc_root,
-            output_dir=self.output_base_dir,  # Pass <output_root>/visual_detect
+            output_dir=self.output_base_dir,  # Pass <output_root>/detect/visual
             class_names=[],
             do_save=True,
             do_display=False,
         )
 
         # Check image read path
-        expected_image_path = self.base_voc_root / "images" / tag_year / f"{image_id}.jpg"
+        expected_image_path = self.base_voc_root / "detect" / "images" / tag_year / f"{image_id}.jpg"
         mock_imread.assert_called_once_with(str(expected_image_path))
 
         # Check label parse path
-        expected_label_path = self.base_voc_root / "labels_detect" / tag_year / f"{image_id}.txt"
+        expected_label_path = self.base_voc_root / "detect" / "labels" / tag_year / f"{image_id}.txt"
         mock_parse.assert_called_once()
         call_args, _ = mock_parse.call_args
         self.assertEqual(call_args[0], expected_label_path)
