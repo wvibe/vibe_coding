@@ -38,52 +38,60 @@ To centralize common logic for:
 
 ## `voc2yolo_images.py` - Image Copying Script
 
-This script copies the original JPEG images from the `VOCdevkit` structure into the project's standardized `images/` directory.
+This script copies the original JPEG images from the `VOCdevkit` structure into the project's standardized `detect/images/` or `segment/images/` directories based on task type.
 
 ### Purpose
 
-To gather all necessary images (e.g., for train/val splits across different years) into a single top-level directory structure (`images/<tag><year>/`) expected by training frameworks like Ultralytics and the project's visualization tools.
+To gather all necessary images (e.g., for train/val splits across different years) for either a **detection** or **segmentation** task into the task-specific directory structure (`<output_root>/<task_type>/images/<tag><year>/`) expected by training frameworks and the project structure defined in `docs/dataset/voc/README.md`.
 
 ### Usage
 
 ```bash
+# Corrected usage example with -m
 python -m src.utils.data_converter.voc2yolo_images \
     --years <YEARS> \
     --tags <TAGS> \
+    --task-type <detect|segment> \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
-    [--sample-count N]
+    [--sample-count N] \
+    [--seed <SEED>]
 ```
 
 - `--years`: Comma-separated years (e.g., `2007,2012`).
-- `--tags`: Comma-separated tags (e.g., `train,val`). Uses `ImageSets/Main/<tag>.txt` to determine which images belong to the split.
-- `--voc-root`: Path to VOC dataset root (contains `VOCdevkit`). Defaults to `$VOC_ROOT`.
-- `--output-root`: Root for saving the `images/` structure. Defaults to `--voc-root`.
-- `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits.
+- `--tags`: Comma-separated tags (e.g., `train,val`).
+- `--task-type`: **Required.** Specify `'detect'` or `'segment'`. This determines:
+    - Which ImageSet list to read (`ImageSets/Main/` for `detect`, `ImageSets/Segmentation/` for `segment`).
+    - The output directory structure (`<output_root>/detect/images/...` or `<output_root>/segment/images/...`).
+- `--voc-root`: Path to VOC dataset root (contains `VOCdevkit`). Defaults to `$VOC_ROOT` environment variable or `./datasets/VOC`.
+- `--output-root`: Root for saving the processed structure (`detect/`, `segment/`). Defaults to `--voc-root`.
+- `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits. If not set, copies all images.
+- `--seed`: (Optional) Seed for random sampling (default: 42).
 
 ### Logic
 
-1.  Parses arguments.
+1.  Parses arguments, including the new `--task-type`.
 2.  Determines VOC root and output root paths.
-3.  Reads image IDs for the specified year/tag combinations using `read_image_ids` from `voc2yolo_utils` (reading from `ImageSets/Main/<tag>.txt`).
+3.  Reads image IDs for the specified year/tag combinations using `read_image_ids` from `voc2yolo_utils`, passing the `task_type` to `get_image_set_path` to ensure the correct `ImageSets/` subdirectory (`Main` or `Segmentation`) is used.
 4.  Optionally applies random sampling across the collected IDs.
 5.  For each selected image ID:
     - Constructs the source path (`VOCdevkit/<YEAR>/JPEGImages/<id>.jpg`).
-    - Constructs the destination path (`<output_root>/images/<tag><year>/<id>.jpg`).
-    - Creates the destination subdirectory (`<output_root>/images/<tag><year>/`) if needed.
-    - Checks if the destination file already exists. If so, skips it and increments a counter.
-    - If the destination doesn't exist, copies the image using `shutil.copy2` (preserves metadata).
+    - Constructs the destination path using `get_output_image_dir` from `voc2yolo_utils`, passing the `task_type` to get the correct path: `<output_root>/<task_type>/images/<tag><year>/<id>.jpg`.
+    - Creates the destination subdirectory (`<output_root>/<task_type>/images/<tag><year>/`) if needed.
+    - Checks if the destination file already exists. If so, skips it.
+    - If the destination doesn't exist, copies the image using `shutil.copy2`.
     - Tracks success, skip, and failure counts.
-6.  Reports summary statistics (copied, skipped, failed).
+6.  Reports summary statistics.
 
 ### Input
 
 - `VOCdevkit/<YEAR>/JPEGImages/` (Source images)
-- `VOCdevkit/<YEAR>/ImageSets/Main/<tag>.txt` (Lists of image IDs for detection splits)
+- `VOCdevkit/<YEAR>/ImageSets/Main/<tag>.txt` (if `task_type='detect'`)
+- `VOCdevkit/<YEAR>/ImageSets/Segmentation/<tag>.txt` (if `task_type='segment'`)
 
 ### Output
 
-- Creates images in `<output_root>/images/<tag><year>/` (e.g., `images/train2007/`, `images/val2012/`)
+- Creates images in `<output_root>/<task_type>/images/<tag><year>/` (e.g., `detect/images/train2007/`, `segment/images/val2012/`)
 
 ---
 
@@ -117,7 +125,7 @@ python -m src.utils.data_converter.voc2yolo_detect_labels \
 4.  For each image ID:
     - Constructs the path to the corresponding XML file (`VOCdevkit/<YEAR>/Annotations/<id>.xml`).
     - Parses the XML using `parse_voc_xml` from `voc2yolo_utils` to get image dimensions and object list (`name`, `bbox`, `difficult`).
-    - Constructs the output label file path (`<output_root>/labels_detect/<tag><year>/<id>.txt`).
+    - Constructs the output label file path using `get_output_detect_label_dir` from `voc2yolo_utils`: `<output_root>/detect/labels/<tag><year>/<id>.txt`.
     - Creates the output subdirectory if needed.
     - Initializes an empty list for label lines.
     - For each object extracted from the XML:
@@ -137,7 +145,7 @@ python -m src.utils.data_converter.voc2yolo_detect_labels \
 
 ### Output
 
-- Creates label files in `<output_root>/labels_detect/<tag><year>/` (e.g., `labels_detect/train2007/000001.txt`)
+- Creates label files in `<output_root>/detect/labels/<tag><year>/` (e.g., `detect/labels/train2007/000001.txt`)
 - Format: One object per line: `<class_index> <cx_norm> <cy_norm> <w_norm> <h_norm>` (space-separated, normalized coordinates).
 
 ---
@@ -194,7 +202,7 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
                 - Normalize the polygon coordinates using image dimensions (obtained implicitly from mask shape).
                 - Format the YOLO label line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`.
                 - Add the formatted line to the list.
-    - Write all formatted label lines to the output `.txt` file (`<output_root>/labels_segment/<tag><year>/<id>.txt`).
+    - Write all formatted label lines to the output `.txt` file using `get_output_segment_label_dir` from `voc2yolo_utils`: `<output_root>/segment/labels/<tag><year>/<id>.txt`.
 5.  Reports summary statistics.
 
 ### Input
@@ -206,5 +214,5 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
 
 ### Output
 
-- Creates label files in `<output_root>/labels_segment/<tag><year>/`
+- Creates label files in `<output_root>/segment/labels/<tag><year>/`
 - Format: One object instance per line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...` (space-separated, normalized coordinates).
