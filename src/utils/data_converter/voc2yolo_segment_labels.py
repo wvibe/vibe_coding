@@ -14,7 +14,9 @@ Usage:
         --years 2007,2012 \\
         --tags train,val \\
         [--sample-count 100] \\
-        [--seed 42]
+        [--seed 42] \\
+        [--connect-parts] \\
+        [--min-contour-area 1.0]
 """
 
 import argparse
@@ -22,7 +24,7 @@ import logging
 import os
 import random
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -68,6 +70,8 @@ class VOC2YOLOConverter:
         year: str,
         tag: str,
         image_ids: Optional[List[str]] = None,
+        connect_parts: bool = False,
+        min_contour_area: float = MIN_CONTOUR_AREA,
     ):
         """
         Initialize the converter.
@@ -79,12 +83,16 @@ class VOC2YOLOConverter:
             tag: ImageSet tag to process (e.g., 'train').
             image_ids: Optional list of specific image IDs to process.
                 If None, reads from ImageSet file.
+            connect_parts: Whether to connect disconnected parts into a single polygon.
+            min_contour_area: Minimum contour area to consider for polygon conversion.
         """
         self.voc_root = voc_root
         self.output_root = output_root
         self.year = year
         self.tag = tag
         self.image_ids = image_ids
+        self.connect_parts = connect_parts
+        self.min_contour_area = min_contour_area
 
         # Use utility functions to get paths
         self.voc_year_path = get_voc_dir(self.voc_root, self.year)
@@ -140,6 +148,158 @@ class VOC2YOLOConverter:
 
         return instance_masks
 
+    def _connect_disconnected_parts(
+        self, contours: List[np.ndarray], img_shape: Tuple[int, int]
+    ) -> List[float]:
+        """
+        Connect disconnected parts of the same instance into a single complex polygon.
+
+        Args:
+            contours: List of contours (each contour is an array of points)
+            img_shape: Image shape (height, width)
+
+        Returns:
+            A single list of normalized coordinates [x1, y1, x2, y2, ...]
+        """
+        if not contours:
+            return []
+
+        h, w = img_shape
+        if w <= 0 or h <= 0:
+            logger.warning("Cannot normalize polygons for zero-dimension mask.")
+            return []
+
+        # Filter contours by area
+        filtered_contours = []
+        for contour in contours:
+            if cv2.contourArea(contour) >= self.min_contour_area:
+                # Approximate the contour to simplify
+                epsilon = POLYGON_APPROX_TOLERANCE * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                if len(approx) >= 3:  # Need at least 3 points
+                    filtered_contours.append(approx)
+
+        if not filtered_contours:
+            return []
+
+        # Only one contour, no need to connect
+        if len(filtered_contours) == 1:
+            contour = filtered_contours[0]
+            # Normalize coordinates
+            normalized_polygon = []
+            for point in contour.reshape(-1, 2):
+                px, py = point
+                norm_x = np.clip(px / w, 0.0, 1.0)
+                norm_y = np.clip(py / h, 0.0, 1.0)
+                normalized_polygon.extend([norm_x, norm_y])
+            return normalized_polygon
+
+        # Multiple contours need to be connected
+        # We'll compute centroids and connect contours optimally
+        centroids = []
+        for contour in filtered_contours:
+            M = cv2.moments(contour)
+            if M["m00"] != 0:  # Avoid division by zero
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                centroids.append((cx, cy))
+            else:
+                # Fallback - use mean of points
+                points = contour.reshape(-1, 2)
+                cx, cy = np.mean(points, axis=0)
+                centroids.append((int(cx), int(cy)))
+
+        # Start with the leftmost contour
+        leftmost_idx = np.argmin([c[0] for c in centroids])
+        ordered_indices = [leftmost_idx]
+        remaining_indices = set(range(len(filtered_contours)))
+        remaining_indices.remove(leftmost_idx)
+
+        # Greedy algorithm to connect nearest contours
+        current_idx = leftmost_idx
+        while remaining_indices:
+            min_dist = float("inf")
+            nearest_idx = None
+
+            for idx in remaining_indices:
+                # Distance between centroids
+                dist = np.sqrt(
+                    (centroids[idx][0] - centroids[current_idx][0]) ** 2
+                    + (centroids[idx][1] - centroids[current_idx][1]) ** 2
+                )
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_idx = idx
+
+            if nearest_idx is not None:
+                ordered_indices.append(nearest_idx)
+                remaining_indices.remove(nearest_idx)
+                current_idx = nearest_idx
+
+        # Now we have an ordering of contours, let's create the complex polygon
+        complex_polygon = []
+
+        for i, idx in enumerate(ordered_indices):
+            contour = filtered_contours[idx]
+
+            # Find closest points between consecutive contours to minimize crossing
+            if i > 0:
+                prev_contour = filtered_contours[ordered_indices[i - 1]]
+                prev_points = prev_contour.reshape(-1, 2)
+                curr_points = contour.reshape(-1, 2)
+
+                # Find closest points between current and previous contours
+                min_dist = float("inf")
+                prev_closest_idx = 0
+                curr_closest_idx = 0
+
+                for p_idx, prev_pt in enumerate(prev_points):
+                    for c_idx, curr_pt in enumerate(curr_points):
+                        dist = np.sqrt(np.sum((prev_pt - curr_pt) ** 2))
+                        if dist < min_dist:
+                            min_dist = dist
+                            prev_closest_idx = p_idx
+                            curr_closest_idx = c_idx
+
+                # Rearrange current contour to start from closest point
+                curr_points = np.roll(curr_points, -curr_closest_idx, axis=0)
+
+                # Connect with a line from end of previous to start of current
+                # Add previous contour's closest point again (to "close" it)
+                prev_closest_pt = prev_points[prev_closest_idx]
+                px, py = prev_closest_pt
+                norm_x = np.clip(px / w, 0.0, 1.0)
+                norm_y = np.clip(py / h, 0.0, 1.0)
+                complex_polygon.extend([norm_x, norm_y])
+
+                # Add all points of current contour
+                for point in curr_points:
+                    px, py = point
+                    norm_x = np.clip(px / w, 0.0, 1.0)
+                    norm_y = np.clip(py / h, 0.0, 1.0)
+                    complex_polygon.extend([norm_x, norm_y])
+            else:
+                # First contour - add all points
+                for point in contour.reshape(-1, 2):
+                    px, py = point
+                    norm_x = np.clip(px / w, 0.0, 1.0)
+                    norm_y = np.clip(py / h, 0.0, 1.0)
+                    complex_polygon.extend([norm_x, norm_y])
+
+        # Connect back to starting point if needed
+        if (
+            len(complex_polygon) >= 2
+            and complex_polygon[0] != complex_polygon[-2]
+            and complex_polygon[1] != complex_polygon[-1]
+        ):
+            complex_polygon.extend([complex_polygon[0], complex_polygon[1]])
+
+        # Ensure we have at least 3 points (6 coordinates)
+        if len(complex_polygon) < 6:
+            return []
+
+        return complex_polygon
+
     def _mask_to_polygons(
         self, binary_mask: np.ndarray, tolerance: float = POLYGON_APPROX_TOLERANCE
     ) -> List[List[float]]:
@@ -154,12 +314,12 @@ class VOC2YOLOConverter:
             List of polygons, where each polygon is a flat list of normalized [x1, y1, x2, y2, ...].
             Returns empty list if no valid contours/polygons are found.
         """
-        polygons = []
+        # Find contours in the binary mask
         contours, hierarchy = cv2.findContours(
             binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
-        if hierarchy is None:  # Handle cases with no contours
+        if hierarchy is None or len(contours) == 0:  # Handle cases with no contours
             return []
 
         h, w = binary_mask.shape[:2]
@@ -167,9 +327,17 @@ class VOC2YOLOConverter:
             logger.warning("Cannot normalize polygons for zero-dimension mask.")
             return []
 
-        for contour in contours:  # Removed unused 'i' variable
+        # If connect_parts is enabled and we have multiple contours, connect them
+        if self.connect_parts and len(contours) > 1:
+            logger.debug(f"Connecting {len(contours)} disconnected parts")
+            connected_polygon = self._connect_disconnected_parts(contours, (h, w))
+            return [connected_polygon] if connected_polygon else []
+
+        # Original approach for separate polygons
+        polygons = []
+        for contour in contours:
             # Check if contour is likely significant using defined constant
-            if cv2.contourArea(contour) < MIN_CONTOUR_AREA:
+            if cv2.contourArea(contour) < self.min_contour_area:
                 continue
 
             # Approximate contour using tolerance argument (defaults to constant)
@@ -352,7 +520,7 @@ class VOC2YOLOConverter:
             output_lines.append(f"{class_id} {poly_str}")
         return output_lines
 
-    def _process_segmentation_file(self, img_id: str) -> bool:
+    def _process_segmentation_file(self, img_id: str) -> Union[bool, str, Tuple[bool, int, int]]:
         """
         Process a single image's segmentation mask and XML to generate YOLO label file.
         Writes output directly to the class instance's output_segment_dir.
@@ -361,7 +529,10 @@ class VOC2YOLOConverter:
             img_id: The image identifier (filename without extension).
 
         Returns:
-            bool: True if processing was successful, False otherwise.
+            Union[bool, str, Tuple[bool, int, int]]:
+                - "skipped" if the file already exists
+                - False if processing failed
+                - (True, instance_count, polygon_count) if successful
         """
         # Construct paths using self.voc_year_path and utilities
         mask_path = get_segm_inst_mask_path(self.voc_year_path, img_id)
@@ -370,12 +541,12 @@ class VOC2YOLOConverter:
         # Check if output file already exists
         output_path = self.output_segment_dir / f"{img_id}.txt"
         if output_path.exists():
-            return "skipped"  # Return "skipped" instead of False to indicate file exists
+            return "skipped", 0, 0  # Return "skipped" instead of False to indicate file exists
 
         # 1. Check if mask exists
         if not mask_path.exists():
             logger.info(f"Segmentation mask not found: {mask_path}, skipping image {img_id}.")
-            return False
+            return False, 0, 0
 
         # 2. Load class mask
         try:
@@ -387,23 +558,35 @@ class VOC2YOLOConverter:
                 f"Failed to load class segmentation mask with PIL: {class_mask_path}. "
                 f"Error: {e}. Class names may be 'Unknown'."
             )
-            return False
+            return False, 0, 0
 
         # 3. Read mask and extract instances
         instance_masks = self._get_mask_instances(mask_path)
         if instance_masks is None:
             logger.warning(f"Skipping image {img_id} due to mask reading error.")
-            return False
+            return False, 0, 0
 
         if not instance_masks:
             logger.info(f"No instances found in mask {mask_path} for {img_id}.")
-            return False
+            return False, 0, 0
+
+        # Track the number of unique instance IDs
+        instance_count = len(instance_masks)
+        polygon_count = 0
 
         # 4. Process each instance
         output_lines = []
         for instance_id, binary_mask in instance_masks.items():
             instance_lines = self._process_instance(instance_id, binary_mask, class_mask, img_id)
             if instance_lines:
+                # Count the number of polygons generated for this instance
+                polygons_for_instance = len(instance_lines)
+                if polygons_for_instance > 1 and not self.connect_parts:
+                    logger.info(
+                        f"Instance {instance_id} in {img_id} generated {polygons_for_instance} separate polygons"
+                    )
+
+                polygon_count += polygons_for_instance
                 output_lines.extend(instance_lines)
 
         # 5. Write output file
@@ -412,13 +595,18 @@ class VOC2YOLOConverter:
                 with open(output_path, "w") as f:
                     f.write("\n".join(output_lines) + "\n")
                 logger.debug(f"Successfully wrote {len(output_lines)} lines for {img_id}.")
-                return True
+                # Only log if there's a mismatch between instance count and polygon count
+                if polygon_count != instance_count:
+                    logger.info(
+                        f"Image {img_id}: {instance_count} unique instances generated {polygon_count} polygon lines"
+                    )
+                return True, instance_count, polygon_count
             except IOError as e:
                 logger.error(f"Failed to write output file {output_path}: {e}")
-                return False
+                return False, 0, 0
         else:
             logger.info(f"No valid instances processed/matched for {img_id}, no output written.")
-            return False
+            return False, 0, 0
 
     def _validate_directories(self) -> bool:
         """Validate required directories exist."""
@@ -476,11 +664,18 @@ class VOC2YOLOConverter:
         success_count = 0
         skipped_count = 0
         fail_count = 0
+        # Add tracking for instance vs polygon counts
+        total_instances = 0
+        total_polygons = 0
+
         for img_id in tqdm(img_ids, desc=f"Converting {self.year}/{self.tag}"):
             try:
-                result = self._process_segmentation_file(img_id)
+                result, instance_count, polygon_count = self._process_segmentation_file(img_id)
                 if result is True:
                     success_count += 1
+                    # Add the counts from this image to the totals
+                    total_instances += instance_count
+                    total_polygons += polygon_count
                 elif result == "skipped":
                     skipped_count += 1
                 else:
@@ -491,6 +686,15 @@ class VOC2YOLOConverter:
                     exc_info=True,
                 )
                 fail_count += 1
+
+        logger.info(
+            f"Total unique instances: {total_instances}, Total output polygons: {total_polygons}"
+        )
+        if total_polygons > total_instances:
+            logger.warning(
+                f"Found {total_polygons - total_instances} additional polygons than instances, likely due to disconnected regions in masks"
+            )
+
         return success_count, skipped_count, fail_count
 
     def convert(self) -> Tuple[int, int, int]:
@@ -593,6 +797,17 @@ def parse_args():
         type=int,
         default=42,
         help="Seed for random sampling. Default: 42.",
+    )
+    parser.add_argument(
+        "--connect-parts",
+        action="store_true",
+        help="Connect disconnected parts of the same instance into a single polygon with straight lines",
+    )
+    parser.add_argument(
+        "--min-contour-area",
+        type=float,
+        default=MIN_CONTOUR_AREA,
+        help=f"Minimum contour area to consider for polygon conversion. Default: {MIN_CONTOUR_AREA}",
     )
     return parser.parse_args()
 
@@ -752,7 +967,11 @@ def collect_image_ids(voc_root: Path, years: List[str], tags: List[str]) -> Tupl
 
 
 def process_image_map(
-    voc_root: Path, output_root: Path, image_ids_map: Dict
+    voc_root: Path,
+    output_root: Path,
+    image_ids_map: Dict,
+    connect_parts: bool = False,
+    min_contour_area: float = MIN_CONTOUR_AREA,
 ) -> Tuple[int, int, int]:
     """Process all images in the ID map.
 
@@ -760,6 +979,8 @@ def process_image_map(
         voc_root: Path to VOC dataset root
         output_root: Path to output root
         image_ids_map: Map of (year, tag) to list of image IDs
+        connect_parts: Whether to connect disconnected parts of the same instance
+        min_contour_area: Minimum contour area to consider
 
     Returns:
         Tuple of (total_success, total_skipped, total_fail)
@@ -779,6 +1000,8 @@ def process_image_map(
                 year=year,
                 tag=tag,
                 image_ids=image_ids,
+                connect_parts=connect_parts,
+                min_contour_area=min_contour_area,
             )
             s, sk, f = converter.convert()
             total_success += s
@@ -817,6 +1040,10 @@ def main():
     logger.info("Starting VOC to YOLO segmentation conversion.")
     logger.info(f"Years to process: {years}")
     logger.info(f"Tags to process: {tags}")
+    if args.connect_parts:
+        logger.info(
+            f"Connecting disconnected parts of the same instance with straight lines (min area={args.min_contour_area})"
+        )
 
     # --- Collect all image IDs --- #
     try:
@@ -835,7 +1062,11 @@ def main():
 
     # --- Process Images --- #
     total_success, total_skipped, total_fail = process_image_map(
-        voc_root, output_root, final_image_ids_map
+        voc_root,
+        output_root,
+        final_image_ids_map,
+        connect_parts=args.connect_parts,
+        min_contour_area=args.min_contour_area,
     )
 
     logger.info("\nConversion completed!")

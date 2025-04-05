@@ -171,11 +171,15 @@ python -m src.utils.data_converter.voc2yolo_segment_labels \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
     [--sample-count N] \
+    [--connect-parts] \
+    [--min-contour-area AREA] \
     [--seed <SEED>]
 ```
 
 - `--years`, `--tags`, `--voc-root`, `--output-root`: Similar to `voc2yolo_detect_labels.py`.
 - `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits. If not set, processes all images.
+- `--connect-parts`: (Optional) Connect disconnected parts of the same instance into a single complex polygon. When enabled, all disconnected parts of the same instance ID will be joined with straight lines to form a single polygon.
+- `--min-contour-area`: (Optional) Minimum area threshold for contours (in pixels squared). Contours smaller than this value will be filtered out. Only applicable when processing segmentation masks.
 - `--seed`: (Optional) Seed for random sampling (default: 42).
 - ~`--skip-difficult`~: (Removed - Difficulty is not directly handled as class is from class mask).
 - ~`--iou-threshold`~: (Removed - Class matching uses class mask, not IoU with XML bbox).
@@ -206,16 +210,43 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
             - If no valid modal class ID can be found (e.g., instance only overlaps background/boundary), log a warning and skip this instance.
         - If class was determined:
             - Find contours (`cv2.findContours`) of the instance's binary mask.
-            - For each contour (representing a polygon, potentially including holes if `RETR_TREE` was used, but typically `RETR_EXTERNAL` is sufficient):
+            - If `--connect-parts` is enabled:
+                - Connect all disconnected parts of the same instance into a single complex polygon using a nearest-neighbor approach. This creates connections between contours using straight lines between nearest points.
+                - Contours smaller than `--min-contour-area` are filtered out if specified.
+                - The resulting complex polygon maintains the detailed outline of each part while creating a single continuous boundary.
+            - Otherwise (default behavior):
+                - Process each contour separately, potentially resulting in multiple polygons for the same instance ID.
+            - For each resulting polygon:
                 - Check if contour area is above a minimum threshold.
                 - Simplify the polygon slightly using `cv2.approxPolyDP`.
                 - Ensure minimum number of points (e.g., 3).
                 - Convert the contour points to a flat list `[x1, y1, x2, y2, ...]`.
-                - Normalize the polygon coordinates using image dimensions (obtained implicitly from mask shape).
+                - Normalize the polygon coordinates using image dimensions.
                 - Format the YOLO label line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`.
                 - Add the formatted line to the list.
     - Write all formatted label lines to the output `.txt` file using `get_output_segment_label_dir` from `voc2yolo_utils`: `<output_root>/segment/labels/<tag><year>/<id>.txt`.
 8.  Reports summary statistics including success, skipped (already existing), and failed counts.
+
+### Handling Disconnected Instance Parts
+
+When the `--connect-parts` option is enabled, the script connects disconnected parts of the same instance into a single complex polygon using the following approach:
+
+1. **Contour Ordering**: Contours are ordered using a greedy nearest-neighbor algorithm that minimizes the total connection distance.
+2. **Point-to-Point Matching**: For each pair of adjacent contours, the algorithm finds the closest points between them to create the connection.
+3. **Single Complex Polygon**: The result is a single polygon that preserves the detailed outline of each part while creating a continuous boundary around all visible parts of the instance.
+
+This approach is particularly useful for handling instances that appear as multiple disconnected regions in the image (e.g., an object partially occluded or split by another object).
+
+### Logging Behavior
+
+The script implements intelligent logging that reduces verbosity for normal operations:
+
+- Only logs unusual cases or potential issues, such as:
+  - Mismatches between the number of unique instances and the number of generated polygons
+  - When an instance generates multiple separate polygons (if `--connect-parts` is disabled)
+  - When no instances are found or no output is written
+- Debug-level logging is available for more detailed information
+- Warning and error messages are always shown for invalid data or processing failures
 
 ### Input
 
@@ -228,3 +259,4 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
 
 - Creates label files in `<output_root>/segment/labels/<tag><year>/`
 - Format: One object instance per line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...` (space-separated, normalized coordinates).
+- When `--connect-parts` is enabled, each instance will be represented by a single line, even if it appears as multiple disconnected regions in the image.

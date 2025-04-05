@@ -215,18 +215,81 @@ python -m src.utils.visualization.yolo_detect_viz \
 
 ---
 
-## Future Visualization Scripts (Planned)
+## `yolo_segment_viz.py` - Visualize YOLO Segmentation Labels
 
-The following visualization scripts are planned based on the [VOC Dataset Conversion TODO](./../dataset/voc/TODO.md):
+This script reads YOLO-formatted segmentation label files (`segment/labels/<tag><year>/*.txt`) and draws the corresponding polygons and class labels onto the associated images (`segment/images/<tag><year>/*.jpg`).
 
-1.  **`vocdev_segment_viz.py`:**
-    -   **Purpose:** Visualize the original VOC instance segmentation masks (`SegmentationObject`) overlaid on the images. This script would read the `.png` mask files and potentially the XML for context (though masks themselves don't store class names directly in VOC). It would help verify the raw segmentation data.
-    -   **Status:** Implemented.
+### Purpose
 
-2.  **`yolo_detect_viz.py`:**
-    -   **Purpose:** Visualize the generated YOLO *detection* labels (`detect/labels/`). This script reads the `.txt` files containing `<class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>` lines, denormalizes the coordinates based on the corresponding image dimensions, and draws the resulting bounding boxes and class labels onto the images stored in the project's `detect/images/` directory. This is crucial for verifying the correctness of the `voc2yolo_detect_labels.py` conversion.
-    -   **Status:** Implemented.
+To visually verify the correctness of the generated YOLO segmentation labels after running the `voc2yolo_segment_labels.py` conversion script. Allows inspection of individual images or batch processing to generate visual samples of the YOLO segmentation polygons.
 
-3.  **`yolo_segment_viz.py`:**
-    -   **Purpose:** Visualize the generated YOLO *segmentation* labels (`labels_segment/`). This script would read the `.txt` files containing `<class_id> <x1_norm> <y1_norm> ...` lines, denormalize the polygon points based on image dimensions, and draw the resulting filled polygons and class labels onto the images stored in the project's `images/` directory. This is essential for verifying the `voc2yolo_segment_labels.py` conversion.
-    -   **Status:** Not yet implemented.
+### Usage
+
+```bash
+python -m src.utils.visualization.yolo_segment_viz \
+    --years <YEARS> \
+    --tags <TAGS> \
+    [--image-id <ID>] \
+    [--sample-count N] \
+    [--voc-root /path/to/VOC] \
+    [--output-root /path/to/output] \
+    [--output-subdir segment/visual] \
+    [--fill-polygons] \
+    [--alpha 0.3] \
+    [--percentiles 0.25,0.5,0.75] \
+    [--seed 42]
+```
+
+-   `--years`, `--tags`: Specify the dataset year(s) and split tag(s) (e.g., '2012', 'train,val'). Used to locate the `segment/images/<tag><year>/` and `segment/labels/<tag><year>/` directories.
+-   `--image-id`: Visualize a single specific image ID. Enables interactive display mode.
+-   `--sample-count`: Randomly sample N images from the specified splits for batch processing. Batch mode saves images instead of displaying them.
+-   `--voc-root`: Path to the root directory containing `segment/images/` and `segment/labels/`. Defaults to `$VOC_ROOT` environment variable.
+-   `--output-root`: Root directory where visualizations will be saved (batch mode). Defaults to `--voc-root`.
+-   `--output-subdir`: Subdirectory within `--output-root` to save images (default: `segment/visual`). Output structure: `<output_root>/<output_subdir>/<tag><year>/<image_id>.png`.
+-   `--fill-polygons`: If set, fills polygons with semi-transparent color. Otherwise, only draws polygon outlines.
+-   `--alpha`: Alpha (transparency) value for filled polygons when `--fill-polygons` is used. (default: 0.3).
+-   `--percentiles`: (Optional) Calculate and report statistics (polygon count, class count, points per polygon) using these percentiles. Reports averages if not specified.
+-   `--seed`: Random seed for sampling.
+
+### Logic
+
+1.  Parses arguments and sets up paths (input `segment/images/`, `segment/labels/`, output `segment/visual/`).
+2.  Determines the list of target image IDs based on `--image-id` or by scanning `segment/labels/<tag><year>/` for `.txt` files and checking for corresponding `.jpg` files in `segment/images/<tag><year>/`. Applies sampling if requested.
+3.  Iterates through the target image IDs.
+4.  For each ID:
+    -   Constructs paths to the JPEG image (`segment/images/...`) and YOLO label file (`segment/labels/...`).
+    -   Loads the image using OpenCV to get dimensions.
+    -   Parses the YOLO label file using `parse_yolo_segmentation_label`:
+        - Reads each line (`<class_id> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...`).
+        - Validates coordinates are within [0-1] range and form valid polygons (at least 3 points).
+        - Converts normalized coordinates to pixel coordinates.
+        - Looks up class name using `VOC_CLASSES`.
+    -   For each polygon, either:
+        - Draws polygon outlines using `draw_polygon` if `--fill-polygons` is not set.
+        - Creates a binary mask from the polygon and uses `overlay_mask` with the specified alpha transparency if `--fill-polygons` is set.
+    -   If in single-image mode (`--image-id`), displays the image using `cv2.imshow`.
+    -   If in batch mode, saves the visualized image to `<output_root>/segment/visual/<tag><year>/<image_id>.png`.
+5.  Reports summary statistics about processed images, annotation counts, and polygon point counts (average or percentiles).
+
+### Input
+
+-   `<voc_root>/segment/images/<tag><year>/<id>.jpg`
+-   `<voc_root>/segment/labels/<tag><year>/<id>.txt`
+
+### Output
+
+-   Displays image via OpenCV window (single image mode).
+-   Saves visualized images to `<output_root>/segment/visual/<tag><year>/` (batch mode).
+-   Logs processing and annotation statistics to the console.
+
+### Testing
+
+The script is thoroughly tested in `tests/utils/visualization/test_yolo_segment_viz.py` with unit tests covering:
+
+1. Path handling and directory setup
+2. Target image list building (both single image and batch modes)
+3. YOLO segmentation label parsing (including handling of invalid coordinates, invalid class IDs, and polygons with too few points)
+4. Image processing and visualization (both outline and filled polygon modes)
+5. Statistics reporting (both percentiles and averages)
+
+Tests use mock objects to avoid actual filesystem operations and validate edge cases without requiring actual images or labels.
