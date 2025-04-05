@@ -74,10 +74,10 @@
   - [x] Set up proper Python package structure with __init__.py files
 - [ ] Milestone 9: Advanced Segmentation Features
   - [ ] Segmentation dataset preparation
-  - [ ] Segmentation configurations (`*_seg.yaml`)
-  - [ ] Segmentation finetuning script (`train_segment.py`)
+  - [x] Segmentation configurations (`voc_segment.yaml`, `voc_segment_finetune.yaml`, others TBD)
+  - [x] Segmentation finetuning script (`train_segment.py`)
   - [ ] Segmentation evaluation script (`evaluate_segment.py`)
   - [ ] Segmentation tests
   - [ ] COCO Dataset Integration (Detection & Segmentation)
   - [ ] Full training scripts (optional)
-  - [ ] Final comprehensive documentation update
+  - [x] Update documentation (README, design, todo) for seg training setup

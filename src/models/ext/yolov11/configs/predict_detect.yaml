@@ -2,7 +2,7 @@
 
 # Required parameters
 model: yolo11l.pt  # Example model, can be changed
-source: /home/wmu/vibe/hub/datasets/VOC/images/test2007
+source: /home/ubuntu/vibe/hub/datasets/VOC/images/test2007
 project: runs/predict/detect # Base directory for output runs
 
 # Optional prediction parameters (Ultralytics defaults if not specified)

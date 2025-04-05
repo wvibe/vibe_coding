@@ -142,6 +142,48 @@ python src/models/ext/yolov11/train_detect.py \
 
 Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>/`.
 
+### Training (Segmentation)
+
+The `train_segment.py` script initiates training (finetuning or from scratch) for YOLOv11 segmentation models using parameters from a YAML configuration file. It mirrors the detection training script.
+
+**Configuration (`src/models/ext/yolov11/configs/voc_segment_*.yaml`):**
+
+- `model`: Path to the base segmentation model weights (`.pt`) or architecture YAML (`.yaml`) (e.g., `yolo11l-seg.pt`).
+- `data`: Path to the segmentation dataset configuration YAML (e.g., `src/models/ext/yolov11/configs/voc_segment.yaml`).
+- `project`: Base directory for segmentation training runs (e.g., `runs/train/segment`).
+- `pretrained`: Boolean (`True` for finetuning, `False` for scratch).
+- Other keys correspond to `ultralytics.YOLO.train` arguments suitable for segmentation.
+
+**Command-Line:**
+
+```bash
+python src/models/ext/yolov11/train_segment.py \
+    --config <path_to_segment_training_config.yaml> \
+    --name <your_run_name> \
+    [--project <output_project_dir>] \
+    [--resume] \
+    [--wandb-id <wandb_run_id_to_resume>]
+```
+
+**Example (Finetuning):**
+
+```bash
+python src/models/ext/yolov11/train_segment.py \
+    --config src/models/ext/yolov11/configs/voc_segment_finetune.yaml \
+    --name voc11l_segment_finetune_run1
+```
+
+**Example (Resuming Finetuning Run):**
+
+```bash
+python src/models/ext/yolov11/train_segment.py \
+    --config src/models/ext/yolov11/configs/voc_segment_finetune.yaml \
+    --name voc11l_segment_finetune_run1 \
+    --resume
+```
+
+Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>/`.
+
 ### Evaluation (Detection)
 
 The `evaluate_detect.py` script provides comprehensive evaluation of YOLOv11 detection models using custom metrics and visualization tools, integrating utilities for metric calculation and performance measurement.

@@ -1,10 +1,10 @@
-# Training configuration for fine-tuning YOLOv11 on combined PASCAL VOC
+# Training configuration for fine-tuning YOLOv11 SEGMENTATION on combined PASCAL VOC
 
 # --- Base Model & Dataset ---
-# Base model weights file (YOLOv11 Large)
-model: yolo11l.pt
+# Base model weights file (YOLOv11 Large Segmentation)
+model: yolo11l-seg.pt
 # Path to the dataset definition yaml (relative to project root)
-data: src/models/ext/yolov11/configs/voc_detect.yaml
+data: src/models/ext/yolov11/configs/voc_segment.yaml
 
 # --- Training Hyperparameters ---
 # Number of epochs (adjust as needed)
@@ -35,13 +35,13 @@ close_mosaic: 10
 # --- Execution Settings ---
 # Device: '' for auto, 'cpu', '0', '0,1'
 # Updated for 4 GPUs
-device: '0,1,2,3'
+device: '4,5,6,7'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)
-project: runs/detect
+project: runs/train/segment # Updated for segmentation
 
 # --- Wandb Logging (will be used automatically if logged in) ---
 # Set to False to disable wandb even if installed/logged in

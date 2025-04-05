@@ -43,7 +43,7 @@
 
 ## Future Scope: Segmentation & Expansion
 
-- **Segmentation:** Similar scripts (`inference_seg.py`, `train_seg.py`) and configurations (`*_seg.yaml`) will be added once segmentation datasets are available.
+- **Segmentation:** Similar scripts (`predict_segment.py`, `train_segment.py`) and configurations (`*_seg.yaml`, `voc_segment.yaml`, `voc_segment_finetune.yaml`) are being added. Evaluation script (`evaluate_segment.py`) and metrics are future work.
 - **Training:** Scripts for training from scratch (`train_*.py`) might be added if needed.
 - **Datasets:** Support for COCO will be added via `coco_*.yaml` configurations.
 - **Tests:** Unit tests will cover basic script execution and argument parsing.

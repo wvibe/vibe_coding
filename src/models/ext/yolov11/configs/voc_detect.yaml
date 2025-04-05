@@ -2,7 +2,7 @@
 # Using combined splits based on voc_combined.yaml for yolov8
 
 # Dataset root (Absolute path for robustness)
-path: /home/wmu/vibe/hub/datasets/VOC
+path: /home/ubuntu/vibe/hub/datasets/VOC
 
 # Image directories relative to 'path'
 # Combining 2007 train/val and 2012 train/val for training
@@ -10,8 +10,9 @@ train:
   - images/train2007
   - images/val2007
   - images/train2012
+  - images/val2012
 # Using VOC2012 val set for validation
-val: images/val2012
+val: images/test2007
 # Using VOC2007 test set for testing
 test: images/test2007
 
