@@ -48,13 +48,13 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--year",
+        "--years",
         type=str,
         required=True,
         help="Comma-separated list of dataset years (e.g., '2007', '2007,2012').",
     )
     parser.add_argument(
-        "--tag",
+        "--tags",
         type=str,
         required=True,
         help="Comma-separated list of dataset tags (e.g., 'train', 'val', 'train,val').",
@@ -201,8 +201,8 @@ def get_target_image_list(
 ) -> List[Tuple[str, str, str]]:
     """Determines the list of (image_id, year, tag) tuples to process."""
     ids_to_process = []
-    years = [y.strip() for y in args.year.split(",") if y.strip()]
-    tags = [t.strip() for t in args.tag.split(",") if t.strip()]
+    years = [y.strip() for y in args.years.split(",") if y.strip()]
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
     if not years or not tags:
         logger.error("No valid years or tags provided.")
@@ -528,6 +528,197 @@ def track_class_mask_distribution(
         value_distribution[value] = value_distribution.get(value, 0) + 1
 
 
+def _initialize_stats():
+    """Initialize statistics tracking for image processing."""
+    return {
+        "instances_per_image": [],
+        "images_processed": 0,
+        "mask_instance_read_success": 0,
+        "mask_class_read_success": 0,
+        "images_saved": 0,
+        "images_displayed": 0,
+        "total_instances_found": 0,
+        "class_mask_value_distribution": {},
+    }
+
+
+def _process_images(
+    ids_to_process,
+    base_voc_root,
+    output_dir,
+    do_save,
+    do_display,
+    show_difficult,
+):
+    """Process a batch of images and collect statistics.
+
+    Args:
+        ids_to_process: List of (image_id, year, tag) tuples to process
+        base_voc_root: Base VOC directory path
+        output_dir: Output directory for visualizations
+        do_save: Whether to save processed images
+        do_display: Whether to display processed images
+        show_difficult: Whether to show difficult/boundary regions
+
+    Returns:
+        Dictionary containing processing statistics
+    """
+    # Initialize statistics
+    stats = _initialize_stats()
+
+    # Processing loop
+    logger.info("Starting visualization processing...")
+    for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
+        stats["images_processed"] += 1
+
+        # Analyze class mask distribution
+        try:
+            voc_dir = get_voc_dir(base_voc_root, year)
+            mask_class_path = get_segm_cls_mask_path(voc_dir, image_id)
+
+            from PIL import Image  # Keep import local for potential lazy loading
+
+            try:
+                mask_class = np.array(Image.open(str(mask_class_path)))
+                track_class_mask_distribution(
+                    mask_class, stats["class_mask_value_distribution"], image_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to analyze class mask for {image_id}: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to get paths for mask analysis for {image_id}: {e}")
+
+        # Process and visualize the image
+        instance_success, class_success, num_instances, saved, displayed = (
+            process_and_visualize_image(
+                image_id,
+                year,
+                tag,
+                base_voc_root,
+                output_dir,
+                do_save,
+                do_display,
+                show_difficult,
+            )
+        )
+
+        if saved:
+            stats["images_saved"] += 1
+        if displayed:
+            stats["images_displayed"] += 1
+
+        if instance_success:
+            stats["mask_instance_read_success"] += 1
+            if num_instances is not None:
+                stats["instances_per_image"].append(num_instances)
+                stats["total_instances_found"] += num_instances
+        if class_success:
+            stats["mask_class_read_success"] += 1
+
+    return stats
+
+
+def _report_instance_statistics(args: argparse.Namespace, instances_per_image: List[int]) -> None:
+    """Report statistics about instance counts.
+
+    Args:
+        args: Command-line arguments including percentiles
+        instances_per_image: List of instance counts per image
+    """
+    if not instances_per_image:
+        logger.info("No instance statistics generated (no instance masks successfully processed).")
+        return
+
+    instances_arr = np.array(instances_per_image)
+    logger.info("--- Instance Statistics (per successfully processed mask) ---")
+
+    if args.percentiles:
+        try:
+            percentiles_str = args.percentiles.split(",")
+            percentiles = [float(p.strip()) * 100 for p in percentiles_str]
+            if not all(0 <= p <= 100 for p in percentiles):
+                raise ValueError("Percentiles must be between 0 and 1.")
+
+            instance_percentiles = np.percentile(instances_arr, percentiles)
+            logger.info(f"Percentiles requested: {[f'{p / 100:.2f}' for p in percentiles]}")
+            logger.info(f"Instance count percentiles: {np.round(instance_percentiles, 2).tolist()}")
+
+        except ValueError as e:
+            logger.error(
+                f"Invalid format or value for --percentiles: {e}. "
+                "Use comma-separated floats between 0 and 1. Reporting averages instead."
+            )
+            logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
+    else:
+        logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
+
+
+def _report_class_distributions(class_mask_value_distribution: Dict[int, int]) -> None:
+    """Report statistics about class distribution in masks.
+
+    Args:
+        class_mask_value_distribution: Dictionary mapping class values to occurrence counts
+    """
+    if not class_mask_value_distribution:
+        return
+
+    logger.info("--- Class Mask Value Distribution ---")
+    logger.info("Showing count of images containing each class value:")
+
+    # Check for unexpected class values (21-254)
+    unexpected_values_found = {}
+    for value, count in class_mask_value_distribution.items():
+        if 21 <= value <= 254:
+            unexpected_values_found[value] = count
+
+    if unexpected_values_found:
+        logger.warning("Found unexpected class values (21-254) in some images:")
+        for value, count in sorted(unexpected_values_found.items()):
+            logger.warning(f"  Unexpected class value {value}: {count} images")
+
+    # Report counts for each valid class (1-20)
+    for value in range(1, 21):
+        if value in class_mask_value_distribution and value <= len(VOC_CLASSES):
+            count = class_mask_value_distribution[value]
+            class_name = VOC_CLASSES[value - 1]
+            logger.info(f"  Class value {value} ({class_name}): {count} images")
+
+
+def report_statistics(
+    args: argparse.Namespace,
+    instances_per_image: List[int],
+    num_targeted: int,
+    num_processed: int,
+    num_mask_instance_success: int,
+    num_mask_class_success: int,
+    num_saved: int,
+    num_displayed: int,
+    total_instances: int,
+    class_mask_value_distribution: Dict[int, int],
+) -> None:
+    """Calculates and logs processing and annotation statistics."""
+    # Report processing summary
+    logger.info("--- Processing Complete ---")
+    logger.info(f"Total images targeted: {num_targeted}")
+    logger.info(f"Images processed attempt: {num_processed}")
+    logger.info(f"Instance segmentation masks successfully read: {num_mask_instance_success}")
+    logger.info(f"Class segmentation masks successfully read: {num_mask_class_success}")
+    logger.info(f"Images saved: {num_saved}")
+    logger.info(f"Images displayed: {num_displayed}")
+
+    # Report instance statistics
+    _report_instance_statistics(args, instances_per_image)
+
+    # Report total instances count
+    logger.info(
+        f"Total object instances found across all processed instance masks: {total_instances}"
+    )
+
+    # Report class mask value distributions
+    _report_class_distributions(class_mask_value_distribution)
+
+
 def main():
     """Main execution function."""
     load_dotenv()
@@ -549,164 +740,34 @@ def main():
         do_save = not is_single_image_mode
         show_difficult = args.show_difficult
 
-        # --- Initialize Stats & Resources ---
-        instances_per_image: List[int] = []
-        images_processed = 0
-        mask_instance_read_success = 0
-        mask_class_read_success = 0
-        images_saved = 0
-        images_displayed = 0
-        total_instances_found = 0
-
-        # Initialize value distribution tracking for class masks only
-        class_mask_value_distribution: Dict[int, int] = {}
-
-        # --- Processing Loop ---
-        logger.info("Starting visualization processing...")
-        for image_id, year, tag in tqdm(ids_to_process, desc="Processing Images"):
-            images_processed += 1
-
-            # Analyze class mask distribution
-            try:
-                voc_dir = get_voc_dir(base_voc_root, year)
-                mask_class_path = get_segm_cls_mask_path(voc_dir, image_id)
-
-                from PIL import Image  # Keep import local for potential lazy loading
-
-                try:
-                    mask_class = np.array(Image.open(str(mask_class_path)))
-                    track_class_mask_distribution(
-                        mask_class, class_mask_value_distribution, image_id
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to analyze class mask for {image_id}: {e}")
-
-                # Removed instance mask analysis
-
-            except Exception as e:
-                logger.debug(f"Failed to get paths for mask analysis for {image_id}: {e}")
-
-            # Process and visualize the image
-            instance_success, class_success, num_instances, saved, displayed = (
-                process_and_visualize_image(
-                    image_id,
-                    year,
-                    tag,
-                    base_voc_root,
-                    output_dir,
-                    do_save,
-                    do_display,
-                    show_difficult,
-                )
-            )
-
-            if saved:
-                images_saved += 1
-            if displayed:
-                images_displayed += 1
-
-            if instance_success:
-                mask_instance_read_success += 1
-                if num_instances is not None:
-                    instances_per_image.append(num_instances)
-                    total_instances_found += num_instances
-            if class_success:
-                mask_class_read_success += 1
+        # --- Process Images ---
+        stats = _process_images(
+            ids_to_process,
+            base_voc_root,
+            output_dir,
+            do_save,
+            do_display,
+            show_difficult,
+        )
 
         # --- Statistics Reporting ---
         report_statistics(
             args,
-            instances_per_image,
+            stats["instances_per_image"],
             len(ids_to_process),
-            images_processed,
-            mask_instance_read_success,
-            mask_class_read_success,
-            images_saved,
-            images_displayed,
-            total_instances_found,
-            class_mask_value_distribution,
+            stats["images_processed"],
+            stats["mask_instance_read_success"],
+            stats["mask_class_read_success"],
+            stats["images_saved"],
+            stats["images_displayed"],
+            stats["total_instances_found"],
+            stats["class_mask_value_distribution"],
         )
 
     except (ValueError, FileNotFoundError) as e:
         logger.error(f"Path setup failed: {e}")
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
-
-
-def report_statistics(
-    args: argparse.Namespace,
-    instances_per_image: List[int],
-    num_targeted: int,
-    num_processed: int,
-    num_mask_instance_success: int,
-    num_mask_class_success: int,
-    num_saved: int,
-    num_displayed: int,
-    total_instances: int,
-    class_mask_value_distribution: Dict[int, int],
-) -> None:
-    """Calculates and logs processing and annotation statistics."""
-    logger.info("--- Processing Complete ---")
-    logger.info(f"Total images targeted: {num_targeted}")
-    logger.info(f"Images processed attempt: {num_processed}")
-    logger.info(f"Instance segmentation masks successfully read: {num_mask_instance_success}")
-    logger.info(f"Class segmentation masks successfully read: {num_mask_class_success}")
-    logger.info(f"Images saved: {num_saved}")
-    logger.info(f"Images displayed: {num_displayed}")
-
-    # Report instance statistics
-    if instances_per_image:
-        instances_arr = np.array(instances_per_image)
-        logger.info("--- Instance Statistics (per successfully processed mask) ---")
-        if args.percentiles:
-            try:
-                percentiles_str = args.percentiles.split(",")
-                percentiles = [float(p.strip()) * 100 for p in percentiles_str]
-                if not all(0 <= p <= 100 for p in percentiles):
-                    raise ValueError("Percentiles must be between 0 and 1.")
-
-                instance_percentiles = np.percentile(instances_arr, percentiles)
-                logger.info(f"Percentiles requested: {[f'{p / 100:.2f}' for p in percentiles]}")
-                logger.info(
-                    f"Instance count percentiles: {np.round(instance_percentiles, 2).tolist()}"
-                )
-
-            except ValueError as e:
-                logger.error(
-                    f"Invalid format or value for --percentiles: {e}. "
-                    "Use comma-separated floats between 0 and 1. Reporting averages instead."
-                )
-                logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
-        else:
-            logger.info(f"Average instances per image: {instances_arr.mean():.2f}")
-    else:
-        logger.info("No instance statistics generated (no instance masks successfully processed).")
-    logger.info(
-        f"Total object instances found across all processed instance masks: {total_instances}"
-    )
-
-    # Report class mask value distributions
-    if class_mask_value_distribution:
-        logger.info("--- Class Mask Value Distribution ---")
-        logger.info("Showing count of images containing each class value:")
-
-        # Check for unexpected class values (21-254)
-        unexpected_values_found = {}
-        for value, count in class_mask_value_distribution.items():
-            if 21 <= value <= 254:
-                unexpected_values_found[value] = count
-
-        if unexpected_values_found:
-            logger.warning("Found unexpected class values (21-254) in some images:")
-            for value, count in sorted(unexpected_values_found.items()):
-                logger.warning(f"  Unexpected class value {value}: {count} images")
-
-        # Report counts for each valid class (1-20)
-        for value in range(1, 21):
-            if value in class_mask_value_distribution and value <= len(VOC_CLASSES):
-                count = class_mask_value_distribution[value]
-                class_name = VOC_CLASSES[value - 1]
-                logger.info(f"  Class value {value} ({class_name}): {count} images")
 
 
 if __name__ == "__main__":

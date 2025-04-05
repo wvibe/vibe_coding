@@ -143,6 +143,13 @@ python -m src.utils.visualization.vocdev_segment_viz \
 
 -   The `main` and `report_statistics` functions currently have slightly high complexity (`C901` lint warning). They could optionally be refactored into smaller helper functions in the future for improved readability and maintainability.
 
+### Implementation Notes
+
+- Functions have been refactored to reduce complexity warnings:
+  - `main()` function was simplified by extracting the image processing loop into `_process_images()`
+  - `report_statistics()` was broken down into helper functions `_report_instance_statistics()` and `_report_class_distributions()`
+  - A common `_initialize_stats()` function was added to centralize statistics tracking structure
+
 ---
 
 ## `yolo_detect_viz.py` - Visualize YOLO Detection Labels

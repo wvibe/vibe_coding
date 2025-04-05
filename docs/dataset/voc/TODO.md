@@ -83,6 +83,7 @@ This document tracks the tasks needed to convert Pascal VOC dataset to YOLO form
 - [x] Implement `vocdev_detect_viz.py` (visualize VOC XML annotations).
 - [x] Implement `vocdev_segment_viz.py` (visualize VOC mask annotations).
 - [x] Implement `yolo_detect_viz.py` (visualize YOLO detection labels).
+- [x] Refactor visualization scripts to address complexity warnings (C901).
 - [ ] Implement `yolo_segment_viz.py` (visualize YOLO segmentation labels).
 - [ ] (Optional) Make IoU matching threshold configurable in `vocdev_segment_viz.py`.
 

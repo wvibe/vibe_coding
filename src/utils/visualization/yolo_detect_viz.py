@@ -8,10 +8,10 @@ Supports processing single images (with display) or batches (saving images).
 Optionally calculates and reports statistics on annotations per image.
 
 Expects dataset structure:
-    <voc_root>/images/<tag><year>/<image_id>.jpg
-    <voc_root>/labels_detect/<tag><year>/<image_id>.txt
+    <voc_root>/detect/images/<tag><year>/<image_id>.jpg
+    <voc_root>/detect/labels/<tag><year>/<image_id>.txt
 Output structure:
-    <output_root>/visual_detect/<tag><year>/<image_id>.png
+    <output_root>/detect/visual/<tag><year>/<image_id>.png
 """
 
 import argparse
@@ -40,7 +40,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize YOLO format detection labels.")
 
     parser.add_argument(
-        "--year",
+        "--years",
         type=str,
         required=True,
         help=(
@@ -49,7 +49,7 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--tag",
+        "--tags",
         type=str,
         required=True,
         help=(
@@ -80,7 +80,7 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default=None,
         help=(
-            "Path to the VOC dataset root directory (containing images/, labels_detect/). "
+            "Path to the VOC dataset root directory (containing detect/images/, detect/labels/). "
             "Uses $VOC_ROOT if not set."
         ),
     )
@@ -93,7 +93,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--output-subdir",
         type=str,
-        default="visual_detect",  # Default output subfolder name
+        default="detect/visual",  # Default output subfolder name
         help="Subdirectory within output-root to save visualizations.",
     )
     parser.add_argument(
@@ -130,11 +130,14 @@ def _setup_paths(args: argparse.Namespace, voc_root_env: Optional[str]) -> Tuple
 
     base_voc_root = Path(base_voc_root_str).expanduser().resolve()
 
-    # Basic check: Does it contain 'images' and 'labels_detect'?
-    if not (base_voc_root / "images").is_dir() or not (base_voc_root / "labels_detect").is_dir():
+    # Basic check: Does it contain 'detect/images' and 'detect/labels'?
+    if (
+        not (base_voc_root / "detect" / "images").is_dir()
+        or not (base_voc_root / "detect" / "labels").is_dir()
+    ):
         logger.warning(
-            f"Base VOC Root {base_voc_root} does not contain expected 'images' and 'labels_detect'"
-            f" subdirectories."
+            f"Base VOC Root {base_voc_root} does not contain expected "
+            f"'detect/images' and 'detect/labels' subdirectories."
         )
         # Continue anyway, maybe structure is different but paths will fail later if invalid
 
@@ -167,8 +170,8 @@ def _get_image_ids_for_split(
         List of (image_id, year, tag) tuples found for this split.
     """
     tag_year = f"{tag}{year}"
-    label_dir = base_voc_root / "labels_detect" / tag_year
-    image_dir = base_voc_root / "images" / tag_year
+    label_dir = base_voc_root / "detect" / "labels" / tag_year
+    image_dir = base_voc_root / "detect" / "images" / tag_year
     ids_found = []
 
     if not label_dir.is_dir():
@@ -202,8 +205,8 @@ def get_target_image_list(
     """Determines the list of (image_id, year, tag) tuples to process
     by scanning label directories and checking for corresponding images."""
     ids_to_process = []
-    years = [y.strip() for y in args.year.split(",") if y.strip()]
-    tags = [t.strip() for t in args.tag.split(",") if t.strip()]
+    years = [y.strip() for y in args.years.split(",") if y.strip()]
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
     if not years or not tags:
         logger.error("No valid years or tags provided.")
@@ -214,9 +217,19 @@ def get_target_image_list(
         first_year = years[0]
         first_tag = tags[0]
         logger.info(f"Single image mode: Checking {args.image_id} from {first_tag}{first_year}")
-        image_path = base_voc_root / "images" / f"{first_tag}{first_year}" / f"{args.image_id}.jpg"
+        image_path = (
+            base_voc_root
+            / "detect"
+            / "images"
+            / f"{first_tag}{first_year}"
+            / f"{args.image_id}.jpg"
+        )
         label_path = (
-            base_voc_root / "labels_detect" / f"{first_tag}{first_year}" / f"{args.image_id}.txt"
+            base_voc_root
+            / "detect"
+            / "labels"
+            / f"{first_tag}{first_year}"
+            / f"{args.image_id}.txt"
         )
 
         if not image_path.is_file():
@@ -341,7 +354,7 @@ def process_and_visualize_image(
     year: str,
     tag: str,
     voc_root: Path,
-    output_dir: Path,  # This is <output_root>/visual_detect
+    output_dir: Path,  # This is <output_root>/detect/visual
     class_names: List[str],
     do_save: bool,
     do_display: bool,
@@ -355,8 +368,8 @@ def process_and_visualize_image(
     save_success = False
     display_success = False
     tag_year = f"{tag}{year}"
-    image_path = voc_root / "images" / tag_year / f"{image_id}.jpg"
-    label_path = voc_root / "labels_detect" / tag_year / f"{image_id}.txt"
+    image_path = voc_root / "detect" / "images" / tag_year / f"{image_id}.jpg"
+    label_path = voc_root / "detect" / "labels" / tag_year / f"{image_id}.txt"
 
     try:
         # Load Image
@@ -399,7 +412,7 @@ def process_and_visualize_image(
         if do_save:
             save_subdir = (
                 output_dir / tag_year
-            )  # Output is <output_root>/visual_detect/<tag><year>/
+            )  # Output is <output_root>/detect/visual/<tag><year>/
             save_subdir.mkdir(parents=True, exist_ok=True)
             save_path = save_subdir / f"{image_id}.png"  # Save as <id>.png
             try:
@@ -474,7 +487,7 @@ def main():
                 year,
                 tag,
                 base_voc_root,
-                output_dir,  # Pass the final output dir: <output_root>/visual_detect
+                output_dir,  # Pass the final output dir: <output_root>/detect/visual
                 class_names,
                 do_save,
                 do_display,
