@@ -154,7 +154,7 @@ python -m src.utils.visualization.vocdev_segment_viz \
 
 ## `yolo_detect_viz.py` - Visualize YOLO Detection Labels
 
-This script reads YOLO-formatted detection label files (`labels_detect/<tag><year>/*.txt`) and draws the corresponding bounding boxes and class labels onto the associated images (`images/<tag><year>/*.jpg`).
+This script reads YOLO-formatted detection label files (`detect/labels/<tag><year>/*.txt`) and draws the corresponding bounding boxes and class labels onto the associated images (`detect/images/<tag><year>/*.jpg`).
 
 ### Purpose
 
@@ -170,27 +170,27 @@ python -m src.utils.visualization.yolo_detect_viz \
     [--sample-count N] \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
-    [--output-subdir OUTPUT_SUBDIR] \
+    [--output-subdir detect/visual] \
     [--percentiles 0.25,0.5,0.75] \
     [--seed 42]
 ```
 
--   `--year`, `--tag`: Specify the dataset year(s) and split tag(s) (e.g., '2012', 'train,val'). Used to locate the `images/<tag><year>/` and `labels_detect/<tag><year>/` directories.
+-   `--year`, `--tag`: Specify the dataset year(s) and split tag(s) (e.g., '2012', 'train,val'). Used to locate the `detect/images/<tag><year>/` and `detect/labels/<tag><year>/` directories.
 -   `--image-id`: Visualize a single specific image ID. Enables interactive display mode.
 -   `--sample-count`: Randomly sample N images from the specified splits for batch processing. Batch mode saves images instead of displaying them.
--   `--voc-root`: Path to the root directory containing `images/` and `labels_detect/`. Defaults to `$VOC_ROOT` environment variable.
+-   `--voc-root`: Path to the root directory containing `detect/images/` and `detect/labels/`. Defaults to `$VOC_ROOT` environment variable.
 -   `--output-root`: Root directory where visualizations will be saved (batch mode). Defaults to `--voc-root`.
--   `--output-subdir`: Subdirectory within `--output-root` to save images (default: `visual_detect`). Output structure: `<output_root>/<output_subdir>/<tag><year>/<image_id>.png`.
+-   `--output-subdir`: Subdirectory within `--output-root` to save images (default: `detect/visual`). Output structure: `<output_root>/<output_subdir>/<tag><year>/<image_id>.png`.
 -   `--percentiles`: (Optional) Calculate and report statistics (box count, class count per image) using these percentiles. Reports averages if not specified.
 -   `--seed`: Random seed for sampling.
 
 ### Logic
 
-1.  Parses arguments and sets up paths (input `images/`, `labels_detect/`, output `visual_detect/`).
-2.  Determines the list of target image IDs based on `--image-id` or by scanning `labels_detect/<tag><year>/` for `.txt` files and checking for corresponding `.jpg` files in `images/<tag><year>/`. Applies sampling if requested.
+1.  Parses arguments and sets up paths (input `detect/images/`, `detect/labels/`, output `detect/visual/`).
+2.  Determines the list of target image IDs based on `--image-id` or by scanning `detect/labels/<tag><year>/` for `.txt` files and checking for corresponding `.jpg` files in `detect/images/<tag><year>/`. Applies sampling if requested.
 3.  Iterates through the target image IDs.
 4.  For each ID:
-    -   Constructs paths to the JPEG image (`images/...`) and YOLO label file (`labels_detect/...`).
+    -   Constructs paths to the JPEG image (`detect/images/...`) and YOLO label file (`detect/labels/...`).
     -   Loads the image using OpenCV to get dimensions.
     -   Parses the YOLO label file using `parse_yolo_detection_label`:
         - Reads each line (`<class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>`).
@@ -199,18 +199,18 @@ python -m src.utils.visualization.yolo_detect_viz \
         - Looks up class name using `VOC_CLASSES`.
     -   Draws bounding boxes and labels onto a copy of the image using `common.image_annotate.draw_box` and `get_color`.
     -   If in single-image mode (`--image-id`), displays the image using `cv2.imshow`.
-    -   If in batch mode, saves the visualized image to `<output_root>/visual_detect/<tag><year>/<image_id>.png`.
+    -   If in batch mode, saves the visualized image to `<output_root>/detect/visual/<tag><year>/<image_id>.png`.
 5.  Reports summary statistics about processed images and annotation counts (average or percentiles).
 
 ### Input
 
--   `<voc_root>/images/<tag><year>/<id>.jpg`
--   `<voc_root>/labels_detect/<tag><year>/<id>.txt`
+-   `<voc_root>/detect/images/<tag><year>/<id>.jpg`
+-   `<voc_root>/detect/labels/<tag><year>/<id>.txt`
 
 ### Output
 
 -   Displays image via OpenCV window (single image mode).
--   Saves visualized images to `<output_root>/visual_detect/<tag><year>/` (batch mode).
+-   Saves visualized images to `<output_root>/detect/visual/<tag><year>/` (batch mode).
 -   Logs processing and annotation statistics to the console.
 
 ---
@@ -224,7 +224,7 @@ The following visualization scripts are planned based on the [VOC Dataset Conver
     -   **Status:** Implemented.
 
 2.  **`yolo_detect_viz.py`:**
-    -   **Purpose:** Visualize the generated YOLO *detection* labels (`labels_detect/`). This script would read the `.txt` files containing `<class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>` lines, denormalize the coordinates based on the corresponding image dimensions, and draw the resulting bounding boxes and class labels onto the images stored in the project's `images/` directory. This is crucial for verifying the correctness of the `voc2yolo_detect_labels.py` conversion.
+    -   **Purpose:** Visualize the generated YOLO *detection* labels (`detect/labels/`). This script reads the `.txt` files containing `<class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>` lines, denormalizes the coordinates based on the corresponding image dimensions, and draws the resulting bounding boxes and class labels onto the images stored in the project's `detect/images/` directory. This is crucial for verifying the correctness of the `voc2yolo_detect_labels.py` conversion.
     -   **Status:** Implemented.
 
 3.  **`yolo_segment_viz.py`:**
