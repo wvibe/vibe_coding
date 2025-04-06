@@ -2,19 +2,26 @@
 # See README.md for details
 
 # Required
-model: yolo11l-seg.pt  # Example segmentation model, can be changed
-source: /home/wmu/vibe/hub/datasets/VOC/images/test2007
-project: runs/predict/segment
+model: yolo11l-seg.pt  # Changed default to nano version (known to download)
+# source: ${VOC_ROOT}/images/test2007 # REMOVED: Will be constructed from --dataset/--tag args
 
-# Optional parameters
-random_select: 10  # Number of images to randomly select if source is a directory
-conf: 0.25  # Confidence threshold
+# Output control
+project: runs/segment  # Root directory for results
+# name: predict_seg     # REMOVED: Will be provided via --name argument
+
+# Optional prediction parameters
+conf: 0.5  # Confidence threshold
 iou: 0.7  # IoU threshold for NMS
 imgsz: 640  # Inference size (pixels)
 max_det: 300  # Maximum detections per image
-device: ''  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-save: True  # Save results
-save_txt: True  # Save results in .txt format
-save_conf: True  # Save confidences in --save-txt labels
+device: '0'  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+save: True  # Save results (images with overlays)
+save_txt: False # Save results in .txt format (YOLO label format)
+save_conf: True # Save confidences in --save-txt labels
+save_crop: False # Save cropped detection images
+show: False # Show results in a window
+exist_ok: True # Allow overwriting existing timestamped folder
+classes: null # Filter results by class, e.g. [0, 1, 5]
+agnostic_nms: True # Use class-agnostic NMS
 retina_masks: True  # Use high-quality segmentation masks
-overlap_mask: True  # Allow masks to overlap
+boxes: True  # Plot bounding boxes on segmentation masks
