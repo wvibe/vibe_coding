@@ -9,13 +9,14 @@
 
 - **Configuration:**
   - Dataset configurations (e.g., `voc_detect.yaml`) follow the Ultralytics format for training/finetuning.
-  - Prediction uses separate YAML configs (e.g., `predict_demo.yaml`) specifying model, source, output project dir, Ultralytics prediction args (`conf`, `imgsz`, `save_txt`, `save`, etc.), and custom args (`random_select`).
-- **Prediction (New Script):** A script (`predict_detect.py`) provides a command-line interface to run pre-trained YOLOv11 detection models.
-  - Takes `--config <yaml_path>` and `--name-prefix <prefix>` as input.
+  - Prediction uses separate YAML configs (e.g., `predict_detect.yaml`) specifying model, output project dir, and Ultralytics prediction args (`conf`, `imgsz`, `save_txt`, `save`, etc.).
+- **Prediction Scripts:** The scripts (`predict_detect.py`, `predict_segment.py`) provide a command-line interface to run pre-trained YOLOv11 models.
+  - Takes `--config <yaml_path>`, `--dataset <dataset_id>`, `--tag <split_tag>`, and `--name <run_name>` as input.
   - Reads parameters from the specified YAML config.
-  - Handles single image files or directories as `source`.
-  - Supports random selection of N images if `source` is a directory and `random_select: N` is set in config.
-  - Saves results to `<config.project>/<name-prefix>_<timestamp>/`.
+  - Constructs the source path from dataset and tag (`${DATASET_BASE_PATH}/images/{tag}`).
+  - Supports random selection of N images if `--sample_count N` is specified.
+  - Saves results to `<config.project>/<name>_<timestamp>/`.
+  - Calculates and reports prediction time statistics (wall clock time, FPS, component times).
   - Leverages `ultralytics.YOLO.predict` for core logic and output generation (annotated images if `save: True`, YOLO labels if `save_txt: True`).
 - **Training/Finetuning:** A script (`train_detect.py`) allows finetuning pre-trained models or training from scratch on custom datasets (like VOC).
   - Takes `--config <yaml_path>` and `--name <run_name>` as input.

@@ -1,18 +1,25 @@
-# predict_demo.yaml: Demo config for predict_detect.py
+# YOLOv11 detection prediction configuration
+# See README.md for details
 
-# Required parameters
-model: yolo11l.pt  # Example model, can be changed
-source: /home/ubuntu/vibe/hub/datasets/VOC/images/test2007
-project: runs/predict/detect # Base directory for output runs
+# Required
+model: yolo11l.pt  # Base detection model
+# source: removed, will be constructed from --dataset/--tag args
 
-# Optional prediction parameters (Ultralytics defaults if not specified)
-# conf: 0.25
-# imgsz: 640
-# iou: 0.7
-# max_det: 300
-save_txt: True    # Save results as YOLO labels
-save_conf: True   # Include confidence in saved labels/plots
-save: True        # Save annotated images
+# Output control
+project: runs/predict/detect  # Root directory for results
+# name: removed, will be provided via --name argument
 
-# Custom script parameters
-random_select: 10  # Predict on 5 random images if source is a directory (0 or null for all)
+# Optional prediction parameters
+conf: 0.25  # Confidence threshold
+iou: 0.7  # IoU threshold for NMS
+imgsz: 640  # Inference size (pixels)
+max_det: 300  # Maximum detections per image
+device: '0'  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+save: True  # Save results (images with overlays)
+save_txt: True  # Save results in .txt format (YOLO label format)
+save_conf: True  # Save confidences in --save-txt labels
+save_crop: False  # Save cropped detection images
+show: False  # Show results in a window
+exist_ok: True  # Allow overwriting existing timestamped folder
+classes: null  # Filter results by class, e.g. [0, 1, 5]
+agnostic_nms: True  # Use class-agnostic NMS

@@ -6,7 +6,7 @@ model: yolo11l-seg.pt  # Changed default to nano version (known to download)
 # source: ${VOC_ROOT}/images/test2007 # REMOVED: Will be constructed from --dataset/--tag args
 
 # Output control
-project: runs/segment  # Root directory for results
+project: runs/predict/segment  # Root directory for results
 # name: predict_seg     # REMOVED: Will be provided via --name argument
 
 # Optional prediction parameters

@@ -21,6 +21,7 @@
   - [x] Implement source handling (file/dir/random select)
   - [x] Implement core prediction logic using `model.predict`
   - [x] Add entry point & docstrings
+  - [x] Redesign to match segmentation script interface: dataset/tag-based source, sample_count, statistics
 - [ ] Milestone 4: Training/Finetuning Script (Detection on VOC)
   - [x] Create training configs (`voc_finetune.yaml`, `voc_retrain.yaml`)
   - [x] Create script `train_detect.py` (adapting `train_yolov8.py`)

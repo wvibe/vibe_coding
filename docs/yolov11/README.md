@@ -22,14 +22,12 @@ This directory contains code and documentation related to experiments with YOLOv
 
 ### Prediction (Detection)
 
-The `predict_detect.py` script runs inference using a YOLOv11 model based on parameters defined in a YAML configuration file. It supports command-line overrides.
+The `predict_detect.py` script runs inference using a YOLOv11 model based on parameters defined in a YAML configuration file. It supports command-line arguments for dataset selection and limited overrides.
 
-**Configuration (`src/models/ext/yolov11/configs/predict_*.yaml`):**
+**Configuration (`src/models/ext/yolov11/configs/predict_detect.yaml`):**
 
 - `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt`).
-- `source`: Path to the input image or directory.
 - `project`: Base directory to save output runs (e.g., `runs/predict/detect`).
-- `random_select`: (Optional) Number of images to randomly select if `source` is a directory.
 - Other optional keys correspond to `ultralytics.YOLO.predict` arguments (e.g., `conf`, `imgsz`, `save`, `save_txt`, `save_conf`, `device`).
 
 **Command-Line:**
@@ -37,29 +35,50 @@ The `predict_detect.py` script runs inference using a YOLOv11 model based on par
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
     --config <path_to_config.yaml> \
-    --name-prefix <your_run_prefix> \
-    [--<param_to_override> <value>] # Optional overrides
+    --dataset <dataset_id> \
+    --tag <split_tag> \
+    --name <your_run_name> \
+    [--device <device_id>] \
+    [--save <True|False>] \
+    [--show <True|False>] \
+    [--sample_count <N>]
 ```
 
-**Example (using demo config):**
+**Arguments:**
+
+- `--config`: Path to the YAML configuration file. *Required.*
+- `--dataset`: Dataset identifier (e.g., `voc`). Must have a corresponding `*_DETECT` environment variable defined in `.env` (e.g., `VOC_DETECT`). Default: `voc`.
+- `--tag`: The specific split/tag for the dataset (e.g., `val2007`, `test2007`). The script looks for images in `${DATASET_BASE_PATH}/images/{tag}`. *Required.*
+- `--name`: The name for this specific prediction run. This will be the name of the output directory created under the `project` specified in the config file. *Required.*
+- `--device` (optional): Override the compute device specified in the config file. If omitted, the config value is used.
+- `--save` (optional): Override whether to save annotated images (True/False). If omitted, the config value is used.
+- `--show` (optional): Override whether to display results in a window (True/False). If omitted, the config value is used.
+- `--sample_count` (optional): Randomly sample `N` images from the source directory. Processes all if omitted.
+
+**Example (using default config on VOC test2007):**
 
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
     --config src/models/ext/yolov11/configs/predict_detect.yaml \
-    --name-prefix demo_voc_test
+    --dataset voc \
+    --tag test2007 \
+    --name voc_test2007_detect_run1
 ```
 
-**Example (overriding model and confidence):**
+**Example (using specific device and random sampling):**
 
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
     --config src/models/ext/yolov11/configs/predict_detect.yaml \
-    --name-prefix demo_voc_yolo11s_conf50 \
-    --model yolo11s.pt \
-    --conf 0.5
+    --dataset voc \
+    --tag val2007 \
+    --name voc_val2007_detect_run2 \
+    --device cpu \
+    --save True \
+    --sample_count 10
 ```
 
-Results are saved to `<config.project>/<name-prefix>_<timestamp>/`.
+Results are saved to `<config.project>/<name>_<timestamp>/`.
 
 ### Prediction (Segmentation)
 
