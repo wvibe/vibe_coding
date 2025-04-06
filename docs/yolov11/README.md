@@ -63,34 +63,73 @@ Results are saved to `<config.project>/<name-prefix>_<timestamp>/`.
 
 ### Prediction (Segmentation)
 
-The `predict_segment.py` script runs instance segmentation inference using a YOLOv11 segmentation model. It follows the same structure and pattern as the detection script.
+The `predict_segment.py` script runs instance segmentation inference using a YOLOv11 segmentation model.
+It requires a YAML configuration file for model and inference settings, and command-line arguments
+to specify the target dataset split and the output run name.
 
 **Configuration (`src/models/ext/yolov11/configs/predict_segment.yaml`):**
 
-- `model`: Path to the segmentation model (`.pt`) or Ultralytics model name (e.g., `yolo11n-seg.pt`).
-- `source`: Path to the input image or directory.
-- `project`: Base directory to save output runs (e.g., `runs/predict/segment`).
-- `random_select`: (Optional) Number of images to randomly select if `source` is a directory.
-- Additional segmentation parameters like `retina_masks` and `overlap_mask`.
+- Defines model and inference parameters.
+- `model`: Path to the segmentation model (`.pt`) or Ultralytics model name (e.g., `yolo11n-seg.pt`). *Required.*
+- `project`: Base directory to save output runs (e.g., `runs/segment`). *Required.*
+- Other optional keys correspond to `ultralytics.YOLO.predict` arguments for segmentation (e.g., `conf`, `iou`, `imgsz`, `max_det`, `device`, `save`, `save_txt`, `save_conf`, `save_crop`, `show`, `exist_ok`, `classes`, `agnostic_nms`, `retina_masks`, `boxes`). Refer to the YAML comments for defaults/details.
+- **Note:** `source` and `name` are *not* set here; they are provided via command-line arguments.
 
 **Command-Line:**
 
 ```bash
+# Activate environment if needed (e.g., conda activate vbl)
+# Ensure .env file is present at project root for dataset path resolution
+
 python -m src.models.ext.yolov11.predict_segment \
     --config <path_to_config.yaml> \
-    --name-prefix <your_run_prefix> \
-    [--<param_to_override> <value>] # Optional overrides
+    --dataset <dataset_id> \
+    --tag <split_tag> \
+    --name <your_run_name> \
+    [--device <device_id>] \
+    [--save <True|False>] \
+    [--show <True|False>] \
+    [--sample_count <N>]
 ```
 
-**Example:**
+**Arguments:**
+
+- `--config`: Path to the YAML configuration file (e.g., `src/models/ext/yolov11/configs/predict_segment.yaml`). *Required.*
+- `--dataset`: Dataset identifier (e.g., `voc`). Must have a corresponding `*_SEGMENT` environment variable defined in `.env` (e.g., `VOC_SEGMENT`). Default: `voc`.
+- `--tag`: The specific split/tag for the dataset (e.g., `val2007`, `test2007`). The script looks for images in `${DATASET_BASE_PATH}/images/{tag}`. *Required.*
+- `--name`: The name for this specific prediction run. This will be the name of the output directory created under the `project` specified in the config file. *Required.*
+- `--device` (optional): Override the compute device specified in the config file. If omitted, the config value is used.
+- `--save` (optional): Override whether to save annotated images (True/False). If omitted, the config value is used.
+- `--show` (optional): Override whether to display results in a window (True/False). If omitted, the config value is used.
+- `--sample_count` (optional): Randomly sample `N` images from the source directory. Processes all if omitted.
+
+**Example (using default config on VOC val2007):**
 
 ```bash
 python -m src.models.ext.yolov11.predict_segment \
     --config src/models/ext/yolov11/configs/predict_segment.yaml \
-    --name-prefix segment_test
+    --dataset voc \
+    --tag val2007 \
+    --name voc_val2007_predict_run1
 ```
 
-Results are saved to `<config.project>/<name-prefix>_<timestamp>/`. The segmentation masks are saved as overlays on the original images, and as text files with mask coordinates if `save_txt` is enabled.
+**Example (using specific device and disabling saving):**
+
+```bash
+python -m src.models.ext.yolov11.predict_segment \
+    --config src/models/ext/yolov11/configs/predict_segment.yaml \
+    --dataset voc \
+    --tag test2007 \
+    --name voc_test2007_predict_run2 \
+    --device cpu \
+    --save False
+```
+
+**Output:**
+
+- Results are saved to `<config.project>/<name>_<timestamp>/` (e.g., `runs/segment/voc_val2007_predict_run1_<timestamp>/`).
+- The console output includes logs of the configuration, process, and prediction time statistics (total time, average time per image (wall clock), FPS (wall clock), and average preprocess/inference/postprocess times reported by Ultralytics).
+- Annotated images are saved if `save: True` (either in config or via `--save True`).
 
 ### Training (Detection)
 
