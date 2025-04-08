@@ -71,7 +71,7 @@ class VOC2YOLOConverter:
         year: str,
         tag: str,
         image_ids: Optional[List[str]] = None,
-        connect_parts: bool = False,
+        connect_parts: bool = True,
         min_contour_area: float = MIN_CONTOUR_AREA,
     ):
         """
@@ -252,7 +252,8 @@ class VOC2YOLOConverter:
         h, w = class_mask.shape[:2]
         if h <= 0 or w <= 0:
             logger.warning(
-                f"Invalid class_mask shape {class_mask.shape} for {img_id}, cannot process instance {instance_id}"
+                f"Invalid class_mask shape {class_mask.shape} for {img_id}, "
+                f"cannot process instance {instance_id}"
             )
             return None
 
@@ -316,15 +317,8 @@ class VOC2YOLOConverter:
             return False, 0, 0
 
         # 2. Load class mask
-        try:
-            class_mask = np.array(Image.open(str(class_mask_path)))
-            logger.debug(f"Successfully loaded class mask with PIL: {class_mask_path}")
-            logger.debug(f"Class mask unique values: {np.unique(class_mask)}")
-        except Exception as e:
-            logger.warning(
-                f"Failed to load class segmentation mask with PIL: {class_mask_path}. "
-                f"Error: {e}. Class names may be 'Unknown'."
-            )
+        class_mask = self._load_class_mask(class_mask_path, img_id)
+        if class_mask is None:
             return False, 0, 0
 
         # 3. Read mask and extract instances
@@ -337,11 +331,36 @@ class VOC2YOLOConverter:
             logger.info(f"No instances found in mask {mask_path} for {img_id}.")
             return False, 0, 0
 
+        # 4. Process instances and generate output lines
+        return self._process_instances_and_write(instance_masks, class_mask, img_id, output_path)
+
+    def _load_class_mask(self, class_mask_path: Path, img_id: str) -> Optional[np.ndarray]:
+        """Load and return the class segmentation mask."""
+        try:
+            class_mask = np.array(Image.open(str(class_mask_path)))
+            logger.debug(f"Successfully loaded class mask with PIL: {class_mask_path}")
+            logger.debug(f"Class mask unique values: {np.unique(class_mask)}")
+            return class_mask
+        except Exception as e:
+            logger.warning(
+                f"Failed to load class segmentation mask with PIL: {class_mask_path}. "
+                f"Error: {e}. Class names may be 'Unknown'."
+            )
+            return None
+
+    def _process_instances_and_write(
+        self,
+        instance_masks: Dict[int, np.ndarray],
+        class_mask: np.ndarray,
+        img_id: str,
+        output_path: Path,
+    ) -> Tuple[bool, int, int]:
+        """Process all instances in the mask and write results to file."""
         # Track the number of unique instance IDs
         instance_count = len(instance_masks)
         polygon_count = 0
 
-        # 4. Process each instance
+        # Process each instance
         output_lines = []
         for instance_id, binary_mask in instance_masks.items():
             instance_lines = self._process_instance(instance_id, binary_mask, class_mask, img_id)
@@ -350,13 +369,14 @@ class VOC2YOLOConverter:
                 polygons_for_instance = len(instance_lines)
                 if polygons_for_instance > 1 and not self.connect_parts:
                     logger.info(
-                        f"Instance {instance_id} in {img_id} generated {polygons_for_instance} separate polygons"
+                        f"Instance {instance_id} in {img_id} generated "
+                        f"{polygons_for_instance} separate polygons"
                     )
 
                 polygon_count += polygons_for_instance
                 output_lines.extend(instance_lines)
 
-        # 5. Write output file
+        # Write output file
         if output_lines:
             try:
                 with open(output_path, "w") as f:
@@ -365,7 +385,8 @@ class VOC2YOLOConverter:
                 # Only log if there's a mismatch between instance count and polygon count
                 if polygon_count != instance_count:
                     logger.info(
-                        f"Image {img_id}: {instance_count} unique instances generated {polygon_count} polygon lines"
+                        f"Image {img_id}: {instance_count} unique instances generated "
+                        f"{polygon_count} polygon lines"
                     )
                 return True, instance_count, polygon_count
             except IOError as e:
@@ -459,7 +480,8 @@ class VOC2YOLOConverter:
         )
         if total_polygons > total_instances:
             logger.warning(
-                f"Found {total_polygons - total_instances} additional polygons than instances, likely due to disconnected regions in masks"
+                f"Found {total_polygons - total_instances} additional polygons than instances, "
+                f"likely due to disconnected regions in masks"
             )
 
         return success_count, skipped_count, fail_count
@@ -566,15 +588,16 @@ def parse_args():
         help="Seed for random sampling. Default: 42.",
     )
     parser.add_argument(
-        "--connect-parts",
-        action="store_true",
-        help="Connect disconnected parts of the same instance into a single polygon with straight lines",
+        "--no-connect-parts",
+        action="store_false",
+        dest="connect_parts",
+        help="Do NOT connect disconnected parts of the same instance into a single polygon",
     )
     parser.add_argument(
         "--min-contour-area",
         type=float,
         default=MIN_CONTOUR_AREA,
-        help=f"Minimum contour area to consider for polygon conversion. Default: {MIN_CONTOUR_AREA}",
+        help=f"Minimum contour area for polygon conversion. Default: {MIN_CONTOUR_AREA}",
     )
     return parser.parse_args()
 
@@ -807,9 +830,15 @@ def main():
     logger.info("Starting VOC to YOLO segmentation conversion.")
     logger.info(f"Years to process: {years}")
     logger.info(f"Tags to process: {tags}")
-    if args.connect_parts:
+    if not args.connect_parts:
         logger.info(
-            f"Connecting disconnected parts of the same instance with straight lines (min area={args.min_contour_area})"
+            f"NOT connecting disconnected parts of the same instance "
+            f"(min area={args.min_contour_area})"
+        )
+    else:
+        logger.info(
+            f"Connecting disconnected parts of the same instance with straight lines "
+            f"(min area={args.min_contour_area})"
         )
 
     # --- Collect all image IDs --- #

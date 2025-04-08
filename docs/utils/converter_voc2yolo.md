@@ -171,14 +171,14 @@ python -m src.utils.data_converter.voc2yolo_segment_labels \
     [--voc-root /path/to/VOC] \
     [--output-root /path/to/output] \
     [--sample-count N] \
-    [--connect-parts] \
+    [--no-connect-parts] \
     [--min-contour-area AREA] \
     [--seed <SEED>]
 ```
 
 - `--years`, `--tags`, `--voc-root`, `--output-root`: Similar to `voc2yolo_detect_labels.py`.
 - `--sample-count`: (Optional) Randomly sample N images *total* across all specified splits. If not set, processes all images.
-- `--connect-parts`: (Optional) Connect disconnected parts of the same instance into a single complex polygon. When enabled, all disconnected parts of the same instance ID will be joined with straight lines to form a single polygon.
+- `--no-connect-parts`: (Optional) Disable the default behavior of connecting disconnected parts of the same instance into a single polygon. When this flag is not used (default behavior), all disconnected parts of the same instance ID will be joined with straight lines to form a single polygon.
 - `--min-contour-area`: (Optional) Minimum area threshold for contours (in pixels squared). Contours smaller than this value will be filtered out. Only applicable when processing segmentation masks.
 - `--seed`: (Optional) Seed for random sampling (default: 42).
 - ~`--skip-difficult`~: (Removed - Difficulty is not directly handled as class is from class mask).
@@ -229,13 +229,15 @@ This conversion relies on matching instance IDs from `SegmentationObject` masks 
 
 ### Handling Disconnected Instance Parts
 
-When the `--connect-parts` option is enabled, the script connects disconnected parts of the same instance into a single complex polygon using the following approach:
+By default, the script connects disconnected parts of the same instance into a single complex polygon using the following approach:
 
 1. **Contour Ordering**: Contours are ordered using a greedy nearest-neighbor algorithm that minimizes the total connection distance.
 2. **Point-to-Point Matching**: For each pair of adjacent contours, the algorithm finds the closest points between them to create the connection.
 3. **Single Complex Polygon**: The result is a single polygon that preserves the detailed outline of each part while creating a continuous boundary around all visible parts of the instance.
 
 This approach is particularly useful for handling instances that appear as multiple disconnected regions in the image (e.g., an object partially occluded or split by another object).
+
+If you prefer to have each part as a separate polygon, you can use the `--no-connect-parts` flag.
 
 ### Logging Behavior
 
@@ -259,4 +261,4 @@ The script implements intelligent logging that reduces verbosity for normal oper
 
 - Creates label files in `<output_root>/segment/labels/<tag><year>/`
 - Format: One object instance per line: `<class_index> <x1_norm> <y1_norm> <x2_norm> <y2_norm> ...` (space-separated, normalized coordinates).
-- When `--connect-parts` is enabled, each instance will be represented by a single line, even if it appears as multiple disconnected regions in the image.
+- By default, each instance will be represented by a single line, even if it appears as multiple disconnected regions in the image. If you use the `--no-connect-parts` flag, each disconnected part will be represented as a separate polygon.

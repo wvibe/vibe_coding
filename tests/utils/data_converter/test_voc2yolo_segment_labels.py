@@ -30,16 +30,16 @@ def mock_converter() -> VOC2YOLOConverter:
     # Use dummy paths as they are not directly used in the tested methods
     mock_voc_root = MagicMock()
     mock_output_root = MagicMock()
-    return VOC2YOLOConverter(mock_voc_root, mock_output_root, "2012", "test")
+    return VOC2YOLOConverter(mock_voc_root, mock_output_root, "2012", "test", connect_parts=True)
 
 
 @pytest.fixture
-def mock_converter_with_connect_parts() -> VOC2YOLOConverter:
-    """Create a mock converter with connect_parts=True for testing."""
+def mock_converter_without_connect_parts() -> VOC2YOLOConverter:
+    """Create a mock converter with connect_parts=False for testing."""
     mock_voc_root = MagicMock()
     mock_output_root = MagicMock()
     return VOC2YOLOConverter(
-        mock_voc_root, mock_output_root, "2012", "test", connect_parts=True, min_contour_area=1.0
+        mock_voc_root, mock_output_root, "2012", "test", connect_parts=False, min_contour_area=1.0
     )
 
 
@@ -97,14 +97,14 @@ def test_converter_constructor_with_connect_parts():
     mock_voc_root = MagicMock()
     mock_output_root = MagicMock()
 
-    # Test with connect_parts=True
-    converter = VOC2YOLOConverter(
-        mock_voc_root, mock_output_root, "2012", "test", connect_parts=True
-    )
+    # Test with connect_parts=True (default)
+    converter = VOC2YOLOConverter(mock_voc_root, mock_output_root, "2012", "test")
     assert converter.connect_parts is True
 
-    # Test with connect_parts=False (default)
-    converter = VOC2YOLOConverter(mock_voc_root, mock_output_root, "2012", "test")
+    # Test with connect_parts=False
+    converter = VOC2YOLOConverter(
+        mock_voc_root, mock_output_root, "2012", "test", connect_parts=False
+    )
     assert converter.connect_parts is False
 
     # Test with custom min_contour_area
@@ -270,10 +270,10 @@ def test_process_instance(mock_match_class, mock_polygons, mock_converter, sampl
 @patch(
     "src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._match_instance_to_class"
 )
-def test_process_instance_with_connect_parts(
-    mock_match_class, mock_polygons, mock_converter_with_connect_parts, sample_class_mask_array
+def test_process_instance_default_connect_parts(
+    mock_match_class, mock_polygons, mock_converter, sample_class_mask_array
 ):
-    """Test processing instance with connect_parts=True."""
+    """Test processing instance with default connect_parts=True."""
     instance_id = 1
     binary_mask_1 = np.array(
         [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
@@ -283,7 +283,7 @@ def test_process_instance_with_connect_parts(
     mock_polygons.return_value = [[0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0]]  # Mock polygon
     mock_match_class.return_value = "person"
 
-    result = mock_converter_with_connect_parts._process_instance(
+    result = mock_converter._process_instance(
         instance_id, binary_mask_1, sample_class_mask_array, "img001"
     )
 
@@ -298,7 +298,46 @@ def test_process_instance_with_connect_parts(
         binary_mask=binary_mask_1,
         img_shape=(h, w),
         connect_parts=True,  # Key check for this test
-        min_contour_area=mock_converter_with_connect_parts.min_contour_area,
+        min_contour_area=mock_converter.min_contour_area,
+    )
+    mock_match_class.assert_called_once_with(
+        binary_mask_1, sample_class_mask_array, instance_id, "img001"
+    )
+
+
+@patch("src.utils.data_converter.voc2yolo_segment_labels.mask_to_yolo_polygons")
+@patch(
+    "src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._match_instance_to_class"
+)
+def test_process_instance_without_connect_parts(
+    mock_match_class, mock_polygons, mock_converter_without_connect_parts, sample_class_mask_array
+):
+    """Test processing instance with connect_parts=False."""
+    instance_id = 1
+    binary_mask_1 = np.array(
+        [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
+    )
+
+    # Mock return values
+    mock_polygons.return_value = [[0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0]]  # Mock polygon
+    mock_match_class.return_value = "person"
+
+    result = mock_converter_without_connect_parts._process_instance(
+        instance_id, binary_mask_1, sample_class_mask_array, "img001"
+    )
+
+    assert result is not None
+    assert len(result) == 1
+    expected_line = "14 0.000000 0.000000 0.000000 0.250000 0.250000 0.250000 0.250000 0.000000"
+    assert result[0] == expected_line
+
+    # Check that mock_polygons was called correctly with connect_parts=False
+    h, w = sample_class_mask_array.shape[:2]
+    mock_polygons.assert_called_once_with(
+        binary_mask=binary_mask_1,
+        img_shape=(h, w),
+        connect_parts=False,  # Key check for this test
+        min_contour_area=mock_converter_without_connect_parts.min_contour_area,
     )
     mock_match_class.assert_called_once_with(
         binary_mask_1, sample_class_mask_array, instance_id, "img001"
