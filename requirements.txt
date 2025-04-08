@@ -3,12 +3,14 @@ matplotlib>=3.7.0
 numpy>=1.24.0
 torch>=2.0.0
 torchvision>=0.15.0
+torchaudio
+ultralytics==8.2.64
+pandas
 
 # Computer Vision
 albumentations>=1.0.0
-opencv-python>=4.9.0
+opencv-python-headless>=4.9.0
 pillow>=10.0.0
-ultralytics>=8.0.0
 
 # Transformers & NLP
 datasets>=2.0.0
@@ -18,11 +20,12 @@ transformers>=4.0.0
 jinja2>=3.0
 pydantic>=2.0
 python-dotenv>=1.0.0
-pyyaml>=6.0
+pyyaml
 requests>=2.0.0
 scikit-learn>=1.0.0
 seaborn>=0.12.0
 tqdm>=4.65.0
+pycocotools
 
 # Logging & Experiment Tracking
 wandb>=0.16.0
@@ -31,6 +34,16 @@ wandb>=0.16.0
 black>=23.0.0
 pytest>=7.0.0
 ruff>=0.1.0
+pytest-cov
+pre-commit
 
 # Added TensorBoard
 tensorboard>=2.19.0
+
+# Notebooks
+jupyterlab
+ipykernel
+nbformat
+
+# Optional/Specific Use Cases
+gradio

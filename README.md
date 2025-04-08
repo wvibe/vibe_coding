@@ -134,6 +134,65 @@ A script is provided to train or fine-tune YOLOv8 models on configured datasets.
 
 4.  **Output:** Training progress will be displayed in the terminal. Results, including trained model weights (`best.pt`, `last.pt`) and logs, will be saved to the directory specified by the `--project` and `--name` parameters. If wandb is enabled and configured, metrics will also be logged there.
 
+## YOLOv11 Detection Training
+
+A similar script is provided for training YOLOv11 detection models.
+
+### Configuration
+
+1.  **Dataset Definition:** Similar to YOLOv8, define dataset paths and classes in a dedicated YAML file (e.g., `src/models/configs/datasets/voc_detect.yaml`). Ensure paths are correct relative to the project root or absolute.
+2.  **Training Parameters:** Create a main training YAML (e.g., `src/models/configs/training/voc11_finetune_config.yaml`). This file specifies:
+    *   `model`: Path to the base model (`.pt`) for fine-tuning or architecture (`.yaml`) for scratch.
+    *   `data`: Path (relative to project root) to the dataset definition YAML.
+    *   Training hyperparameters (epochs, batch, imgsz, optimizer, lr0, device, etc.).
+    *   `project`: (Optional) Base directory for saving runs (defaults to `runs/train/detect`).
+
+### Running Training
+
+1.  **Activate Environment:** Ensure the `vbl` conda environment is active:
+    ```bash
+    conda activate vbl
+    ```
+2.  **Login to Wandb (Optional but Recommended):** If using Weights & Biases:
+    ```bash
+    wandb login
+    ```
+3.  **Run the Script:** Execute from the project root (`vibe_coding/`).
+
+    *   **Fine-tuning Example:**
+        ```bash
+        python src/models/ext/yolov11/train_detect.py \
+            --config src/models/configs/training/voc11_finetune_config.yaml \
+            --name voc11_finetune_run1
+        ```
+    *   **Training from Scratch Example (assuming a `voc11_scratch_config.yaml` exists):**
+        ```bash
+        python src/models/ext/yolov11/train_detect.py \
+            --config src/models/configs/training/voc11_scratch_config.yaml \
+            --name voc11_scratch_run1
+        ```
+    *   **Resuming a Run Example:**
+        Provide the path to the specific run directory you want to resume.
+        ```bash
+        # Example assuming the run to resume is runs/train/detect/voc11_finetune_run1_20240801_100000
+        python src/models/ext/yolov11/train_detect.py \
+            --config src/models/configs/training/voc11_finetune_config.yaml \
+            --resume_with runs/train/detect/voc11_finetune_run1_20240801_100000 \
+            --name voc11_finetune_run1 # Base name is still required but overridden by resume_with path
+            # [--wandb-dir path/to/wandb/root] # Optional: Specify if wandb dir is not ./wandb
+        ```
+        **Note on Resuming WandB:** The script will automatically attempt to find the corresponding WandB run ID within the directory specified by `--wandb-dir` (defaulting to `./wandb`) based on the run name in the Ultralytics directory (`voc11_finetune_run1_20240801_100000` in this example). If found, it resumes the WandB log; otherwise, it starts a new WandB run.
+
+    *   **Overriding Project Directory Example:**
+        ```bash
+        python src/models/ext/yolov11/train_detect.py \
+            --config src/models/configs/training/voc11_scratch_config.yaml \
+            --project runs/yolov11_experiments \
+            --name voc11_scratch_run2
+        ```
+
+4.  **Output:** Results are saved similarly to YOLOv8, within the directory defined by `--project` and the specific run name (e.g., `voc11_finetune_run1_YYYYMMDD_HHMMSS`).
+
 ## Data Conversion (VOC to YOLO)
 
 Scripts are provided to convert Pascal VOC datasets (detection and segmentation annotations) into the YOLO format required by many training libraries.

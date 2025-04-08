@@ -16,6 +16,21 @@ import yaml
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
+# --- Vibe Imports --- #
+# Assuming src is in PYTHONPATH or handled by execution environment
+try:
+    from utils.common.wandb_utils import find_wandb_run_id
+except ImportError:
+    # Fallback if run directly and utils path needs adjustment
+    project_root_for_import = Path(__file__).resolve().parents[4]
+    sys.path.insert(0, str(project_root_for_import / "src"))
+    try:
+        from utils.common.wandb_utils import find_wandb_run_id
+    except ImportError as e:
+        logging.error("Could not import find_wandb_run_id. Ensure src is in PYTHONPATH.")
+        raise e
+# --- End Vibe Imports --- #
+
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -47,12 +62,26 @@ def load_config(config_path: Path) -> dict:
         raise
 
 
+def _validate_and_get_data_config_path(main_config: dict, project_root: Path) -> Path:
+    """Validates and resolves the data config path from the main config."""
+    relative_data_config_path = main_config.get("data")
+    if not relative_data_config_path:
+        raise ValueError("Missing 'data' key in the main training configuration.")
+    absolute_data_config_path = (project_root / relative_data_config_path).resolve()
+    if not absolute_data_config_path.is_file():
+        raise FileNotFoundError(
+            f"Data config file specified in main config not found: {absolute_data_config_path}"
+        )
+    logging.info(f"Using data config file: {absolute_data_config_path}")
+    return absolute_data_config_path
+
+
 def _determine_run_params(args: argparse.Namespace, main_config: dict, project_root: Path) -> tuple:
-    """Determines model path, run name, resume flag, and wandb ID."""
+    """Determines model path, run name, resume flag, and attempts to find wandb ID on resume."""
     model_to_load = None
     name_to_use = args.name  # Base name, might be modified
     resume_flag = False
-    wandb_id_to_use = args.wandb_id  # From CLI arg
+    wandb_id_to_use = None  # Default to None
 
     if args.resume_with:
         logging.info(f"Attempting to resume training from: {args.resume_with}")
@@ -86,16 +115,19 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
                 )
             # If it matches the base name, no warning needed as timestamp is the difference
 
-        # --wandb-id is handled later in _setup_wandb
-        if args.wandb_id:
+        # --- Attempt to find WandB ID automatically --- #
+        logging.info(f"Attempting to find corresponding WandB run ID in: {args.wandb_dir}")
+        wandb_id_to_use = find_wandb_run_id(str(resume_dir), args.wandb_dir)
+        if wandb_id_to_use:
             logging.info(
-                f"Will attempt to resume WandB run using provided --wandb-id: {args.wandb_id}"
+                f"Automatically found WandB run ID: {wandb_id_to_use}. Will attempt to resume."
             )
         else:
-            logging.info(
-                "No --wandb-id provided for resume. WandB logging (if enabled) "
-                "will start as a new run."
+            logging.warning(
+                f"Could not automatically find a matching WandB run ID for {name_to_use} "
+                f"in {args.wandb_dir}. WandB (if enabled) will start as a new run."
             )
+        # --- End WandB ID Lookup --- #
 
     else:
         # New run
@@ -103,16 +135,10 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
         name_to_use = f"{args.name}_{timestamp}"
         model_to_load = main_config.get("model")
         resume_flag = False  # Explicitly false
+        wandb_id_to_use = None  # New runs don't automatically reuse IDs
         logging.info(f"Starting new run with name: {name_to_use}")
         if not model_to_load:
             raise ValueError("Missing 'model' key in configuration for new run.")
-
-        # Handle wandb_id for new run
-        if args.wandb_id:
-            logging.warning(
-                f"Using provided --wandb-id {args.wandb_id} for a new run. Ensure this is intended."
-            )
-            # wandb_id_to_use already assigned from args
 
     return model_to_load, name_to_use, resume_flag, wandb_id_to_use
 
@@ -123,6 +149,7 @@ def _setup_wandb(wandb_id: str | None, resume_flag: bool):
         if resume_flag:
             logging.info(f"Setting up WandB to resume run ID: {wandb_id}")
         else:
+            # This case is less likely now as we don't automatically assign IDs to new runs
             logging.info(f"Setting up WandB with provided run ID: {wandb_id}")
         os.environ["WANDB_RESUME"] = "allow"
         os.environ["WANDB_RUN_ID"] = wandb_id
@@ -207,7 +234,7 @@ def run_training_pipeline(args: argparse.Namespace):
     project_root = get_project_root()
     logging.info(f"Project Root: {project_root}")
 
-    # --- Load .env --- # Should be loaded early
+    # --- Load .env --- #
     dotenv_path = project_root / ".env"
     if dotenv_path.exists():
         load_dotenv(dotenv_path=dotenv_path)
@@ -215,34 +242,16 @@ def run_training_pipeline(args: argparse.Namespace):
     else:
         logging.info(".env file not found, proceeding without it.")
 
-    # --- Load Main Training Configuration --- #
-    config_path_rel = args.config
-    config_path_abs = (project_root / config_path_rel).resolve()
+    # --- Load and Validate Configurations --- #
     try:
+        config_path_abs = (project_root / args.config).resolve()
         main_config = load_config(config_path_abs)
-    except Exception as e:
-        logging.error(f"Failed to load main config '{config_path_abs}': {e}")
+        absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
+        logging.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    # --- Resolve and Validate Data Config Path --- #
-    absolute_data_config_path = None
-    try:
-        relative_data_config_path = main_config.get("data")
-        if not relative_data_config_path:
-            raise ValueError("Missing 'data' key in the main training configuration.")
-        absolute_data_config_path = (project_root / relative_data_config_path).resolve()
-        if not absolute_data_config_path.is_file():
-            raise FileNotFoundError(
-                f"Data config file specified in main config not found: {absolute_data_config_path}"
-            )
-        logging.info(f"Using data config file: {absolute_data_config_path}")
-        # Optionally load/validate contents here if needed, but YOLO will do it.
-
-    except (FileNotFoundError, ValueError) as e:
-        logging.error(f"Data config path error: {e}")
-        sys.exit(1)
-
-    # --- Determine Run Parameters --- #
+    # --- Determine Run Parameters (includes auto WandB ID lookup) --- #
     try:
         model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(
             args, main_config, project_root
@@ -268,7 +277,7 @@ def run_training_pipeline(args: argparse.Namespace):
         # Error already logged in _load_model
         sys.exit(1)
 
-    # --- Prepare Training Arguments --- # Pass absolute data config path
+    # --- Prepare Training Arguments --- #
     train_kwargs = prepare_train_kwargs(
         main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path
     )
@@ -293,14 +302,10 @@ def run_training_pipeline(args: argparse.Namespace):
 
     except Exception as e:
         logging.error(f"Error during training: {e}", exc_info=True)
-        # Let script exit naturally after logging
 
-    # Optional: Exit with error code if training failed
     if not training_successful:
         logging.error("Training did not complete successfully.")
-        # sys.exit(1) # Exit can be handled by calling script if needed
 
-    # No temporary directory cleanup needed anymore
     logging.info("Script finished.")
 
 
@@ -317,7 +322,6 @@ def main():
             "It must contain a 'data' key pointing to the dataset-specific config."
         ),
     )
-    # Removed --dataset argument
     parser.add_argument(
         "--project",
         type=str,
@@ -344,12 +348,12 @@ def main():
         ),
     )
     parser.add_argument(
-        "--wandb-id",
+        "--wandb-dir",  # Changed from --wandb-id
         type=str,
-        default=None,
+        default="wandb",  # Default WandB directory
         help=(
-            "WandB run ID to resume or use. Must be provided explicitly if resuming "
-            "WandB logging is desired."
+            "Path to the root WandB directory (e.g., 'wandb'). Used to automatically find "
+            "the run ID when resuming."
         ),
     )
 
