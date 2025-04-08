@@ -35,7 +35,7 @@ close_mosaic: 10
 # --- Execution Settings ---
 # Device: '' for auto, 'cpu', '0', '0,1'
 # Updated for 4 GPUs
-device: '0'
+device: '0,1,2,3'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
 

@@ -68,13 +68,108 @@ mkdir -p \
 echo "Created YOLO directory structure within $VOC_ROOT"
 echo ""
 
+# --- Step 4: Convert to YOLO format ---
+echo "[Step 4/5] Converting VOC data to YOLO format..."
+echo "Converting detect images (2007, 2012 - train, val, test)..."
+python -m src.utils.data_converter.voc2yolo_images \
+    --task-type detect \
+    --years 2007,2012 \
+    --tags train,val,test \
+    --voc-root "$VOC_ROOT"
+
+echo "Converting detect labels (2007, 2012 - train, val, test)..."
+python -m src.utils.data_converter.voc2yolo_detect_labels \
+    --years 2007,2012 \
+    --tags train,val,test \
+    --voc-root "$VOC_ROOT"
+
+echo "Converting segment images (2007, 2012 - train, val, test)..."
+python -m src.utils.data_converter.voc2yolo_images \
+    --task-type segment \
+    --years 2007,2012 \
+    --tags train,val,test \
+    --voc-root "$VOC_ROOT"
+
+echo "Converting segment labels (2007, 2012 - train, val, test)..."
+python -m src.utils.data_converter.voc2yolo_segment_labels \
+    --years 2007,2012 \
+    --tags train,val,test \
+    --voc-root "$VOC_ROOT"
+echo "Conversion to YOLO format completed."
+echo ""
+
+# --- Step 5: Verify File Counts ---
+echo "[Step 5/5] Verifying file counts..."
+VERIFICATION_OUTPUT=""
+ALL_MATCHED=true
+
+TASKS=("detect" "segment")
+SPLITS=("train2007" "val2007" "test2007" "train2012" "val2012")
+
+for task in "${TASKS[@]}"; do
+  VERIFICATION_OUTPUT+="
+--- Task: $task ---"
+  for split in "${SPLITS[@]}"; do
+    IMG_DIR="$VOC_ROOT/$task/images/$split"
+    LBL_DIR="$VOC_ROOT/$task/labels/$split"
+    if [ -d "$IMG_DIR" ] && [ -d "$LBL_DIR" ]; then
+      # Use find to count only files, robust against filenames with special characters
+      IMG_COUNT=$(find "$IMG_DIR" -maxdepth 1 -type f | wc -l)
+      LBL_COUNT=$(find "$LBL_DIR" -maxdepth 1 -type f | wc -l)
+      VERIFICATION_OUTPUT+="
+Split: $split - Images: $IMG_COUNT, Labels: $LBL_COUNT"
+      if [ "$IMG_COUNT" -eq "$LBL_COUNT" ]; then
+        VERIFICATION_OUTPUT+=" -> Match"
+      else
+        VERIFICATION_OUTPUT+=" -> MISMATCH"
+        ALL_MATCHED=false
+      fi
+    else
+       # Report missing directories more clearly
+       if [ ! -d "$IMG_DIR" ] && [ ! -d "$LBL_DIR" ]; then
+          VERIFICATION_OUTPUT+="
+Split: $split - Directories not found ($IMG_DIR and $LBL_DIR)"
+          # Consider if this should set ALL_MATCHED=false depending on expectations
+       elif [ ! -d "$IMG_DIR" ]; then
+          VERIFICATION_OUTPUT+="
+Split: $split - Image directory missing: $IMG_DIR"
+          ALL_MATCHED=false
+       else # LBL_DIR missing
+          VERIFICATION_OUTPUT+="
+Split: $split - Label directory missing: $LBL_DIR"
+          ALL_MATCHED=false
+       fi
+    fi
+  done
+  VERIFICATION_OUTPUT+="
+"
+done
+
+echo -e "$VERIFICATION_OUTPUT" # Use -e to interpret newline characters
+
+if $ALL_MATCHED; then
+  echo "Verification complete: All file counts match."
+else
+  echo "Verification complete: File count MISMATCH detected." >&2 # Output mismatch to stderr
+fi
+echo ""
+
+
 # --- Completion ---
 ORIGINAL_DIR=$(pwd -P) # Get the physical directory before cd-ing
 cd - > /dev/null # Go back to original directory
 echo "--------------------------------------------------"
-echo "VOC Dataset setup steps 1-3 completed successfully!"
+if $ALL_MATCHED; then
+  echo "VOC Dataset setup, conversion, and verification completed successfully!"
+else
+  echo "VOC Dataset setup and conversion completed, BUT VERIFICATION FAILED (mismatched counts)!" >&2
+fi
 echo "Original VOCdevkit is in: $VOC_ROOT/VOCdevkit"
-echo "YOLO structure created in: $VOC_ROOT/{detect,segment}"
+echo "YOLO data generated in: $VOC_ROOT/{detect,segment}"
 echo "--------------------------------------------------"
 
-exit 0
+if $ALL_MATCHED; then
+  exit 0
+else
+  exit 1 # Exit with error if verification failed
+fi
