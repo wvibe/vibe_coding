@@ -29,6 +29,7 @@ setup(
         "requests>=2.0.0",
         # Logging and experiment tracking
         "wandb>=0.16.0",
+        "tensorboard>=2.19.0",
         # Development and testing
         "pytest>=7.0.0",
         "black>=23.0.0",

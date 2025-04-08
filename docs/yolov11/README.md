@@ -152,57 +152,85 @@ python -m src.models.ext.yolov11.predict_segment \
 
 ### Training (Detection)
 
-The `train_detect.py` script initiates training (finetuning or from scratch) using a YOLOv11 model based on parameters defined in a YAML configuration file.
+The `train_detect.py` script initiates training (finetuning or from scratch) using a YOLOv11 model. It requires a main training configuration YAML and a dataset identifier or path. It automatically appends a timestamp (`_YYYYMMDD_HHMMSS`) to the provided run name for new runs and supports resuming specific previous runs.
 
-**Configuration (`src/models/ext/yolov11/configs/voc_*.yaml`):**
+**Configuration (`src/models/ext/yolov11/configs/<config_name>.yaml`):**
 
-- `model`: Path to the base model weights (`.pt`) for finetuning, or architecture YAML (`.yaml`) for scratch training (e.g., `yolo11l.pt` or `yolo11l.yaml`).
-- `data`: Path to the dataset configuration YAML (e.g., `src/models/ext/yolov11/configs/voc_detect.yaml`).
-- `project`: Base directory to save training runs (e.g., `runs/train/detect`).
-- `pretrained`: Boolean (`True` for finetuning, `False` for scratch).
+- `model`: Path to the base model weights (`.pt`) or architecture YAML (`.yaml`). *Required.*
+- `data`: Path to the *dataset-specific* configuration YAML (e.g., `src/models/ext/yolov11/configs/voc_detect.yaml`). This file should contain paths for `train`, `val`, `test` (optional) that are *relative* to the dataset base directory, along with class `names`. *Required.*
+- `project`: Base directory to save training runs (e.g., `runs/train/detect`). *Required.*
+- `pretrained`: Boolean (`True` for finetuning, `False` for scratch). Relevant only for *new* runs.
 - Other keys correspond to `ultralytics.YOLO.train` arguments (e.g., `epochs`, `batch`, `imgsz`, `optimizer`, `lr0`, `device`, etc.).
 
 **Command-Line:**
 
 ```bash
-python src/models/ext/yolov11/train_detect.py \
-    --config <path_to_training_config.yaml> \
-    --name <your_run_name> \
-    [--project <output_project_dir>] \
-    [--resume] \
-    [--wandb-id <wandb_run_id_to_resume>]
+# Start a new training run (timestamp will be appended to name)
+python src/models/ext/yolov11/train_detect.py \\
+    --config <path_to_main_training_config.yaml> \\
+    --dataset <dataset_id_or_abs_path> \\
+    --name <your_base_run_name> \\
+    [--project <output_project_dir>] \\
+    [--wandb-id <wandb_run_id_to_use_for_new_run>] # Optional
+
+# Resume a specific previous run
+python src/models/ext/yolov11/train_detect.py \\
+    --config <path_to_original_main_training_config.yaml> \\
+    --dataset <dataset_id_or_abs_path> \\
+    --resume_with <path/to/exact/run_folder_with_timestamp> \\
+    [--wandb-id <wandb_run_id_to_resume>] # Required to resume logging to the specific WandB run
 ```
+
+**Arguments:**
+
+- `--config`: Path to the main training configuration YAML file. This file must contain a `data` key pointing to the dataset-specific config file (e.g., `voc_detect.yaml`). *Required.*
+- `--dataset`: Specifies the dataset to use. Can be either:
+    - A dataset identifier (e.g., `voc`, case-insensitive). The script will look for an environment variable named `{ID}_DETECT` (e.g., `VOC_DETECT`) in `.env` to find the dataset's base directory path.
+    - An absolute path to the dataset's base directory.
+    *Required.*
+- `--project` (optional): Override the base project directory specified in the config file.
+- `--name`: Base name for the training run. A timestamp (`_YYYYMMDD_HHMMSS`) will be automatically appended to create the actual run directory for *new* runs. This argument is *ignored* if `--resume_with` is used. *Required for new runs.*
+- `--resume_with` (optional): Path to the *exact* run directory (e.g., `runs/train/detect/my_run_20231027_103000`) to resume training *checkpoint* from. If provided, the `--name` argument is ignored. The script will look for `weights/last.pt` within this directory.
+- `--wandb-id` (optional): Specify a WandB run ID.
+    - For *new* runs: Associates the new run with this specific WandB ID (use with caution).
+    - For *resuming* runs (`--resume_with`): **Required** if you want to resume logging to the existing WandB run associated with the checkpoint.
+
+**WandB Integration:**
+
+- The script integrates with WandB if it's enabled (`yolo settings wandb=True`).
+- To resume logging to a specific *existing* WandB run when using `--resume_with`, you must provide the original run's ID using the `--wandb-id` argument.
+- The automatic saving/reading of WandB IDs to a file (`wandb_info.txt`) has been removed due to potential unreliability with interrupted runs.
 
 **Example (Finetuning):**
 
 ```bash
-python src/models/ext/yolov11/train_detect.py \
-    --config src/models/ext/yolov11/configs/voc_finetune.yaml \
+# Start a new finetuning run using the 'voc' dataset ID
+python src/models/ext/yolov11/train_detect.py \\
+    --config src/models/ext/yolov11/configs/finetune_detect_voc.yaml \\
+    --dataset voc \\
     --name voc11l_finetune_run1
+# Output directory might be runs/train/detect/voc11l_finetune_run1_YYYYMMDD_HHMMSS/
 ```
 
-**Example (Training from Scratch):**
+**Example (Resuming a Specific Finetuning Run and WandB Logging):**
 
 ```bash
-python src/models/ext/yolov11/train_detect.py \
-    --config src/models/ext/yolov11/configs/voc_retrain.yaml \
-    --name voc11l_scratch_run1
+# Assume the previous run was saved to runs/train/detect/voc11l_finetune_run1_20231027_110000/
+# Assume the corresponding WandB run ID was 'abc123xyz'
+# Assume the original run used the 'voc' dataset ID
+python src/models/ext/yolov11/train_detect.py \\
+    --config src/models/ext/yolov11/configs/finetune_detect_voc.yaml \\
+    --dataset voc \\
+    --resume_with runs/train/detect/voc11l_finetune_run1_20231027_110000 \\
+    --wandb-id abc123xyz # Provide the ID to resume WandB logging
+# The --name argument is ignored.
 ```
 
-**Example (Resuming Finetuning Run):**
-
-```bash
-python src/models/ext/yolov11/train_detect.py \
-    --config src/models/ext/yolov11/configs/voc_finetune.yaml \
-    --name voc11l_finetune_run1 \
-    --resume
-```
-
-Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>/`.
+Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name_with_timestamp>/`.
 
 ### Training (Segmentation)
 
-The `train_segment.py` script initiates training (finetuning or from scratch) for YOLOv11 segmentation models using parameters from a YAML configuration file. It mirrors the detection training script.
+The `train_segment.py` script initiates training (finetuning or from scratch) for YOLOv11 segmentation models using parameters from a YAML configuration file. It mirrors the detection training script structure. (Note: The updated resume logic and explicit `--wandb-id` requirement implemented for `train_detect.py` should be applied similarly to `train_segment.py` if consistent behavior is desired).
 
 **Configuration (`src/models/ext/yolov11/configs/voc_segment_*.yaml`):**
 
@@ -215,12 +243,13 @@ The `train_segment.py` script initiates training (finetuning or from scratch) fo
 **Command-Line:**
 
 ```bash
+# Example assuming similar timestamping and resume logic might be added
 python src/models/ext/yolov11/train_segment.py \
     --config <path_to_segment_training_config.yaml> \
     --name <your_run_name> \
     [--project <output_project_dir>] \
-    [--resume] \
-    [--wandb-id <wandb_run_id_to_resume>]
+    # [--resume_with <path/to/exact/run_folder>] # If implemented
+    # [--wandb_id <wandb_run_id>] # If implemented
 ```
 
 **Example (Finetuning):**
@@ -231,16 +260,16 @@ python src/models/ext/yolov11/train_segment.py \
     --name voc11l_segment_finetune_run1
 ```
 
-**Example (Resuming Finetuning Run):**
+**Example (Resuming Finetuning Run - Placeholder):**
 
 ```bash
-python src/models/ext/yolov11/train_segment.py \
-    --config src/models/ext/yolov11/configs/voc_segment_finetune.yaml \
-    --name voc11l_segment_finetune_run1 \
-    --resume
+# Example if --resume_with were implemented for segmentation
+# python src/models/ext/yolov11/train_segment.py \\
+#    --config src/models/ext/yolov11/configs/voc_segment_finetune.yaml \\
+#    --resume_with runs/train/segment/voc11l_segment_finetune_run1_YYYYMMDD_HHMMSS
 ```
 
-Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>/`.
+Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name_with_timestamp>/`. Similar to detection, a `wandb_info.txt` file may be created if WandB is used and the script is updated.
 
 ### Evaluation (Detection)
 

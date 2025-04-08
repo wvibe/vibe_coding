@@ -31,3 +31,6 @@ wandb>=0.16.0
 black>=23.0.0
 pytest>=7.0.0
 ruff>=0.1.0
+
+# Added TensorBoard
+tensorboard>=2.19.0

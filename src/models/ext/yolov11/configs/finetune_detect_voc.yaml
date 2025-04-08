@@ -35,13 +35,13 @@ close_mosaic: 10
 # --- Execution Settings ---
 # Device: '' for auto, 'cpu', '0', '0,1'
 # Updated for 4 GPUs
-device: '0,1,2,3'
+device: '0'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)
-project: runs/detect
+project: runs/finetune/detect
 
 # --- Wandb Logging (will be used automatically if logged in) ---
 # Set to False to disable wandb even if installed/logged in
