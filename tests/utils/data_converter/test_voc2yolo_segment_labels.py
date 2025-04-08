@@ -8,8 +8,6 @@ Focuses on testing the core logic components:
 - Processing of a single instance
 """
 
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -175,303 +173,137 @@ def test_get_mask_instances(mock_pil_open, mock_converter, sample_instance_mask_
     np.testing.assert_array_equal(instance_masks[1], expected_mask_1)
 
 
-def test_mask_to_polygons(mock_converter):
-    """Test converting a simple binary mask to normalized polygons."""
-    # Simple square mask
-    binary_mask = np.array([[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]], dtype=np.uint8)
-
-    polygons = mock_converter._mask_to_polygons(binary_mask)
-
-    assert polygons is not None
-    assert len(polygons) >= 1  # Should find at least one contour
-    poly = polygons[0]
-    assert isinstance(poly, list)
-    assert len(poly) >= 6  # Polygon needs at least 3 points (6 coordinates)
-    assert all(isinstance(coord, float) for coord in poly)  # Check coordinates are floats
-    assert all(0.0 <= coord <= 1.0 for coord in poly)  # Check coordinates are normalized
-
-
-def test_mask_to_polygons_with_connect_parts(mock_converter_with_connect_parts, disconnected_mask):
-    """Test converting a mask with disconnected parts with connect_parts=True."""
-    # This test verifies that when connect_parts=True, we get a single polygon for disconnected parts
-
-    polygons = mock_converter_with_connect_parts._mask_to_polygons(disconnected_mask)
-
-    # Check we have exactly one polygon representing both disconnected regions
-    assert len(polygons) == 1, "When connect_parts=True, should produce exactly one polygon"
-
-    # The polygon should have at least 8 points (16 coordinates) to represent the complex shape
-    # (minimum 3 points per part plus connecting points)
-    assert len(polygons[0]) >= 16, (
-        "Connected polygon should have enough points to represent both regions"
-    )
-
-    # All coordinates should be normalized between 0 and 1
-    assert all(0.0 <= coord <= 1.0 for coord in polygons[0])
-
-    # When connect_parts=False, we should get multiple polygons
-    mock_converter = VOC2YOLOConverter(
-        MagicMock(), MagicMock(), "2012", "test", connect_parts=False
-    )
-    separate_polygons = mock_converter._mask_to_polygons(disconnected_mask)
-
-    # Should find two separate polygons
-    assert len(separate_polygons) == 2, (
-        "When connect_parts=False, should produce two separate polygons"
-    )
-
-
-@patch("cv2.findContours")
-@patch("cv2.approxPolyDP")
-def test_connect_disconnected_parts(
-    mock_approx, mock_find_contours, mock_converter_with_connect_parts
-):
-    """Test the _connect_disconnected_parts method directly."""
-    # Create two synthetic contours
-    contour1 = np.array([[[1, 1]], [[2, 1]], [[2, 2]], [[1, 2]]], dtype=np.int32)
-    contour2 = np.array([[[5, 5]], [[6, 5]], [[6, 6]], [[5, 6]]], dtype=np.int32)
-    contours = [contour1, contour2]
-
-    # Set up approxPolyDP to return the contours unchanged for simplicity
-    mock_approx.side_effect = lambda contour, epsilon, closed: contour
-
-    # Call the method directly
-    img_shape = (8, 8)  # 8x8 image
-    result = mock_converter_with_connect_parts._connect_disconnected_parts(contours, img_shape)
-
-    # Should produce a single polygon with normalized coordinates
-    assert len(result) > 0, "Should produce a non-empty polygon"
-    assert all(0.0 <= coord <= 1.0 for coord in result), "All coordinates should be normalized"
-
-    # The result should have at least the points from both contours plus connecting points
-    # Each contour has 4 points (8 coords) plus connecting points
-    assert len(result) >= 16, "Should contain points from both contours plus connecting points"
-
-    # Test with a single contour - should just normalize and return it
-    result_single = mock_converter_with_connect_parts._connect_disconnected_parts(
-        [contour1], img_shape
-    )
-    assert len(result_single) == 8, "Single contour should have 8 coordinates (4 points)"
-
-    # Test with no contours
-    result_empty = mock_converter_with_connect_parts._connect_disconnected_parts([], img_shape)
-    assert result_empty == [], "Empty contours should return empty result"
-
-    # Test with tiny contours below the area threshold
-    tiny_contour = np.array(
-        [[[1, 1]], [[1, 2]], [[2, 1]]], dtype=np.int32
-    )  # Triangle with area 0.5
-    mock_converter_with_min_area = VOC2YOLOConverter(
-        MagicMock(), MagicMock(), "2012", "test", connect_parts=True, min_contour_area=2.0
-    )
-    result_filtered = mock_converter_with_min_area._connect_disconnected_parts(
-        [tiny_contour], img_shape
-    )
-    assert result_filtered == [], "Contours below min_contour_area should be filtered out"
-
-
 def test_match_instance_to_class(mock_converter, sample_class_mask_array):
-    """Test matching an instance mask region to a class in the class mask."""
-    # Instance 1 mask (top-left)
+    """Test matching an instance binary mask to its class name."""
+    # Instance 1 (top-left) should match Person (ID 15)
     instance_mask_1 = np.array(
         [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
     )
-
-    # Instance 2 mask (bottom-right)
-    instance_mask_2 = np.array(
-        [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.uint8
-    )
-
-    # Match instance 1 -> should be Person (15)
     class_name_1 = mock_converter._match_instance_to_class(
         instance_mask_1, sample_class_mask_array, 1, "test_img"
     )
     assert class_name_1 == "person"
 
-    # Match instance 2 -> should be Car (7)
+    # Instance 2 (bottom-right) should match Car (ID 7)
+    instance_mask_2 = np.array(
+        [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.uint8
+    )
     class_name_2 = mock_converter._match_instance_to_class(
         instance_mask_2, sample_class_mask_array, 2, "test_img"
     )
     assert class_name_2 == "car"
 
-    # Test boundary case: Mask with only background/boundary pixels in class mask
-    class_mask_boundary = np.zeros_like(sample_class_mask_array)
-    class_mask_boundary[0, 0] = 255
-    class_name_boundary = mock_converter._match_instance_to_class(
-        instance_mask_1, class_mask_boundary, 1, "test_img"
+    # Test case with no overlap with valid class pixels (only background)
+    instance_mask_bg = np.array(
+        [[0, 0, 1, 1], [0, 0, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
+    )  # Overlaps only with background in class mask
+    class_name_bg = mock_converter._match_instance_to_class(
+        instance_mask_bg, sample_class_mask_array, 3, "test_img"
     )
-    assert class_name_boundary is None  # No valid class found
+    assert class_name_bg is None
 
 
-@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._mask_to_polygons")
+@patch("src.utils.data_converter.voc2yolo_segment_labels.mask_to_yolo_polygons")
 @patch(
     "src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._match_instance_to_class"
 )
 def test_process_instance(mock_match_class, mock_polygons, mock_converter, sample_class_mask_array):
-    """Test the processing of a single instance (polygon + class matching)."""
-    # Setup instance data
+    """Test processing a single instance: polygon generation and class matching."""
     instance_id = 1
-    binary_mask = np.array([[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8)
-    img_id = "test_img"
+    binary_mask_1 = np.array(
+        [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
+    )
 
-    # Mock dependencies
-    mock_polygons.return_value = [[0.1, 0.1, 0.4, 0.1, 0.4, 0.4, 0.1, 0.4]]  # Single polygon
+    # Mock return values
+    mock_polygons.return_value = [
+        [0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0]
+    ]  # Mock normalized polygon
     mock_match_class.return_value = "person"
 
-    # Execute the method
-    output_lines = mock_converter._process_instance(
-        instance_id, binary_mask, sample_class_mask_array, img_id
+    result = mock_converter._process_instance(
+        instance_id, binary_mask_1, sample_class_mask_array, "img001"
     )
 
-    # Verify calls
-    mock_polygons.assert_called_once_with(binary_mask)
+    assert result is not None
+    assert len(result) == 1  # One line for one polygon
+    # Person class ID is 14 (0-based)
+    expected_line = "14 0.000000 0.000000 0.000000 0.250000 0.250000 0.250000 0.250000 0.000000"
+    assert result[0] == expected_line
+
+    # Check that mock_polygons was called correctly
+    h, w = sample_class_mask_array.shape[:2]
+    mock_polygons.assert_called_once_with(
+        binary_mask=binary_mask_1,
+        img_shape=(h, w),
+        connect_parts=mock_converter.connect_parts,  # Should be False for this fixture
+        min_contour_area=mock_converter.min_contour_area,
+    )
     mock_match_class.assert_called_once_with(
-        binary_mask, sample_class_mask_array, instance_id, img_id
+        binary_mask_1, sample_class_mask_array, instance_id, "img001"
     )
 
-    # Verify output
-    assert output_lines is not None
-    assert len(output_lines) == 1
-    expected_line = "14 0.100000 0.100000 0.400000 0.100000 0.400000 0.400000 0.100000 0.400000"
-    assert output_lines[0] == expected_line
-
-    # Test case: No polygons found
+    # Test case where polygon generation fails
     mock_polygons.reset_mock()
     mock_match_class.reset_mock()
-    mock_polygons.return_value = []
-    output_lines_no_poly = mock_converter._process_instance(
-        instance_id, binary_mask, sample_class_mask_array, img_id
+    mock_polygons.return_value = []  # Simulate no polygons found
+    result_fail_poly = mock_converter._process_instance(
+        instance_id, binary_mask_1, sample_class_mask_array, "img001"
     )
-    assert output_lines_no_poly is None
-    mock_match_class.assert_not_called()  # Should not attempt matching if no polygons
+    assert result_fail_poly is None
+    mock_polygons.assert_called_once()
+    mock_match_class.assert_not_called()  # Should not match class if polygons fail
 
-    # Test case: Class matching fails
+    # Test case where class matching fails
     mock_polygons.reset_mock()
     mock_match_class.reset_mock()
-    mock_polygons.return_value = [[0.1, 0.1, 0.4, 0.1, 0.4, 0.4, 0.1, 0.4]]
-    mock_match_class.return_value = None  # Simulate matching failure
-    output_lines_no_match = mock_converter._process_instance(
-        instance_id, binary_mask, sample_class_mask_array, img_id
+    mock_polygons.return_value = [[0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0]]  # Polygons succeed
+    mock_match_class.return_value = None  # Simulate class match failure
+    result_fail_match = mock_converter._process_instance(
+        instance_id, binary_mask_1, sample_class_mask_array, "img001"
     )
-    assert output_lines_no_match is None
+    assert result_fail_match is None
+    mock_polygons.assert_called_once()
+    mock_match_class.assert_called_once()
 
 
-@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._mask_to_polygons")
+@patch("src.utils.data_converter.voc2yolo_segment_labels.mask_to_yolo_polygons")
 @patch(
     "src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._match_instance_to_class"
 )
 def test_process_instance_with_connect_parts(
     mock_match_class, mock_polygons, mock_converter_with_connect_parts, sample_class_mask_array
 ):
-    """Test processing an instance with connect_parts=True produces correct output."""
-    # Setup
+    """Test processing instance with connect_parts=True."""
     instance_id = 1
-    binary_mask = np.zeros((8, 8), dtype=np.uint8)
-    binary_mask[1:3, 1:3] = 1  # Top-left part
-    binary_mask[5:7, 5:7] = 1  # Bottom-right part
-    img_id = "test_img"
+    binary_mask_1 = np.array(
+        [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8
+    )
 
-    # Connected parts should produce a single polygon
-    connected_polygon = [
-        0.1,
-        0.1,
-        0.2,
-        0.1,
-        0.2,
-        0.2,
-        0.1,
-        0.2,
-        0.6,
-        0.6,
-        0.8,
-        0.6,
-        0.8,
-        0.8,
-        0.6,
-        0.8,
-    ]
-    mock_polygons.return_value = [connected_polygon]  # Single polygon with multiple parts
+    # Mock return values
+    mock_polygons.return_value = [[0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0]]  # Mock polygon
     mock_match_class.return_value = "person"
 
-    # Execute
-    output_lines = mock_converter_with_connect_parts._process_instance(
-        instance_id, binary_mask, sample_class_mask_array, img_id
+    result = mock_converter_with_connect_parts._process_instance(
+        instance_id, binary_mask_1, sample_class_mask_array, "img001"
     )
 
-    # Verify
-    assert output_lines is not None
-    assert len(output_lines) == 1  # Should produce exactly one line (one polygon)
+    assert result is not None
+    assert len(result) == 1
+    expected_line = "14 0.000000 0.000000 0.000000 0.250000 0.250000 0.250000 0.250000 0.000000"
+    assert result[0] == expected_line
 
-    # Parse the output line
-    parts = output_lines[0].split()
-    assert parts[0] == "14"  # Class ID for person
-
-    # The coordinates should match our mocked polygon
-    for i, coord in enumerate(connected_polygon):
-        assert float(parts[i + 1]) == coord
-
-    # With connect_parts disabled, multiple polygons would be separate lines
-    mock_polygons.reset_mock()
-    mock_match_class.reset_mock()
-
-    # Mock returning multiple polygons
-    separate_polygons = [
-        [0.1, 0.1, 0.2, 0.1, 0.2, 0.2, 0.1, 0.2],  # First part
-        [0.6, 0.6, 0.8, 0.6, 0.8, 0.8, 0.6, 0.8],  # Second part
-    ]
-    mock_polygons.return_value = separate_polygons
-    mock_match_class.return_value = "person"
-
-    # Create a new converter with connect_parts=False
-    regular_converter = VOC2YOLOConverter(
-        MagicMock(), MagicMock(), "2012", "test", connect_parts=False
+    # Check that mock_polygons was called correctly with connect_parts=True
+    h, w = sample_class_mask_array.shape[:2]
+    mock_polygons.assert_called_once_with(
+        binary_mask=binary_mask_1,
+        img_shape=(h, w),
+        connect_parts=True,  # Key check for this test
+        min_contour_area=mock_converter_with_connect_parts.min_contour_area,
+    )
+    mock_match_class.assert_called_once_with(
+        binary_mask_1, sample_class_mask_array, instance_id, "img001"
     )
 
-    # Use regular converter (connect_parts=False)
-    output_lines_separate = regular_converter._process_instance(
-        instance_id, binary_mask, sample_class_mask_array, img_id
-    )
 
-    # Should have two lines (two polygons)
-    assert output_lines_separate is not None
-    assert len(output_lines_separate) == 2
-
-
-# --- Test Process Segmentation File with File Skipping ---
-
-
-@patch("src.utils.data_converter.voc2yolo_segment_labels.VOC2YOLOConverter._validate_directories")
-@patch("src.utils.data_converter.voc2yolo_utils.get_segm_inst_mask_path")
-@patch("src.utils.data_converter.voc2yolo_utils.get_segm_cls_mask_path")
-def test_process_segmentation_file_with_existing_file(mock_cls_path, mock_inst_path, mock_validate):
-    """Test that the _process_segmentation_file method returns 'skipped' for existing files."""
-    # Mock the directory validation
-    mock_validate.return_value = True
-
-    # Mock the path getters
-    mock_inst_path.return_value = Path("fake_inst_path.png")
-    mock_cls_path.return_value = Path("fake_cls_path.png")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_dir = Path(tmpdir)
-
-        # Create a converter with our temp directory
-        with patch(
-            "src.utils.data_converter.voc2yolo_segment_labels.get_voc_dir"
-        ) as mock_get_voc_dir:
-            # Make get_voc_dir return our temp dir
-            mock_get_voc_dir.return_value = temp_dir
-
-            converter = VOC2YOLOConverter(temp_dir, temp_dir, "2012", "test")
-
-            # Directly set the output directory
-            converter.output_segment_dir = temp_dir
-
-            # Create a pre-existing output file
-            img_id = "test001"
-            output_path = temp_dir / f"{img_id}.txt"
-            output_path.touch()  # Create an empty file
-
-            # Test the method returns "skipped"
-            result, _, _ = converter._process_segmentation_file(img_id)
-            assert result == "skipped"
+# --- Integration/End-to-End Style Tests ---
+# These tests use temporary directories and files

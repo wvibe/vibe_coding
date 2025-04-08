@@ -11,7 +11,7 @@ src_path = project_root / 'src'
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from utils.common.wandb_utils import find_wandb_run_id
+from utils.logging.log_finder import find_wandb_run_id
 
 # Helper function to create mock config files
 def create_mock_config(path: pathlib.Path, name: str, use_files_subdir: bool = True):

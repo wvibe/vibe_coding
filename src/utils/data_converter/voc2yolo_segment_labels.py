@@ -26,12 +26,14 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-import cv2
 import numpy as np
 from dotenv import load_dotenv
 from PIL import Image
 from scipy.stats import mode
 from tqdm import tqdm
+
+# Import the new geometry utility
+from src.utils.common.geometry import mask_to_yolo_polygons
 
 # Import common utilities from voc2yolo_utils (moved here)
 from src.utils.data_converter.voc2yolo_utils import (
@@ -55,9 +57,8 @@ logger = logging.getLogger(__name__)
 
 # --- Constants for Segmentation Logic ---
 # Minimum contour area to consider for polygon conversion
+# This default is used if not provided via command line
 MIN_CONTOUR_AREA = 1.0
-# Tolerance factor for polygon approximation (relative to arc length)
-POLYGON_APPROX_TOLERANCE = 0.005
 
 
 class VOC2YOLOConverter:
@@ -147,257 +148,6 @@ class VOC2YOLOConverter:
             instance_masks[instance_id] = (mask == instance_id).astype(np.uint8)
 
         return instance_masks
-
-    def _connect_disconnected_parts(
-        self, contours: List[np.ndarray], img_shape: Tuple[int, int]
-    ) -> List[float]:
-        """
-        Connect disconnected parts of the same instance into a single complex polygon.
-
-        Args:
-            contours: List of contours (each contour is an array of points)
-            img_shape: Image shape (height, width)
-
-        Returns:
-            A single list of normalized coordinates [x1, y1, x2, y2, ...]
-        """
-        if not contours:
-            return []
-
-        h, w = img_shape
-        if w <= 0 or h <= 0:
-            logger.warning("Cannot normalize polygons for zero-dimension mask.")
-            return []
-
-        # Filter contours by area
-        filtered_contours = []
-        for contour in contours:
-            if cv2.contourArea(contour) >= self.min_contour_area:
-                # Approximate the contour to simplify
-                epsilon = POLYGON_APPROX_TOLERANCE * cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, epsilon, True)
-                if len(approx) >= 3:  # Need at least 3 points
-                    filtered_contours.append(approx)
-
-        if not filtered_contours:
-            return []
-
-        # Only one contour, no need to connect
-        if len(filtered_contours) == 1:
-            contour = filtered_contours[0]
-            # Normalize coordinates
-            normalized_polygon = []
-            for point in contour.reshape(-1, 2):
-                px, py = point
-                norm_x = np.clip(px / w, 0.0, 1.0)
-                norm_y = np.clip(py / h, 0.0, 1.0)
-                normalized_polygon.extend([norm_x, norm_y])
-            return normalized_polygon
-
-        # Multiple contours need to be connected
-        # We'll compute centroids and connect contours optimally
-        centroids = []
-        for contour in filtered_contours:
-            M = cv2.moments(contour)
-            if M["m00"] != 0:  # Avoid division by zero
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                centroids.append((cx, cy))
-            else:
-                # Fallback - use mean of points
-                points = contour.reshape(-1, 2)
-                cx, cy = np.mean(points, axis=0)
-                centroids.append((int(cx), int(cy)))
-
-        # Start with the leftmost contour
-        leftmost_idx = np.argmin([c[0] for c in centroids])
-        ordered_indices = [leftmost_idx]
-        remaining_indices = set(range(len(filtered_contours)))
-        remaining_indices.remove(leftmost_idx)
-
-        # Greedy algorithm to connect nearest contours
-        current_idx = leftmost_idx
-        while remaining_indices:
-            min_dist = float("inf")
-            nearest_idx = None
-
-            for idx in remaining_indices:
-                # Distance between centroids
-                dist = np.sqrt(
-                    (centroids[idx][0] - centroids[current_idx][0]) ** 2
-                    + (centroids[idx][1] - centroids[current_idx][1]) ** 2
-                )
-                if dist < min_dist:
-                    min_dist = dist
-                    nearest_idx = idx
-
-            if nearest_idx is not None:
-                ordered_indices.append(nearest_idx)
-                remaining_indices.remove(nearest_idx)
-                current_idx = nearest_idx
-
-        # Now we have an ordering of contours, let's create the complex polygon
-        complex_polygon = []
-
-        for i, idx in enumerate(ordered_indices):
-            contour = filtered_contours[idx]
-
-            # Find closest points between consecutive contours to minimize crossing
-            if i > 0:
-                prev_contour = filtered_contours[ordered_indices[i - 1]]
-                prev_points = prev_contour.reshape(-1, 2)
-                curr_points = contour.reshape(-1, 2)
-
-                # Find closest points between current and previous contours
-                min_dist = float("inf")
-                prev_closest_idx = 0
-                curr_closest_idx = 0
-
-                for p_idx, prev_pt in enumerate(prev_points):
-                    for c_idx, curr_pt in enumerate(curr_points):
-                        dist = np.sqrt(np.sum((prev_pt - curr_pt) ** 2))
-                        if dist < min_dist:
-                            min_dist = dist
-                            prev_closest_idx = p_idx
-                            curr_closest_idx = c_idx
-
-                # Rearrange current contour to start from closest point
-                curr_points = np.roll(curr_points, -curr_closest_idx, axis=0)
-
-                # Connect with a line from end of previous to start of current
-                # Add previous contour's closest point again (to "close" it)
-                prev_closest_pt = prev_points[prev_closest_idx]
-                px, py = prev_closest_pt
-                norm_x = np.clip(px / w, 0.0, 1.0)
-                norm_y = np.clip(py / h, 0.0, 1.0)
-                complex_polygon.extend([norm_x, norm_y])
-
-                # Add all points of current contour
-                for point in curr_points:
-                    px, py = point
-                    norm_x = np.clip(px / w, 0.0, 1.0)
-                    norm_y = np.clip(py / h, 0.0, 1.0)
-                    complex_polygon.extend([norm_x, norm_y])
-            else:
-                # First contour - add all points
-                for point in contour.reshape(-1, 2):
-                    px, py = point
-                    norm_x = np.clip(px / w, 0.0, 1.0)
-                    norm_y = np.clip(py / h, 0.0, 1.0)
-                    complex_polygon.extend([norm_x, norm_y])
-
-        # Connect back to starting point if needed
-        if (
-            len(complex_polygon) >= 2
-            and complex_polygon[0] != complex_polygon[-2]
-            and complex_polygon[1] != complex_polygon[-1]
-        ):
-            complex_polygon.extend([complex_polygon[0], complex_polygon[1]])
-
-        # Ensure we have at least 3 points (6 coordinates)
-        if len(complex_polygon) < 6:
-            return []
-
-        return complex_polygon
-
-    def _mask_to_polygons(
-        self, binary_mask: np.ndarray, tolerance: float = POLYGON_APPROX_TOLERANCE
-    ) -> List[List[float]]:
-        """
-        Convert a binary instance mask to normalized polygon coordinates.
-
-        Args:
-            binary_mask: A numpy array representing the binary mask for one instance.
-            tolerance: Approximation tolerance factor for cv2.approxPolyDP.
-
-        Returns:
-            List of polygons, where each polygon is a flat list of normalized [x1, y1, x2, y2, ...].
-            Returns empty list if no valid contours/polygons are found.
-        """
-        # Find contours in the binary mask
-        contours, hierarchy = cv2.findContours(
-            binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        if hierarchy is None or len(contours) == 0:  # Handle cases with no contours
-            return []
-
-        h, w = binary_mask.shape[:2]
-        if w <= 0 or h <= 0:
-            logger.warning("Cannot normalize polygons for zero-dimension mask.")
-            return []
-
-        # If connect_parts is enabled and we have multiple contours, connect them
-        if self.connect_parts and len(contours) > 1:
-            logger.debug(f"Connecting {len(contours)} disconnected parts")
-            connected_polygon = self._connect_disconnected_parts(contours, (h, w))
-            return [connected_polygon] if connected_polygon else []
-
-        # Original approach for separate polygons
-        polygons = []
-        for contour in contours:
-            # Check if contour is likely significant using defined constant
-            if cv2.contourArea(contour) < self.min_contour_area:
-                continue
-
-            # Approximate contour using tolerance argument (defaults to constant)
-            epsilon = tolerance * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-
-            # Need at least 3 points for a valid polygon
-            if len(approx) >= 3:
-                # Normalize and flatten coordinates
-                # approx shape is (N, 1, 2), needs reshape to (N, 2) for iteration
-                normalized_polygon = []
-                for point in approx.reshape(-1, 2):
-                    px, py = point
-                    # Clamp coordinates strictly within [0, 1] after normalization
-                    norm_x = np.clip(px / w, 0.0, 1.0)
-                    norm_y = np.clip(py / h, 0.0, 1.0)
-                    normalized_polygon.extend([norm_x, norm_y])
-
-                # Check again if polygon still has >= 3 unique points after normalization/clipping
-                if len(normalized_polygon) >= 6:
-                    polygons.append(normalized_polygon)
-
-        return polygons
-
-    def _get_mask_bbox(self, binary_mask: np.ndarray) -> Optional[List[float]]:
-        """
-        Calculate the normalized bounding box [xmin, ymin, xmax, ymax] from a binary mask.
-
-        Args:
-            binary_mask: A numpy array representing the binary mask for one instance.
-
-        Returns:
-            Normalized [xmin, ymin, xmax, ymax] or None if mask is empty.
-        """
-        y_indices, x_indices = np.where(binary_mask > 0)
-        if len(y_indices) == 0 or len(x_indices) == 0:
-            return None  # No foreground pixels
-
-        h, w = binary_mask.shape[:2]
-        if w <= 0 or h <= 0:
-            return None
-
-        xmin = np.min(x_indices)
-        xmax = np.max(x_indices)
-        ymin = np.min(y_indices)
-        ymax = np.max(y_indices)
-
-        # Normalize (add 1 to max coords because they are inclusive indices)
-        norm_xmin = xmin / w
-        norm_ymin = ymin / h
-        norm_xmax = (xmax + 1) / w
-        norm_ymax = (ymax + 1) / h
-
-        # Clamp values to be safe
-        return [
-            np.clip(norm_xmin, 0.0, 1.0),
-            np.clip(norm_ymin, 0.0, 1.0),
-            np.clip(norm_xmax, 0.0, 1.0),
-            np.clip(norm_ymax, 0.0, 1.0),
-        ]
 
     def _match_instance_to_class(
         self,
@@ -498,14 +248,31 @@ class VOC2YOLOConverter:
         self, instance_id: int, binary_mask: np.ndarray, class_mask: np.ndarray, img_id: str
     ) -> Optional[List[str]]:
         """Process a single instance and return its YOLO format lines."""
-        polygons = self._mask_to_polygons(binary_mask)
+        # Get image shape from class_mask (needed for normalization)
+        h, w = class_mask.shape[:2]
+        if h <= 0 or w <= 0:
+            logger.warning(
+                f"Invalid class_mask shape {class_mask.shape} for {img_id}, cannot process instance {instance_id}"
+            )
+            return None
+
+        # Use the geometry utility function to get polygons
+        polygons = mask_to_yolo_polygons(
+            binary_mask=binary_mask,
+            img_shape=(h, w),
+            connect_parts=self.connect_parts,
+            min_contour_area=self.min_contour_area,
+        )
+
         if not polygons:
-            logger.debug(f"No valid polygons for instance {instance_id} in {img_id}.")
+            logger.debug(f"No valid polygons generated for instance {instance_id} in {img_id}.")
             return None
 
         matched_class = self._match_instance_to_class(binary_mask, class_mask, instance_id, img_id)
         if matched_class is None:
-            logger.warning(f"Skipping instance {instance_id} in {img_id} due to failed matching.")
+            logger.warning(
+                f"Skipping instance {instance_id} in {img_id} due to failed class matching."
+            )
             return None
 
         try:

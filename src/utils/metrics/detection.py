@@ -1,6 +1,6 @@
 import numpy as np  # Make sure numpy is imported at the top
 
-from src.utils.common.iou import calculate_iou
+from src.utils.common.bbox import calculate_iou
 
 
 def match_predictions(predictions, ground_truths, iou_threshold):

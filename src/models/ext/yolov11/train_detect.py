@@ -19,13 +19,13 @@ from ultralytics import YOLO
 # --- Vibe Imports --- #
 # Assuming src is in PYTHONPATH or handled by execution environment
 try:
-    from utils.common.wandb_utils import find_wandb_run_id
+    from utils.logging.log_finder import find_wandb_run_id
 except ImportError:
     # Fallback if run directly and utils path needs adjustment
     project_root_for_import = Path(__file__).resolve().parents[4]
     sys.path.insert(0, str(project_root_for_import / "src"))
     try:
-        from utils.common.wandb_utils import find_wandb_run_id
+        from utils.logging.log_finder import find_wandb_run_id
     except ImportError as e:
         logging.error("Could not import find_wandb_run_id. Ensure src is in PYTHONPATH.")
         raise e
