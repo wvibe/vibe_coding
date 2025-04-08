@@ -35,13 +35,13 @@ close_mosaic: 10
 # --- Execution Settings ---
 # Device: '' for auto, 'cpu', '0', '0,1'
 # Updated for 4 GPUs
-device: '4,5,6,7'
+device: '0'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)
-project: runs/train/segment # Updated for segmentation
+project: runs/finetune/segment # Updated for segmentation and consistency
 
 # --- Wandb Logging (will be used automatically if logged in) ---
 # Set to False to disable wandb even if installed/logged in

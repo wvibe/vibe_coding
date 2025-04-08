@@ -3,16 +3,13 @@
 # Uses images from images/ and expects labels in ../labels_segment/
 
 # Dataset root directory (contains images/, labels_segment/, etc.)
-path: /home/ubuntu/vibe/hub/datasets/segment_VOC
+path: /home/ubuntu/vibe/hub/datasets/VOC/segment
 
 # Image directories relative to 'path'
 # Using combined 07+12 train/val for training, 07 test for val/test
 train:
   - images/train2007
-  - images/train2012
-  - images/val2007
-  - images/val2012
-val: images/test2007
+val: images/val2007
 test: images/test2007 # Using test2007 set for testing
 
 # Classes (Standard VOC 20 classes)

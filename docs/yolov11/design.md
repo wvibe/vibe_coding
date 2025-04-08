@@ -44,7 +44,7 @@
 
 ## Future Scope: Segmentation & Expansion
 
-- **Segmentation:** Similar scripts (`predict_segment.py`, `train_segment.py`) and configurations (`*_seg.yaml`, `voc_segment.yaml`, `voc_segment_finetune.yaml`) are being added. Evaluation script (`evaluate_segment.py`) and metrics are future work.
+- **Segmentation:** Similar scripts (`predict_segment.py`, `train_segment.py`) and configurations (`*_seg.yaml`, `voc_segment.yaml`, `finetune_segment_voc.yaml`) exist. The training script (`train_segment.py`) has been aligned with the detection script, including argument handling (`--resume_with`, `--wandb-dir`) and automatic WandB ID lookup. Evaluation script (`evaluate_segment.py`) and metrics are future work.
 - **Training:** Scripts for training from scratch (`train_*.py`) might be added if needed.
 - **Datasets:** Support for COCO will be added via `coco_*.yaml` configurations.
-- **Tests:** Unit tests will cover basic script execution and argument parsing.
+- **Tests:** Unit tests cover basic script execution and argument parsing for prediction and training scripts.
