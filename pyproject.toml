@@ -8,6 +8,9 @@ select = ["E", "F", "B", "I", "C90", "W"]
 ignore = []
 fixable = ["ALL"]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 18
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
