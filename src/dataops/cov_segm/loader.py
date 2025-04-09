@@ -43,6 +43,7 @@ class ProcessedConversationItem(TypedDict):
 class ProcessedCovSegmSample(TypedDict):
     """Structure holding the fully processed cov_segm sample data."""
 
+    id: str  # Sample ID (from input row or "unknown_id" if missing)
     image: Image.Image  # The main S3 image
     processed_conversations: List[ProcessedConversationItem]
 
@@ -258,6 +259,26 @@ def _load_mask(mask_info: InstanceMask, hf_cov_segm_row: Dict[str, Any]) -> Opti
         return None
 
 
+def _process_mask_metadata(mask_metadata, hf_cov_segm_row) -> Optional[ProcessedMask]:
+    """Process mask metadata and load the corresponding mask.
+
+    Handles both direct column references (mask_0) and path-style notation (masks_rest/0).
+
+    Args:
+        mask_metadata: The InstanceMask object containing mask details.
+        hf_cov_segm_row: The raw dictionary representing one row from the dataset.
+
+    Returns:
+        A ProcessedMask or None if loading fails.
+    """
+    if not mask_metadata.column:
+        return None
+
+    # Just directly use _load_mask which already handles both formats properly
+    # through the _resolve_mask_path function
+    return _load_mask(mask_metadata, hf_cov_segm_row)
+
+
 def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSample]:
     """Loads and processes a single row from the Hugging Face cov_segm dataset.
 
@@ -322,19 +343,43 @@ def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSam
         if item.instance_masks:
             instance_masks_attempted = len(item.instance_masks)
             for mask_metadata in item.instance_masks:
-                loaded_mask = _load_mask(mask_metadata, hf_cov_segm_row)
+                loaded_mask = _process_mask_metadata(mask_metadata, hf_cov_segm_row)
                 if loaded_mask:
                     processed_instance_masks.append(loaded_mask)
                     instance_masks_loaded += 1
+                else:
+                    # Construct the potential path for logging if needed
+                    potential_path = mask_metadata.column
+                    # Log only if mask loading failed, not just missing columns/index
+                    if (
+                        mask_metadata.column
+                        and _resolve_mask_path(potential_path, hf_cov_segm_row)[1]
+                    ):
+                        logger.warning(
+                            f"Failed to load instance mask for sample {idx}, "
+                            f"conversation {idx}, definition '{mask_metadata}' (path: {potential_path})"
+                        )
 
         processed_full_masks: List[ProcessedMask] = []
         if item.instance_full_masks:
             full_masks_attempted = len(item.instance_full_masks)
             for mask_metadata in item.instance_full_masks:
-                loaded_mask = _load_mask(mask_metadata, hf_cov_segm_row)
+                loaded_mask = _process_mask_metadata(mask_metadata, hf_cov_segm_row)
                 if loaded_mask:
                     processed_full_masks.append(loaded_mask)
                     full_masks_loaded += 1
+                else:
+                    # Construct the potential path for logging if needed
+                    potential_path = mask_metadata.column
+                    # Log only if mask loading failed, not just missing columns/index
+                    if (
+                        mask_metadata.column
+                        and _resolve_mask_path(potential_path, hf_cov_segm_row)[1]
+                    ):
+                        logger.warning(
+                            f"Failed to load instance full mask for sample {idx}, "
+                            f"conversation {idx}, definition '{mask_metadata}' (path: {potential_path})"
+                        )
 
         # Log summary info at INFO level
         phrases_text = [p.text for p in item.phrases]
@@ -352,7 +397,11 @@ def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSam
         }
         processed_conversations.append(processed_item)
 
+    # Extract sample ID or use default if missing
+    sample_id = hf_cov_segm_row.get("id", "unknown_id")
+
     final_result: ProcessedCovSegmSample = {
+        "id": sample_id,
         "image": main_image,
         "processed_conversations": processed_conversations,
     }
