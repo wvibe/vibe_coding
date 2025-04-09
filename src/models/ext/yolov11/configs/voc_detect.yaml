@@ -10,7 +10,8 @@ path: /home/ubuntu/vibe/hub/datasets/VOC/detect # Absolute path to VOC dataset b
 # Using 2007 test for validation and testing
 train: # List of directories relative to dataset base path
   - images/train2007
-val: images/val2007    # val images (relative to dataset base path)
+  - images/val2007
+val: images/test2007    # val images (relative to dataset base path)
 test: images/test2007   # test images (optional, relative to dataset base path)
 
 # Classes

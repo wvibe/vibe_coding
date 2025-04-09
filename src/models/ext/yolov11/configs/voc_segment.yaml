@@ -9,8 +9,10 @@ path: /home/ubuntu/vibe/hub/datasets/VOC/segment
 # Using combined 07+12 train/val for training, 07 test for val/test
 train:
   - images/train2007
-val: images/val2007
-test: images/test2007 # Using test2007 set for testing
+  - images/train2012
+  - images/val2007
+val: images/val2012
+test: images/val2012 # Using test2007 set for testing
 
 # Classes (Standard VOC 20 classes)
 # Ensure this matches the class indices used during label generation

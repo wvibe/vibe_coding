@@ -346,8 +346,9 @@ def main():
     parser.add_argument(
         "--name",
         type=str,
-        required=True,
-        help="Base name for the training run. A timestamp will be appended for new runs.",
+        required=False,
+        default=None,
+        help="Base name for the training run. A timestamp will be appended for new runs. Required if not using --resume_with.",
     )
     parser.add_argument(
         "--resume_with",  # Changed from --resume
@@ -370,6 +371,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # --- Argument Validation --- # Added validation block
+    if not args.resume_with and not args.name:
+        parser.error("--name is required when not using --resume_with")
+    # --- End Argument Validation ---
+
     run_training_pipeline(args)
 
 

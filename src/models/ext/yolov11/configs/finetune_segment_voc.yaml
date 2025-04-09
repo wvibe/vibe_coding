@@ -14,16 +14,16 @@ imgsz: 640
 # Batch size (-1 for auto-batch calculation, or specify e.g., 8, 16 for yolov11l)
 # Adjust based on GPU memory (e.g., 16 might work on 2x A5000)
 # Increased for 4 GPUs
-batch: 32
+batch: 16
 # Number of worker threads for data loading
 # Increased for 4 GPUs
-workers: 16
+workers: 4
 # Optimizer: 'SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp', 'auto'
 # Explicitly set to SGD to use the specified lr0
 optimizer: SGD
 # Initial learning rate (e.g., 0.01 for SGD, 0.001 for AdamW)
-# Scaled linearly with batch size increase for 4 GPUs
-lr0: 0.02
+# Scaled linearly with batch size increase for 4 GPUs -> Adjusted back for single GPU/batch=16
+lr0: 0.01
 # Final learning rate (lr0 * lrf)
 lrf: 0.01
 # Close mosaic augmentation for the last N epochs (e.g., 10, or 0 to disable)
@@ -38,6 +38,8 @@ close_mosaic: 10
 device: '0'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
+# Allow overwriting/appending to existing run directory when resuming
+exist_ok: True
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)

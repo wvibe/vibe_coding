@@ -79,30 +79,38 @@ def _validate_and_get_data_config_path(main_config: dict, project_root: Path) ->
 def _determine_run_params(args: argparse.Namespace, main_config: dict, project_root: Path) -> tuple:
     """Determines model path, run name, resume flag, and attempts to find wandb ID on resume."""
     model_to_load = None
-    name_to_use = args.name  # Base name, might be modified
+    name_to_use = args.name  # Base name if provided, might be overridden
     resume_flag = False
     wandb_id_to_use = None  # Default to None
 
     if args.resume_with:
-        logging.info(f"Attempting to resume training from: {args.resume_with}")
+        logging.info(f"Attempting to resume training from run directory: {args.resume_with}")
         resume_dir = (project_root / args.resume_with).resolve()
 
         if not resume_dir.is_dir():
             raise FileNotFoundError(f"Resume directory not found: {resume_dir}")
 
+        # --- Resume Logic Reverted ---
+        # Explicitly load the last checkpoint.
         checkpoint_path_for_resume = resume_dir / "weights" / "last.pt"
         if not checkpoint_path_for_resume.is_file():
             raise FileNotFoundError(
                 f"Checkpoint 'last.pt' not found in resume directory: {checkpoint_path_for_resume}"
             )
-
         model_to_load = str(checkpoint_path_for_resume)
-        name_to_use = resume_dir.name  # Use the exact name of the folder being resumed
-        resume_flag = True
         logging.info(f"Resuming with checkpoint: {model_to_load}")
-        logging.info(f"Run name set to resumed directory: {name_to_use}")
+        # ---------------------------
 
-        # Warning if CLI --name differs significantly from resumed name
+        name_to_use = resume_dir.name  # Use the exact name of the folder being resumed
+        # resume_flag = True  # <-- Reverted: Set back to False
+        resume_flag = True  # <-- Set resume=True for UL trainer
+        logging.info(f"Run name set to resumed directory: {name_to_use}")
+        logging.info(
+            "resume=True will be passed to Ultralytics train method."
+        )  # <-- Added info log
+
+        # --- Restore Warning Check --- #
+        # Warning if CLI --name differs significantly from resumed name's base
         if args.name:
             # Check if provided name is a prefix of the resumed name (ignoring timestamp)
             base_resumed_name = (
@@ -114,6 +122,7 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
                     f"'{base_resumed_name}'. Using full resumed name '{name_to_use}'."
                 )
             # If it matches the base name, no warning needed as timestamp is the difference
+        # --- End Warning Check --- #
 
         # --- Attempt to find WandB ID automatically --- #
         logging.info(f"Attempting to find corresponding WandB run ID in: {args.wandb_dir}")
@@ -125,12 +134,18 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
         else:
             logging.warning(
                 f"Could not automatically find a matching WandB run ID for {name_to_use} "
-                f"in {args.wandb_dir}. WandB (if enabled) will start as a new run."
+                f"in {args.wandb_dir}. WandB (if enabled) will start as a new run unless "
+                "WANDB_RUN_ID is set externally."
             )
         # --- End WandB ID Lookup --- #
 
     else:
         # New run
+        if not args.name:
+            # Validation check happens after parsing args
+            raise ValueError(
+                "--name is required when starting a new run (not using --resume_with)."
+            )
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name_to_use = f"{args.name}_{timestamp}"
         model_to_load = main_config.get("model")
@@ -220,6 +235,7 @@ def prepare_train_kwargs(
     if "device" in train_kwargs and not train_kwargs["device"]:
         train_kwargs["device"] = None
 
+    # Log the actual arguments being passed
     logging.info("--- Training Arguments --- ")
     # Sort for consistent printing
     for key, val in sorted(train_kwargs.items()):
@@ -334,8 +350,9 @@ def main():
     parser.add_argument(
         "--name",
         type=str,
-        required=True,
-        help="Base name for the training run. A timestamp will be appended for new runs.",
+        required=False,
+        default=None,
+        help="Base name for the training run. A timestamp will be appended for new runs. Required if not using --resume_with.",
     )
     parser.add_argument(
         "--resume_with",
@@ -358,6 +375,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # --- Argument Validation ---
+    if not args.resume_with and not args.name:
+        parser.error("--name is required when not using --resume_with")
+    # --- End Argument Validation ---
+
     run_training_pipeline(args)
 
 

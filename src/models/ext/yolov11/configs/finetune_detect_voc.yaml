@@ -38,6 +38,8 @@ close_mosaic: 10
 device: '0'
 # Pretrained weights (MUST be True for fine-tuning)
 pretrained: True
+# Allow overwriting/appending to existing run directory when resuming
+exist_ok: True
 
 # --- Output Settings ---
 # Default project directory (relative to project root, can be overridden by --project CLI arg)
