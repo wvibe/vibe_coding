@@ -34,3 +34,44 @@ This document outlines the design choices and architecture for the `dataops` mod
 ## Future Considerations
 
 *(Add notes on potential refactoring, future dataset support, etc.)*
+
+## Visualizer Usage Examples (`src/dataops/cov_segm/visualizer.py`)
+
+The visualizer script provides a command-line interface to inspect masks associated with specific text prompts within the dataset samples.
+
+**Basic Usage (Show visible masks for a prompt in the first sample):**
+
+```bash
+python -m src.dataops.cov_segm.visualizer "the red car"
+```
+
+**Search for a prompt in the first 10 samples of the validation split:**
+
+```bash
+python -m src.dataops.cov_segm.visualizer "a window reflection" --split validation --start_index 0 --sample_count 10
+```
+
+**Visualize 'full' segmentation masks instead of 'visible' instance masks:**
+
+```bash
+python -m src.dataops.cov_segm.visualizer "the license plate" --mask_type full
+```
+
+**Save the visualization to a file instead of displaying interactively:**
+
+```bash
+# Creates ./viz_outputs/sample_0_the_dog_visible.png (filename depends on sample ID/index)
+python -m src.dataops.cov_segm.visualizer "the dog" --output_dir ./viz_outputs --no-show
+```
+
+**Enable debug logging for detailed information:**
+
+```bash
+python -m src.dataops.cov_segm.visualizer "tree branches" --debug
+```
+
+**Combine options (Save full masks for a prompt in sample 5, with higher DPI):**
+
+```bash
+python -m src.dataops.cov_segm.visualizer "the side mirror" --start_index 5 --sample_count 1 --mask_type full --output_dir ./viz_outputs --no-show --dpi 300
+```

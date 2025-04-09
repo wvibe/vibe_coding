@@ -26,6 +26,7 @@ This document tracks the development tasks for the `src/dataops` module.
         *   Distinguishes instances with different colors (`tab10` colormap).
     *   **CLI:** Added command-line interface with arguments for sample selection (`start_index`, `sample_count`), prompt, mask type, output directory (`output_dir`), and debugging (`--debug`).
     *   **Output Handling:** Saves images to `output_dir` with filenames based on sample ID, prompt, and mask type. Suppresses interactive display when saving, unless `--show` is used.
+    *   **[X] Added CLI usage examples to `docs/dataops/DESIGN.md`.**
 *   **[ ] Update Exploration Notebook:**
     *   Modify `notebooks/dataset/lab42_segm_explorer.ipynb` to:
         *   Import `datasets`.
