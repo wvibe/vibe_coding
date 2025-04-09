@@ -381,19 +381,15 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example usage from project root:
-    # Finetune (new run):
-    # python src/models/ext/yolov11/train_segment.py \\
-    #    --config src/models/ext/yolov11/configs/finetune_segment_voc.yaml \\
-    #    --name voc11l_segment_finetune_run1
-    # Output directory might be runs/finetune/segment/voc11l_segment_finetune_run1_YYYYMMDD_HHMMSS/
-
-    # Resume a specific run (assuming it exists and WandB logs are in ./wandb):
-    # python src/models/ext/yolov11/train_segment.py \\
-    #    --config src/models/ext/yolov11/configs/finetune_segment_voc.yaml \\
-    #    --resume_with runs/finetune/segment/voc11l_segment_finetune_run1_20240801_150000 \\
-    #    --name voc11l_segment_finetune_run1 # Base name, overridden by resume_with path name
-    #    # The script will automatically search for the matching WandB ID in ./wandb
-    #    # If WandB logs are elsewhere, use --wandb-dir path/to/wandb/root
+    # Example Usage (Fine-tuning):
+    # python src/models/ext/yolov11/train_segment.py \
+    #     --config configs/yolov11/finetune_segment_voc.yaml \
+    #     --name voc11_seg_finetune_run1
+    #
+    # Example Usage (Resuming):
+    # python src/models/ext/yolov11/train_segment.py \
+    #     --config configs/yolov11/finetune_segment_voc.yaml \
+    #     --resume_with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
+    #     --name voc11_seg_finetune_run1
 
     main()

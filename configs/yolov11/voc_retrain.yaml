@@ -5,7 +5,7 @@
 # Note: Ensure Ultralytics provides/recognizes this YAML or adjust as needed.
 model: yolo11l.yaml
 # Path to the dataset definition yaml (relative to project root)
-data: src/models/ext/yolov11/configs/voc_detect.yaml
+data: configs/yolov11/voc_detect.yaml
 
 # --- Training Hyperparameters ---
 # Number of epochs (typically more needed for scratch training, e.g., 300)

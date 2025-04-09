@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
-from src.data_loaders.cv.voc import PascalVOCDataset
+from src.utils.data_loaders.cv.voc import PascalVOCDataset
 
 # Define the anchors directory
 script_dir = os.path.dirname(os.path.abspath(__file__))

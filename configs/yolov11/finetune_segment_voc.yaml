@@ -4,7 +4,7 @@
 # Base model weights file (YOLOv11 Large Segmentation)
 model: yolo11l-seg.pt
 # Path to the dataset definition yaml (relative to project root)
-data: src/models/ext/yolov11/configs/voc_segment.yaml
+data: configs/yolov11/voc_segment.yaml
 
 # --- Training Hyperparameters ---
 # Number of epochs (adjust as needed)

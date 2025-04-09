@@ -12,7 +12,6 @@ import random
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from src.data_loaders.cv.voc import PascalVOCDataset
 from src.models.py.yolov3.config import YOLOv3Config
 from src.models.py.yolov3.loss import YOLOv3Loss
 from src.models.py.yolov3.train import (
@@ -22,6 +21,7 @@ from src.models.py.yolov3.train import (
     validate,
 )
 from src.models.py.yolov3.yolov3 import YOLOv3
+from src.utils.data_loaders.cv.voc import PascalVOCDataset
 
 
 def create_subset_dataloader(

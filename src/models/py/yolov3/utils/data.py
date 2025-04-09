@@ -6,7 +6,7 @@ import os
 
 from torch.utils.data import DataLoader, Subset
 
-from src.data_loaders.cv import DummyDetectionDataset, ImprovedVOCDataset, PascalVOCDataset
+from src.utils.data_loaders.cv import DummyDetectionDataset, ImprovedVOCDataset, PascalVOCDataset
 
 
 def _limit_batches(dataloader, num_batches):

@@ -26,20 +26,25 @@ pip install -e .
 
 ### Project Structure
 
-The project uses a modern src-layout for better packaging:
+The project uses a modern src-layout and is organized as follows:
 
 ```
-vibe_coding/
-├── src/                # Source code with proper package structure
-│   ├── data_loaders/   # Dataset utilities
-│   ├── models/         # Model implementations
-│   │   ├── hf/         # Huggingface-based models
-│   │   └── py/         # Pure PyTorch models
-│   └── utils/          # Shared utilities
-├── tests/              # Test files mirroring src structure
-├── docs/               # Documentation
-├── setup.py            # Package installation
-└── requirements.txt    # Dependencies
+vibe_coding/                # Git Repository Root ($HOME//vibe/vibe_coding)
+├── configs/                # Configuration files (datasets, training, models)
+├── docs/                   # Project documentation (guides, designs)
+├── ext/                    # External git libraries/submodules (READ-ONLY)
+├── notebooks/              # Jupyter notebooks for experiments and analysis
+├── ref/                    # External reference code snippets/examples (READ-ONLY)
+├── scripts/                # Standalone utility scripts (not part of the src package)
+├── src/                    # Source code package (installable via setup.py)
+│   ├── models/             # Core model implementations & integrated external models (e.g., YOLO)
+│   └── utils/              # Shared utility functions (e.g., data converters)
+├── tests/                  # Unit and integration tests (mirroring src structure)
+│   ├── models/             # Tests for src/models
+│   └── utils/              # Tests for src/utils
+├── README.md               # Project overview, setup, and usage guide
+├── requirements.txt        # Python dependencies (managed by pip)
+└── setup.py                # Enables `pip install -e .` for the src package
 ```
 
 ### Environment Setup
@@ -140,8 +145,8 @@ A similar script is provided for training YOLOv11 detection models.
 
 ### Configuration
 
-1.  **Dataset Definition:** Similar to YOLOv8, define dataset paths and classes in a dedicated YAML file (e.g., `src/models/configs/datasets/voc_detect.yaml`). Ensure paths are correct relative to the project root or absolute.
-2.  **Training Parameters:** Create a main training YAML (e.g., `src/models/configs/training/voc11_finetune_config.yaml`). This file specifies:
+1.  **Dataset Definition:** Similar to YOLOv8, define dataset paths and classes in a dedicated YAML file (e.g., `configs/yolov11/voc_detect.yaml`). Ensure paths are correct relative to the project root or absolute.
+2.  **Training Parameters:** Create a main training YAML (e.g., `configs/yolov11/voc11_finetune_config.yaml`). This file specifies:
     *   `model`: Path to the base model (`.pt`) for fine-tuning or architecture (`.yaml`) for scratch.
     *   `data`: Path (relative to project root) to the dataset definition YAML.
     *   Training hyperparameters (epochs, batch, imgsz, optimizer, lr0, device, etc.).
@@ -162,13 +167,13 @@ A similar script is provided for training YOLOv11 detection models.
     *   **Fine-tuning Example:**
         ```bash
         python src/models/ext/yolov11/train_detect.py \
-            --config src/models/configs/training/voc11_finetune_config.yaml \
+            --config configs/yolov11/voc11_finetune_config.yaml \
             --name voc11_finetune_run1
         ```
     *   **Training from Scratch Example (assuming a `voc11_scratch_config.yaml` exists):**
         ```bash
         python src/models/ext/yolov11/train_detect.py \
-            --config src/models/configs/training/voc11_scratch_config.yaml \
+            --config configs/yolov11/voc11_scratch_config.yaml \
             --name voc11_scratch_run1
         ```
     *   **Resuming a Run Example:**
@@ -176,17 +181,16 @@ A similar script is provided for training YOLOv11 detection models.
         ```bash
         # Example assuming the run to resume is runs/train/detect/voc11_finetune_run1_20240801_100000
         python src/models/ext/yolov11/train_detect.py \
-            --config src/models/configs/training/voc11_finetune_config.yaml \
+            --config configs/yolov11/voc11_finetune_config.yaml \
             --resume_with runs/train/detect/voc11_finetune_run1_20240801_100000 \
             --name voc11_finetune_run1 # Base name is still required but overridden by resume_with path
-            # [--wandb-dir path/to/wandb/root] # Optional: Specify if wandb dir is not ./wandb
         ```
         **Note on Resuming WandB:** The script will automatically attempt to find the corresponding WandB run ID within the directory specified by `--wandb-dir` (defaulting to `./wandb`) based on the run name in the Ultralytics directory (`voc11_finetune_run1_20240801_100000` in this example). If found, it resumes the WandB log; otherwise, it starts a new WandB run.
 
     *   **Overriding Project Directory Example:**
         ```bash
         python src/models/ext/yolov11/train_detect.py \
-            --config src/models/configs/training/voc11_scratch_config.yaml \
+            --config configs/yolov11/voc11_scratch_config.yaml \
             --project runs/yolov11_experiments \
             --name voc11_scratch_run2
         ```

@@ -11,7 +11,7 @@ import pytest
 import torch
 from PIL import Image
 
-from src.data_loaders.cv.voc import PascalVOCDataset
+from src.utils.data_loaders.cv.voc import PascalVOCDataset
 
 
 @pytest.fixture

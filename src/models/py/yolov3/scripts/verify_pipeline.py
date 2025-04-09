@@ -10,10 +10,10 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 
-from src.data_loaders.cv.voc import PascalVOCDataset
 from src.models.py.yolov3.config import DEFAULT_CONFIG
 from src.models.py.yolov3.darknet import Darknet53
 from src.models.py.yolov3.yolov3 import YOLOv3
+from src.utils.data_loaders.cv.voc import PascalVOCDataset
 
 # Script directory
 script_dir = os.path.dirname(os.path.abspath(__file__))

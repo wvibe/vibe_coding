@@ -15,8 +15,9 @@ This directory contains code and documentation related to experiments with YOLOv
 ## Source Code
 
 - Main scripts: [`src/models/ext/yolov11/`](../../src/models/ext/yolov11/)
-- Configurations: [`src/models/ext/yolov11/configs/`](../../src/models/ext/yolov11/configs/)
-- Tests: [`tests/models/ext/yolov11/`](../../tests/models/ext/yolov11/)
+- Configurations: [`configs/yolov11/`](../../configs/yolov11/)
+- Tests:
+  - Prediction: `tests/models/ext/yolov11/test_predict.py`
 
 ## Usage
 
@@ -24,7 +25,7 @@ This directory contains code and documentation related to experiments with YOLOv
 
 The `predict_detect.py` script runs inference using a YOLOv11 model based on parameters defined in a YAML configuration file. It supports command-line arguments for dataset selection and limited overrides.
 
-**Configuration (`src/models/ext/yolov11/configs/predict_detect.yaml`):**
+**Configuration (`configs/yolov11/predict_detect.yaml`):**
 
 - `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt`).
 - `project`: Base directory to save output runs (e.g., `runs/predict/detect`).
@@ -34,7 +35,7 @@ The `predict_detect.py` script runs inference using a YOLOv11 model based on par
 
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
-    --config <path_to_config.yaml> \
+    --config configs/yolov11/predict_detect.yaml \
     --dataset <dataset_id> \
     --tag <split_tag> \
     --name <your_run_name> \
@@ -59,7 +60,7 @@ python -m src.models.ext.yolov11.predict_detect \
 
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
-    --config src/models/ext/yolov11/configs/predict_detect.yaml \
+    --config configs/yolov11/predict_detect.yaml \
     --dataset voc \
     --tag test2007 \
     --name voc_test2007_detect_run1
@@ -69,7 +70,7 @@ python -m src.models.ext.yolov11.predict_detect \
 
 ```bash
 python -m src.models.ext.yolov11.predict_detect \
-    --config src/models/ext/yolov11/configs/predict_detect.yaml \
+    --config configs/yolov11/predict_detect.yaml \
     --dataset voc \
     --tag val2007 \
     --name voc_val2007_detect_run2 \
@@ -86,7 +87,7 @@ The `predict_segment.py` script runs instance segmentation inference using a YOL
 It requires a YAML configuration file for model and inference settings, and command-line arguments
 to specify the target dataset split and the output run name.
 
-**Configuration (`src/models/ext/yolov11/configs/predict_segment.yaml`):**
+**Configuration (`configs/yolov11/predict_segment.yaml`):**
 
 - Defines model and inference parameters.
 - `model`: Path to the segmentation model (`.pt`) or Ultralytics model name (e.g., `yolo11n-seg.pt`). *Required.*
@@ -101,7 +102,7 @@ to specify the target dataset split and the output run name.
 # Ensure .env file is present at project root for dataset path resolution
 
 python -m src.models.ext.yolov11.predict_segment \
-    --config <path_to_config.yaml> \
+    --config configs/yolov11/predict_segment.yaml \
     --dataset <dataset_id> \
     --tag <split_tag> \
     --name <your_run_name> \
@@ -113,7 +114,7 @@ python -m src.models.ext.yolov11.predict_segment \
 
 **Arguments:**
 
-- `--config`: Path to the YAML configuration file (e.g., `src/models/ext/yolov11/configs/predict_segment.yaml`). *Required.*
+- `--config`: Path to the YAML configuration file (e.g., `configs/yolov11/predict_segment.yaml`). *Required.*
 - `--dataset`: Dataset identifier (e.g., `voc`). Must have a corresponding `*_SEGMENT` environment variable defined in `.env` (e.g., `VOC_SEGMENT`). Default: `voc`.
 - `--tag`: The specific split/tag for the dataset (e.g., `val2007`, `test2007`). The script looks for images in `${DATASET_BASE_PATH}/images/{tag}`. *Required.*
 - `--name`: The name for this specific prediction run. This will be the name of the output directory created under the `project` specified in the config file. *Required.*
@@ -126,7 +127,7 @@ python -m src.models.ext.yolov11.predict_segment \
 
 ```bash
 python -m src.models.ext.yolov11.predict_segment \
-    --config src/models/ext/yolov11/configs/predict_segment.yaml \
+    --config configs/yolov11/predict_segment.yaml \
     --dataset voc \
     --tag val2007 \
     --name voc_val2007_predict_run1
@@ -136,7 +137,7 @@ python -m src.models.ext.yolov11.predict_segment \
 
 ```bash
 python -m src.models.ext.yolov11.predict_segment \
-    --config src/models/ext/yolov11/configs/predict_segment.yaml \
+    --config configs/yolov11/predict_segment.yaml \
     --dataset voc \
     --tag test2007 \
     --name voc_test2007_predict_run2 \
@@ -225,8 +226,8 @@ The `train_segment.py` script initiates training (finetuning or from scratch) fo
 
 **Configuration (`src/models/configs/training/finetune_segment_*.yaml`):**
 - `model`: Path to the base segmentation model weights (`.pt`) or architecture YAML (`.yaml`) (e.g., `yolo11l-seg.pt`). *Required.*
-- `data`: Path (relative to project root) to the *dataset-specific* segmentation configuration YAML (e.g., `src/models/ext/yolov11/configs/voc_segment.yaml`). This file should contain paths for `train`, `val`, `test` (optional), along with class `names`. *Required.*
-- `project`: Base directory to save training runs (e.g., `runs/finetune/segment`). *Optional, defaults defined in script.* Note: This path was updated for consistency.
+- `data`: Path (relative to project root) to the *dataset-specific* segmentation configuration YAML (e.g., `configs/yolov11/voc_segment.yaml`). This file should contain paths for `train`, `val`, `test` (optional), along with class `names`. *Required.*
+- `project`: Base directory for saving runs (e.g., `runs/train/segment`). Defaults will be used if omitted.
 - `pretrained`: Boolean (`True` for finetuning, `False` for scratch). Relevant only for *new* runs.
 - Other keys correspond to `ultralytics.YOLO.train` arguments suitable for segmentation.
 
@@ -250,10 +251,10 @@ python src/models/ext/yolov11/train_segment.py \\
 
 **Arguments:**
 
-- `--config`: Path to the main training configuration YAML file (e.g., `src/models/ext/yolov11/configs/finetune_segment_voc.yaml`). Must contain a `data` key pointing to the dataset-specific config. *Required.*
+- `--config`: Path to the main training configuration YAML file (e.g., `configs/yolov11/finetune_segment_voc.yaml`). Must contain a `data` key pointing to the dataset-specific config. *Required.*
 - `--project` (optional): Override the base project directory specified in the config file (or script default).
-- `--name`: Base name for the training run. A timestamp (`_YYYYMMDD_HHMMSS`) will be automatically appended to create the actual run directory for *new* runs. For *resume* runs, this is still required syntactically but the actual run name is determined by the `--resume_with` path. *Required.*
-- `--resume_with` (optional): Path to the *exact* run directory (e.g., `runs/finetune/segment/my_run_20240101_103000`) to resume training *checkpoint* from. If provided, the script will load `weights/last.pt` from this directory and use the directory's name as the run name.
+- `--name`: A unique name for the training run (e.g., `voc11_seg_finetune_run1`). Results will be saved under `<project>/<name>_YYYYMMDD_HHMMSS`.
+- `--resume_with`: (Optional) Path to a previous run directory to resume training (e.g., `runs/train/segment/voc11_seg_finetune_run1_20240101_000000`). If provided, `--name` should still be set to the *original* base name for WandB linking.
 - `--wandb-dir` (optional): Path to the root directory containing WandB run folders (e.g., `./wandb`). Defaults to `wandb`. Used to automatically find the corresponding WandB run ID when resuming.
 
 **WandB Integration:**
@@ -263,29 +264,26 @@ python src/models/ext/yolov11/train_segment.py \\
 - If a match is found, the script sets the `WANDB_RUN_ID` environment variable, allowing Ultralytics to resume logging to the correct existing WandB run.
 - If no match is found, a warning is logged, and a new WandB run will be created if WandB is enabled.
 
-**Example (Finetuning):**
+**Example (Fine-tune from pre-trained weights):**
 
 ```bash
-# Start a new finetuning run
-python src/models/ext/yolov11/train_segment.py \\
-    --config src/models/ext/yolov11/configs/finetune_segment_voc.yaml \\
-    --name voc11l_segment_finetune_run1
-# Output directory might be runs/finetune/segment/voc11l_segment_finetune_run1_YYYYMMDD_HHMMSS/
+# Fine-tune from pre-trained weights
+python src/models/ext/yolov11/train_segment.py \
+    --config configs/yolov11/finetune_segment_voc.yaml \
+    --name voc11_seg_finetune_run1
 ```
 
 **Example (Resuming a Specific Finetuning Run):**
 
 ```bash
-# Assume the previous run was saved to runs/finetune/segment/voc11l_segment_finetune_run1_20240801_150000/
-python src/models/ext/yolov11/train_segment.py \\
-    --config src/models/ext/yolov11/configs/finetune_segment_voc.yaml \\
-    --resume_with runs/finetune/segment/voc11l_segment_finetune_run1_20240801_150000 \\
-    --name voc11l_segment_finetune_run1 # Provide the base name
-    # The script will automatically search for the matching WandB ID in ./wandb
-    # If WandB logs are elsewhere, use --wandb-dir path/to/wandb/root
+# Resume a specific run
+python src/models/ext/yolov11/train_segment.py \
+    --config configs/yolov11/finetune_segment_voc.yaml \
+    --resume_with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
+    --name voc11_seg_finetune_run1
 ```
 
-Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name_with_timestamp>/`.
+Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>_YYYYMMDD_HHMMSS`.
 
 ### Evaluation (Detection)
 

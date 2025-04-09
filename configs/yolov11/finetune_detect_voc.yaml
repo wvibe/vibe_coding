@@ -4,7 +4,7 @@
 # Base model weights file (YOLOv11 Large)
 model: yolo11l.pt
 # Path to the dataset definition yaml (relative to project root)
-data: src/models/ext/yolov11/configs/voc_detect.yaml
+data: configs/yolov11/voc_detect.yaml
 
 # --- Training Hyperparameters ---
 # Number of epochs (adjust as needed)

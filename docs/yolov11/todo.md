@@ -10,7 +10,7 @@
 - [x] Milestone 2: VOC Dataset Configuration
   - [x] Confirm VOC dataset root (`$HOME/vibe/hub/datasets/VOC`)
   - [x] Decide on train/val splits (using `voc_combined.yaml` splits)
-  - [x] Create `src/models/ext/yolov11/configs/voc_detect.yaml`
+  - [x] Create `configs/yolov11/voc_detect.yaml`
 - [x] Milestone 3: Basic Prediction Script (Detection)
   - [x] Design config YAML structure (`predict_config.yaml` concept)
   - [x] Create demo config `predict_demo.yaml` (incl. `project` key)

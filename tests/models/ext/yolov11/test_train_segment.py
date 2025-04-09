@@ -44,15 +44,15 @@ def mock_main_config():
     """Fixture for a basic main configuration dictionary."""
     return {
         "model": "yolo11l-seg.pt",
-        "data": "src/models/ext/yolov11/configs/voc_segment.yaml",
-        "epochs": 10,
-        "imgsz": 640,
-        "batch": 16,
+        "data": "configs/yolov11/voc_segment.yaml",
+        "epochs": 1,
+        "batch": 1,
+        "imgsz": 64,
+        "device": "cpu",
         "workers": 8,
         "optimizer": "SGD",
         "lr0": 0.01,
         "lrf": 0.1,
-        "device": "0",
         "pretrained": True,
         "project": "runs/train/default_config_project",
         "some_other_key": "should_be_ignored",
@@ -231,14 +231,14 @@ def test_prepare_train_kwargs_basic_mapping(mock_main_config):
 
     expected_kwargs = {
         # Mapped from mock_main_config
-        "epochs": 10,
-        "imgsz": 640,
-        "batch": 16,
+        "epochs": 1,
+        "imgsz": 64,
+        "batch": 1,
         "workers": 8,
         "optimizer": "SGD",
         "lr0": 0.01,
         "lrf": 0.1,
-        "device": "0",
+        "device": "cpu",
         "pretrained": True,
         "overlap_mask": True,
         "mask_ratio": 4,
@@ -273,9 +273,9 @@ def test_prepare_train_kwargs_empty_device_handling(mock_main_config):
 
     expected_kwargs = {
         # Mapped from mock_main_config
-        "epochs": 10,
-        "imgsz": 640,
-        "batch": 16,
+        "epochs": 1,
+        "imgsz": 64,
+        "batch": 1,
         "workers": 8,
         "optimizer": "SGD",
         "lr0": 0.01,

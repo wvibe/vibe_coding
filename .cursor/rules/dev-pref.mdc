@@ -1,0 +1,30 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Coding Preferences & Guidelines
+
+## General Principles
+- **Simplicity:** Prefer simple solutions. Focus strictly on the requested task; avoid adding unasked-for functionality.
+- **DRY (Don't Repeat Yourself):** Reuse existing code/functionality where possible. Avoid duplication.
+- **Consistency:** When fixing issues, adhere to existing patterns. If new patterns/tech are required, refactor/remove the old implementation.
+- **Cleanliness:** Maintain a clean, well-organized codebase.
+- **File Size:** Keep files under 500 lines; refactor larger files.
+
+## Environment & Files
+- **Check Environment:** Always confirm the active `conda` environment (target: `vbl`) before running commands, based on prompt context.
+- **`.env` Files:** Never commit `.env` files. Do not overwrite `.env` without explicit user confirmation.
+- **Project Structure:** Follow the organization outlined in the project `README.md`.
+
+## Testing (`pytest`)
+- **Focus:** Cover common functions and complex algorithms. Aim for tests that improve code structure, not just end-to-end validation.
+- **Mocking:** Use data mocking *only* for tests.
+
+## Documentation
+- **Docstrings:** Provide clear docstrings for public functions and classes.
+- **External Docs:** Update design/user documents after major feature changes.
+
+## Handling Specific Code Types
+- **External Code (`/ext`, `/ref`):** Treat these directories as **READ-ONLY**. Do not modify contents.
+- **Notebooks (`.ipynb`):** To edit, generate a temporary `.py` file, modify it, then convert back using `jupytext --to notebook`.
