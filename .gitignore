@@ -25,3 +25,4 @@ dist/
 *.safetensors
 # Weights & Biases
 wandb/
+ref/
