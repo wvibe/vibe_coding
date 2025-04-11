@@ -27,3 +27,23 @@ Typically, a notebook or training script would:
 ## Contribution
 
 When adding support for a new dataset, create a new subdirectory named after the dataset and populate it with the necessary `loader.py`, `parser.py`, etc. Adapt existing logic where possible, especially from the `ref/` directory (copying and commenting the origin is preferred over direct modification of `ref/`). Place genuinely reusable, dataset-agnostic utilities in `common/`.
+
+## Testing Philosophy
+
+The testing approach for this module focuses on validating core algorithmic functionality rather than visual outputs or end-to-end results. This ensures:
+
+- **Unit Tests are Deterministic:** Tests should produce the same results regardless of execution environment
+- **Headless Execution:** Tests can run in CI/CD pipelines without requiring display capabilities
+- **Focus on Logic, not Appearance:** Tests validate that the right pixels are processed, not how they look
+
+For example, in `tests/dataops/cov_segm/test_visualizer.py`:
+- Matplotlib components are mocked to avoid actual plotting
+- Various mask types (grayscale, binary, palette) are tested with parameterized test cases
+- The tests verify mask interpretation logic, not the visual appearance
+- Binary mask handling is tested through proper PIL image creation and numpy array manipulation
+
+When adding tests, follow these principles:
+- Use appropriate mocking to isolate the functionality being tested
+- Add parameterized tests for diverse inputs when applicable
+- Use fixtures to create test data that exercises key logic paths
+- Focus on assertions that validate behavior, not implementation details

@@ -43,22 +43,30 @@ This document tracks the development tasks for the `src/dataops` module.
         *   `load_sample` (mocking input row, mocking S3 fetch, asserting correct output structure)
         *   Added fixtures for PIL images and NumPy arrays
         *   Added error case handling tests
+*   **[X] Improve `cov_segm` Visualization & Testing:**
+    *   Enhanced binary mask (mode "1") handling in `_apply_color_mask` function
+    *   Added detailed logging and debugging for mask interpretation process
+    *   Implemented proper test cases focusing on core functionality rather than visual output
+    *   Fixed test issues with binary mask handling by correctly creating test mask images
+    *   Added parameterized tests for diverse mask formats (grayscale, binary, palette)
 
 ## Medium Priority: Dataset Analysis & YOLO Conversion
 
 *   **[X] Implement `cov_segm` Analyzer:**
     *   Created `src/dataops/cov_segm/analyzer.py`.
     *   Implemented `aggregate_phrase_stats`:
-        *   Takes raw dataset rows, parses `conversations` JSON using `parse_conversations`.
-        *   Aggregates phrase occurrences, visible mask counts (`instance_masks`), and full mask counts (`instance_full_masks`).
+        *   Takes raw dataset rows and operates in two modes (`--mode`):
+            *   `counts_only` (default): Parses `conversations` JSON using `parse_conversations`. Aggregates phrase occurrences and mask counts based on metadata.
+            *   `deep_stats`: Loads full samples using `load_sample`. Aggregates phrase occurrences, mask counts, and pre-calculated mask geometry (area, width, height).
         *   Returns `(aggregated_stats_dict, total_processed_count)`.
-        *   Includes options `--verbose`, `--debug_phrase`, `--skip_zero`.
+        *   Includes options `--mode`, `--verbose`, `--debug_phrase`, `--skip_zero` (counts_only mode).
     *   Implemented `calculate_summary_stats`:
         *   Takes aggregated stats and total count.
         *   Calculates appearance percentage, average mask counts, and percentiles for mask counts.
+        *   If `deep_stats` data is present, calculates average and percentile statistics for mask area, width, and height.
         *   Returns a list of summary dicts per phrase, sorted by appearance count.
     *   Added command-line interface (`if __name__ == "__main__"`):
-        *   Handles arguments for split, sample slicing, output files, percentiles, top N printing, skip zero, and verbosity.
+        *   Handles arguments for mode, split, sample slicing, output files, percentiles, top N printing, skip zero, and verbosity.
         *   Prints formatted summary or saves JSON files.
     *   Added unit tests (`test_analyzer.py`) covering both functions and options.
 *   **[ ] Implement `cov_segm` to YOLO Format Converter:**
@@ -72,3 +80,9 @@ This document tracks the development tasks for the `src/dataops` module.
 
 *   **[ ] Add Support for Other Datasets:** Create new subdirectories (e.g., `dataops/other_dataset/`) following the established pattern (`datamodel.py`, `loader.py`, etc.).
 *   **[ ] Refactor Common Logic:** Identify and move any truly dataset-agnostic logic emerging in dataset modules to `common/`.
+*   **[ ] Expand Visualizer Capabilities:**
+    *   Add support for additional mask types (RGBA, LA, etc.)
+    *   Implement a mask format conversion utility for standardizing diverse input formats
+    *   Create an interactive visualization dashboard for exploring multiple samples/prompts
+    *   Add options for visual styling (colormap selection, transparency control, etc.)
+    *   Implement batch processing mode for generating visualizations across dataset slices

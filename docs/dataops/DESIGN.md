@@ -37,36 +37,52 @@ This document outlines the design choices and architecture for the `dataops` mod
 
 ## Analyzer Module (`src/dataops/cov_segm/analyzer.py`)
 
-This module provides functions for analyzing and aggregating statistics across the `lab42/cov-segm-v3` dataset after it has been processed by the loader.
+This module provides functions for analyzing and aggregating statistics across the `lab42/cov-segm-v3` dataset. It operates in two modes: a fast `counts_only` mode using metadata, and a slower `deep_stats` mode that loads mask data to calculate geometric properties.
 
 ### `aggregate_phrase_stats`
 
-- **Purpose:** To efficiently iterate through raw dataset samples and aggregate statistics based on unique phrases found by parsing the `conversations` JSON metadata, *without* loading full image/mask data.
+- **Purpose:** To iterate through dataset samples and aggregate statistics based on unique phrases. The level of aggregation depends on the selected `--mode`.
 - **Input:**
     - `dataset_iterable`: An `Iterable` yielding raw dataset rows (dictionaries).
+    - `mode` (str): Determines the analysis depth ('counts_only' or 'deep_stats').
     - `verbose` (bool): Enables detailed logging.
     - `debug_phrase` (Optional[str]): Logs details when a specific phrase is encountered.
-    - `skip_zero_masks` (bool): If True, ignores phrases in a sample if they have 0 visible AND 0 full masks.
-- **Processing:**
+    - `skip_zero_masks` (bool): If True, ignores phrases in a sample if they have 0 visible AND 0 full masks (only relevant in `counts_only` mode).
+- **Processing (`counts_only` mode):**
     - Retrieves the `conversations` JSON string from each raw row.
     - Uses `src.dataops.cov_segm.loader.parse_conversations` to parse the JSON into Pydantic `ConversationItem` models.
     - Extracts the primary phrase (first phrase text) from each `ConversationItem`.
-    - Counts items in `instance_masks` (visible masks) and `instance_full_masks` (full masks) for each phrase per sample.
+    - Counts items in `instance_masks` (visible masks) and `instance_full_masks` (full masks) for each phrase per sample based on list lengths in the metadata.
     - Handles potential errors during JSON/Pydantic parsing gracefully.
     - Aggregates statistics per unique phrase text based on its *first appearance* within a sample, applying `skip_zero_masks` logic if enabled.
+- **Processing (`deep_stats` mode):**
+    - Uses `src.dataops.cov_segm.loader.load_sample` to load the full sample data (image and processed masks with pre-calculated geometry) for each row.
+    - Handles potential errors during `load_sample` gracefully (logs and skips).
+    - Extracts the primary phrase (first phrase text) from each `processed_conversation`.
+    - Aggregates statistics per unique phrase text based on its *first appearance* within a sample:
+        - Counts visible and full masks based on the length of `processed_instance_masks` and `processed_full_masks`.
+        - Aggregates pre-calculated `pixel_area`, `width`, and `height` from the `ProcessedMask` dictionaries within `processed_instance_masks` and `processed_full_masks`.
 - **Output Structure:** Returns a tuple `(aggregated_stats_dict, total_processed_count)` where:
     - `aggregated_stats_dict`: Dictionary mapping phrase text to:
         ```python
         {
-            "appearance_count": int,           # How many samples contain this phrase (respecting skip_zero_masks)
+            "appearance_count": int,           # How many samples contain this phrase
             "sample_ids": List[str],         # IDs of samples containing this phrase
+            # --- Counts (Always Populated) ---
             "total_visible_mask_count": int, # Sum of visible masks across all appearances
             "visible_mask_counts_per_image": List[int], # List of visible mask counts per appearance
             "total_full_mask_count": int,    # Sum of full masks across all appearances
-            "full_mask_counts_per_image": List[int]  # List of full mask counts per appearance
+            "full_mask_counts_per_image": List[int],  # List of full mask counts per appearance
+            # --- Deep Stats (Populated only if mode=='deep_stats') ---
+            "visible_mask_pixel_areas": List[int], # List of pixel areas for each visible mask instance
+            "visible_mask_widths": List[int],      # List of widths for each visible mask instance
+            "visible_mask_heights": List[int],     # List of heights for each visible mask instance
+            "full_mask_pixel_areas": List[int],    # List of pixel areas for each full mask instance
+            "full_mask_widths": List[int],         # List of widths for each full mask instance
+            "full_mask_heights": List[int],        # List of heights for each full mask instance
         }
         ```
-    - `total_processed_count`: The number of samples successfully parsed and considered.
+    - `total_processed_count`: The number of samples successfully processed (parsed or loaded).
 
 ### `calculate_summary_stats`
 
@@ -79,32 +95,51 @@ This module provides functions for analyzing and aggregating statistics across t
     - Calculates appearance percentage relative to `total_processed_samples`.
     - Calculates the mean number of visible and full masks per image appearance.
     - Calculates the specified percentiles for the distribution of visible and full mask counts per image.
+    - **If deep stats data is present** (i.e., `*_pixel_areas`, `*_widths`, `*_heights` lists exist):
+        - Calculates the mean pixel area, width, and height for visible and full masks.
+        - Calculates the specified percentiles for the distributions of pixel area, width, and height for visible and full masks.
 - **Output Structure:** Returns a *list* of dictionaries, one per phrase, sorted by `appearance_count` (descending). Each dictionary contains:
     ```python
     {
         "phrase": str,
         "appearance_count": int,
         "appearance_percentage": float,
+        # --- Count Stats ---
         "avg_visible_masks_per_image": float,
         "avg_full_masks_per_image": float,
-        "visible_mask_percentiles": Dict[float, float],
-        "full_mask_percentiles": Dict[float, float]
+        "visible_mask_percentiles": Dict[float, float], # Count percentiles
+        "full_mask_percentiles": Dict[float, float],    # Count percentiles
+        # --- Deep Stats (Optional) ---
+        "avg_visible_mask_pixels": Optional[float],
+        "avg_visible_mask_width": Optional[float],
+        "avg_visible_mask_height": Optional[float],
+        "visible_mask_pixel_percentiles": Optional[Dict[float, float]],
+        "visible_mask_width_percentiles": Optional[Dict[float, float]],
+        "visible_mask_height_percentiles": Optional[Dict[float, float]],
+        "avg_full_mask_pixels": Optional[float],
+        "avg_full_mask_width": Optional[float],
+        "avg_full_mask_height": Optional[float],
+        "full_mask_pixel_percentiles": Optional[Dict[float, float]],
+        "full_mask_width_percentiles": Optional[Dict[float, float]],
+        "full_mask_height_percentiles": Optional[Dict[float, float]],
     }
     ```
+    *(Note: Deep stats fields will be `None` or absent if run in `counts_only` mode)*
 
 ### Command-Line Usage (`python -m src.dataops.cov_segm.analyzer ...`)
 
 The script can be run directly to perform aggregation and summarization.
 *   **Key Arguments:**
+    *   `--mode`: Analysis mode. Choices: `counts_only` (default, fast, uses metadata), `deep_stats` (slow, loads masks, calculates geometry).
     *   `--split`: Specify dataset split (default: `validation`).
     *   `--sample_slice`: Specify sample slice (e.g., `[:100]`, `[50:150]`, default: `[:20]`, `''` for all).
     *   `--output_file`: Base path for saving results (`_agg.json` and `_summary.json` are appended). If omitted, prints summary to console.
     *   `--top`: Number of top phrases to print to console (default: `20`).
     *   `--percentiles`: List of percentiles to calculate (default: `[0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]`).
-    *   `--skip_zero`: Flag to ignore phrases with zero masks in a sample during aggregation.
+    *   `--skip_zero`: Flag to ignore phrases with zero masks in a sample during aggregation (only relevant in `counts_only` mode).
     *   `--debug_phrase`: Specify a phrase for detailed debug logging (requires `-v`).
     *   `-v` / `--verbose`: Enable verbose logging.
-*   **Output:** Either saves two JSON files or prints a formatted summary of the top N phrases to the console.
+*   **Output:** Either saves two JSON files or prints a formatted summary of the top N phrases to the console, including geometric stats if run in `deep_stats` mode.
 
 ## Visualizer Usage Examples (`src/dataops/cov_segm/visualizer.py`)
 
@@ -146,3 +181,27 @@ python -m src.dataops.cov_segm.visualizer "tree branches" --debug
 ```bash
 python -m src.dataops.cov_segm.visualizer "the side mirror" --start_index 5 --sample_count 1 --mask_type full --output_dir ./viz_outputs --no-show --dpi 300
 ```
+
+## Visualizer Implementation Details
+
+The `cov_segm.visualizer` module has been implemented with careful attention to diverse mask formats:
+
+### Mask Format Handling
+
+- **Grayscale Masks (mode "L")**: Handles both direct matching (e.g., pixel value = 1) and non-zero matching for scaled values (e.g., 0-255 range).
+- **Binary Masks (mode "1")**: Special handling for PIL's binary format where pixels are either 0 or 1, with proper boolean array conversion.
+- **Palette Masks (mode "P")**: Direct matching against the index value, with palette interpretation capabilities.
+
+### Binary Mask Handling
+
+Special processing for binary masks (PIL mode "1") includes:
+- Correct conversion between numpy boolean arrays and PIL binary images
+- Proper handling of both positive_value=0 (matching black pixels) and positive_value=1 (matching white pixels)
+- Detailed logging for troubleshooting mask processing
+
+### Enhanced Debugging
+
+The visualizer includes robust debugging features:
+- Detailed logging of mask characteristics (mode, shape, min/max values)
+- Step-by-step tracking of mask interpretation
+- Clear error reporting for unmatched masks or unexpected values
