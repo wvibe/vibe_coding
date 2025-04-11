@@ -1,23 +1,18 @@
 # Standard library imports
-import argparse
 import logging
-import os
-import pprint
 from typing import Literal, Optional
 
 # Third-party imports
-import datasets
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-# Local imports
-from src.dataops.cov_segm.loader import (
+from src.dataops.cov_segm.datamodel import (
     ProcessedConversationItem,
     ProcessedCovSegmSample,
-    get_last_parsed_conversations,
-    load_sample,
 )
+
+# Local imports
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -69,49 +64,84 @@ def _apply_color_mask(
 
     # Different handling based on mask mode
     if mask.mode == "P":  # Palette-based image
-        # For palette images, we need to check if the positive_value is in the palette
-        # Get unique values to log
-        unique_values = np.unique(np_mask)
+        # Strategy 1: Direct match in palette mode.
+        # For palette images, check if pixel values directly match the positive_value.
+        # Note: Palette mapping interpretation might be needed for complex cases,
+        # but direct matching often works for segmentation masks.
         if debug:
-            logger.info(f"Unique values in mask: {unique_values}")
+            unique_values = np.unique(np_mask)
+            logger.debug(f"Palette Mask: Unique values={unique_values}")
 
         # Create mask where pixels match positive_value
         mask_indices = np_mask == positive_value
 
-        # If no matches, try looking at the palette mapping
+        # Log if palette exists but direct match failed (for debugging)
         if not np.any(mask_indices) and hasattr(mask, "palette"):
             if debug:
-                logger.info("No direct matches found, checking palette...")
-            # This is a more complex approach if needed
-            # We might need to examine the palette and map palette indices to actual values
-    else:
-        # For non-palette images, handle different value encoding possibilities
-        unique_values = np.unique(np_mask)
+                logger.debug(
+                    f"Palette Mask: No direct match for positive_value={positive_value}. "
+                    f"Palette exists: {mask.palette is not None}. Complex mapping may be needed."
+                )
+
+    elif mask.mode == "1":  # Explicit handling for binary masks
+        # np.array() on mode '1' image should give a boolean array
+        np_mask = np.array(mask)
+        # Ensure boolean type just in case
+        np_mask_bool = np_mask.astype(bool)
         if debug:
-            logger.info(f"Unique values in mask: {unique_values}")
+            # Log the boolean array unique values
+            logger.debug(f"Binary Mask (as bool): Unique values={np.unique(np_mask_bool)}")
 
-        # Strategy 1: Direct match (exact value)
+            # Log the actual binary mask values
+            logger.debug(f"Binary Mask (as int): {np_mask}")
+
+        if positive_value == 1:
+            # For mode '1', pixel values 1 represent True (white)
+            mask_indices = np_mask_bool  # Match True (white) pixels
+            if debug and np.any(mask_indices):
+                logger.debug("Binary: Matched True values for positive_value=1")
+            elif debug:
+                logger.debug("Binary: No True values found in binary mask")
+        elif positive_value == 0:
+            mask_indices = ~np_mask_bool  # Match False (black) pixels
+            if debug and np.any(mask_indices):
+                logger.debug("Binary: Matched False values for positive_value=0")
+        else:
+            # Handle unexpected positive_value for binary mask
+            mask_indices = np.zeros_like(np_mask_bool, dtype=bool)
+            if debug:
+                logger.warning(
+                    f"Binary: Unexpected positive_value {positive_value}, expected 0 or 1."
+                )
+
+    else:  # Grayscale ('L') or other non-palette, non-binary modes
+        # Convert mask to numpy array for processing
+        np_mask = np.array(mask)
+        if debug:
+            unique_values = np.unique(np_mask)
+            logger.debug(f"Non-Palette/Binary Mask: Unique values={unique_values}")
+
+        # Strategy 2: Direct match (exact value) - THIS IS THE PRIMARY METHOD
         mask_indices = np_mask == positive_value
+        if debug and np.any(mask_indices):
+            logger.debug("Non-Palette/Binary: Matched using direct value comparison.")
 
-        # Strategy 2: If no matches and values are scaled (e.g., 0-255 range)
+        # Strategy 3: Scaled value match (e.g., 0-255 range) - Fallback if direct fails
         if not np.any(mask_indices) and np_mask.max() > 1:
-            # Try normalized mask (if values might be scaled)
-            if debug:
-                logger.info("Trying normalized value comparison...")
-            normalized_mask = np_mask / np_mask.max()
-            normalized_positive = positive_value / max(unique_values.max(), positive_value)
-            mask_indices = normalized_mask == normalized_positive
-
-        # Strategy 3: If still no matches, check if the mask has binary-like structure
-        if not np.any(mask_indices) and len(unique_values) <= 2:
-            if debug:
-                logger.info("Trying binary mask approach...")
-            # For binary masks, use non-zero values if positive_value > 0
+            # Create a temporary boolean mask based on non-zero values
+            temp_bool_mask = np_mask > 0
+            # Check if the *positive* value itself is non-zero
             if positive_value > 0:
-                mask_indices = np_mask > 0
+                mask_indices = temp_bool_mask
+                if debug and np.any(mask_indices):
+                    logger.debug(
+                        "Non-Palette/Binary: Matched using non-zero values (fallback assuming scaled binary)."
+                    )
+            elif debug:  # positive_value is 0, and direct match failed
+                logger.debug("Non-Palette/Binary: positive_value is 0, direct match failed.")
 
     # Create the colored overlay
-    h, w = np_mask.shape[:2]  # Handle both 2D and 3D arrays
+    h, w = np_mask.shape[:2]  # Handle both 2D and 3D arrays (e.g. 'LA' mode)
     color_mask = np.zeros((h, w, 4))
 
     # Apply color to the identified mask regions
@@ -128,22 +158,6 @@ def _apply_color_mask(
 
     # Add the colored overlay to the plot
     ax.imshow(color_mask)
-
-
-def _create_output_filename(row_id: str, prompt: str, mask_type: str) -> str:
-    """Creates a standardized filename for visualization outputs.
-
-    Args:
-        row_id: The dataset row ID
-        prompt: The prompt text that was visualized
-        mask_type: The type of mask ('visible' or 'full')
-
-    Returns:
-        A standardized filename
-    """
-    # Sanitize the prompt text for filename use
-    safe_prompt = "".join(c if c.isalnum() else "_" for c in prompt[:20])
-    return f"{row_id}_{safe_prompt}_{mask_type}.png"
 
 
 def visualize_prompt_masks(
@@ -263,270 +277,3 @@ def visualize_prompt_masks(
 
     # Close the plot to free memory, especially important in loops/scripts
     plt.close(fig)
-
-
-def _setup_argparse() -> argparse.ArgumentParser:
-    """Creates and configures the argument parser for the CLI.
-
-    Returns:
-        Configured ArgumentParser instance
-    """
-    parser = argparse.ArgumentParser(
-        description="Visualize masks for a specific prompt in the lab42/cov-segm-v3 dataset."
-    )
-    parser.add_argument("prompt", type=str, help="The exact text prompt to visualize.")
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default="lab42/cov-segm-v3",
-        help="Name of the Hugging Face dataset.",
-    )
-    parser.add_argument(
-        "--split", type=str, default="train", help="Dataset split (e.g., 'train', 'validation')."
-    )
-    parser.add_argument(
-        "--start_index", type=int, default=0, help="Starting index of the sample in the dataset."
-    )
-    parser.add_argument(
-        "--sample_count",
-        type=int,
-        default=1,
-        help="Number of samples to check starting from start_index.",
-    )
-    parser.add_argument(
-        "--mask_type",
-        type=str,
-        default="visible",
-        choices=["visible", "full"],
-        help="Type of mask to display ('visible' or 'full').",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default=None,
-        help=(
-            "Directory path to save visualizations. "
-            "Individual filenames include sample ID and prompt."
-        ),
-    )
-    parser.add_argument(
-        "--no-show",
-        action="store_true",
-        help="Do not attempt to show the plot interactively (e.g., in headless environment).",
-    )
-    parser.add_argument(
-        "--show",
-        action="store_true",
-        help=(
-            "Force interactive display even when saving to output_dir. "
-            "By default, images are not displayed when saving."
-        ),
-    )
-    parser.add_argument(
-        "--alpha",
-        type=float,
-        default=0.5,
-        help="Transparency alpha value for mask overlays (0.0 to 1.0).",
-    )
-    parser.add_argument("--dpi", type=int, default=150, help="Resolution (DPI) for saved images.")
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable detailed debugging output and raw conversation data display.",
-    )
-
-    return parser
-
-
-def _configure_logging(debug_mode: bool):
-    """Configures logging based on debug mode.
-
-    Args:
-        debug_mode: Whether to enable debug logging
-    """
-    if debug_mode:
-        # Set visualizer module to DEBUG
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Debug mode enabled - showing detailed logging information")
-
-        # Also set loader module to DEBUG
-        loader_logger = logging.getLogger("src.dataops.cov_segm.loader")
-        loader_logger.setLevel(logging.DEBUG)
-
-
-def _determine_display_behavior(
-    output_dir: Optional[str], show_flag: bool, no_show_flag: bool
-) -> bool:
-    """Determines whether to show interactive display based on arguments.
-
-    Args:
-        output_dir: The output directory if specified
-        show_flag: Whether --show was specified
-        no_show_flag: Whether --no-show was specified
-
-    Returns:
-        Boolean indicating whether to show interactive display
-    """
-    should_show_interactive = True
-
-    # When saving to output_dir, don't show interactively by default
-    # Unless explicitly requested with --show
-    if output_dir and not show_flag:
-        should_show_interactive = False
-        logger.info(
-            "Saving images to output_dir without interactive display. Use --show to enable display."
-        )
-
-    # --no-show always disables interactive display
-    if no_show_flag:
-        should_show_interactive = False
-
-    return should_show_interactive
-
-
-def _load_dataset_slice(dataset_name: str, split: str, start_index: int, sample_count: int):
-    """Loads a slice of the dataset.
-
-    Args:
-        dataset_name: Name of the dataset
-        split: Dataset split
-        start_index: Starting index
-        sample_count: Number of samples
-
-    Returns:
-        Dataset slice or None if loading fails
-    """
-    try:
-        # Load only the necessary slice
-        dataset_slice = datasets.load_dataset(
-            dataset_name,
-            split=f"{split}[{start_index}:{start_index + sample_count}]",
-            trust_remote_code=True,  # Required for this dataset
-        )
-        return dataset_slice
-    except Exception as e:
-        logger.error(f"Failed to load dataset: {e}")
-        return None
-
-
-def main():
-    """Main entry point for the visualization CLI."""
-    parser = _setup_argparse()
-    args = parser.parse_args()
-
-    # Configure logging based on debug mode
-    _configure_logging(args.debug)
-
-    # Determine interactive display behavior
-    should_show_interactive = _determine_display_behavior(args.output_dir, args.show, args.no_show)
-
-    logger.info(f"Loading dataset '{args.dataset_name}', split '{args.split}'...")
-    dataset_slice = _load_dataset_slice(
-        args.dataset_name, args.split, args.start_index, args.sample_count
-    )
-
-    if not dataset_slice:
-        exit(1)
-
-    found_prompt = False
-    for i, hf_row in enumerate(dataset_slice):
-        current_index = args.start_index + i
-
-        # Get the sample ID from the dataset row
-        row_id = hf_row.get(
-            "id", f"sample_{current_index}"
-        )  # Default to sample_index if id not found
-
-        logger.info(f"Processing sample index: {current_index}, ID: {row_id}")
-
-        try:
-            processed_sample = load_sample(hf_row)
-            if processed_sample:
-                # Log available phrases only in debug mode
-                if args.debug:
-                    available_phrases = []
-                    for item in processed_sample["processed_conversations"]:
-                        for phrase in item["phrases"]:
-                            available_phrases.append(phrase["text"])
-                    logger.debug(f"Sample {current_index} Available Phrases: {available_phrases}")
-
-                target_item = _find_item_by_prompt(processed_sample, args.prompt)
-                if target_item:
-                    logger.info(
-                        f"Found prompt '{args.prompt}' in sample index "
-                        f"{current_index}. Visualizing..."
-                    )
-
-                    # --- Debug: Show raw conversation items when --debug is enabled ---
-                    if args.debug:
-                        logger.debug(f"-- RAW Conversation Items for Sample {current_index} --")
-                        raw_conversations = get_last_parsed_conversations()
-
-                        # Find the raw item that contains our prompt
-                        matching_raw_item = None
-                        for idx, raw_item in enumerate(raw_conversations):
-                            raw_phrases = raw_item.get("phrases", [])
-                            if any(phrase.get("text") == args.prompt for phrase in raw_phrases):
-                                matching_raw_item = raw_item
-                                logger.debug(f"Found prompt in raw conversation item #{idx}")
-                                break
-
-                        if matching_raw_item:
-                            # Pretty print the full raw item with all its fields
-                            logger.debug("Raw Item Structure:")
-                            logger.debug(pprint.pformat(matching_raw_item))
-
-                            # Specifically highlight the mask fields
-                            instance_masks = matching_raw_item.get("instance_masks", [])
-                            instance_full_masks = matching_raw_item.get("instance_full_masks", [])
-                            mask_cols = [m.get("column") for m in instance_masks]
-                            full_mask_cols = [m.get("column") for m in instance_full_masks]
-                            logger.debug(f"instance_masks columns: {mask_cols}")
-                            logger.debug(f"instance_full_masks columns: {full_mask_cols}")
-                        else:
-                            logger.warning("Could not find matching raw item (this is unusual)")
-                        logger.debug("-- End RAW Data --")
-                    # --- End Debug ---
-
-                    # Determine output path for this specific sample
-                    specific_output_path = None
-
-                    # If output_dir is specified, generate a filename based on ID
-                    if args.output_dir:
-                        # Create the directory if it doesn't exist
-                        os.makedirs(args.output_dir, exist_ok=True)
-
-                        # Generate standardized filename
-                        filename = _create_output_filename(row_id, args.prompt, args.mask_type)
-                        specific_output_path = os.path.join(args.output_dir, filename)
-                        logger.info(f"Saving visualization to: {specific_output_path}")
-
-                    visualize_prompt_masks(
-                        sample=processed_sample,
-                        prompt=args.prompt,
-                        mask_type=args.mask_type,
-                        output_path=specific_output_path,
-                        show=should_show_interactive,
-                        alpha=args.alpha,
-                        dpi=args.dpi,
-                        debug=args.debug,
-                    )
-                    found_prompt = True
-                else:
-                    logger.debug(f"Prompt not found in sample index {current_index}.")
-            else:
-                logger.warning(f"Failed to process sample index {current_index}.")
-        except Exception as e:
-            logger.error(f"Error processing sample index {current_index}: {e}")
-
-    if not found_prompt:
-        logger.warning(
-            f"Prompt '{args.prompt}' not found in samples from index {args.start_index} "
-            f"to {args.start_index + args.sample_count - 1}."
-        )
-
-    logger.info("Visualization script finished.")
-
-
-if __name__ == "__main__":
-    main()

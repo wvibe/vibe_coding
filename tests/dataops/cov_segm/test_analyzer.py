@@ -142,7 +142,7 @@ def mock_parse_conversations_logic(json_string):
 def test_basic_aggregation(mock_parse):
     """Test aggregation with multiple valid samples and phrases."""
     dataset = [MOCK_RAW_ROW_1, MOCK_RAW_ROW_2]
-    # Unpack the tuple result
+    # Unpack the tuple result (Default mode is count_only)
     result_dict, processed_count = aggregate_phrase_stats(dataset)
 
     assert processed_count == 2
@@ -150,21 +150,35 @@ def test_basic_aggregation(mock_parse):
     assert "dog" in result_dict
     assert len(result_dict) == 2
 
-    # Check 'cat' stats (appears in sample1 and sample2)
+    # Check 'cat' stats (appears in sample1 and sample2) - COUNT_ONLY MODE
     assert result_dict["cat"]["appearance_count"] == 2
     assert result_dict["cat"]["sample_ids"] == ["sample1", "sample2"]
-    assert result_dict["cat"]["total_visible_mask_count"] == 2 + 3
-    assert result_dict["cat"]["visible_mask_counts_per_image"] == [2, 3]
-    assert result_dict["cat"]["total_full_mask_count"] == 1 + 2
-    assert result_dict["cat"]["full_mask_counts_per_image"] == [1, 2]
+    assert result_dict["cat"]["total_mask_count"] == 2 + 3  # Use visible count from metadata
+    assert result_dict["cat"]["mask_counts_per_image"] == [2, 3]
+    # Assert deep_stats fields are NOT populated
+    assert (
+        "total_visible_mask_count" not in result_dict["cat"]
+        or result_dict["cat"]["total_visible_mask_count"] == 0
+    )
+    assert (
+        "visible_mask_counts_per_image" not in result_dict["cat"]
+        or result_dict["cat"]["visible_mask_counts_per_image"] == []
+    )
 
-    # Check 'dog' stats (appears only in sample2)
+    # Check 'dog' stats (appears only in sample2) - COUNT_ONLY MODE
     assert result_dict["dog"]["appearance_count"] == 1
     assert result_dict["dog"]["sample_ids"] == ["sample2"]
-    assert result_dict["dog"]["total_visible_mask_count"] == 1
-    assert result_dict["dog"]["visible_mask_counts_per_image"] == [1]
-    assert result_dict["dog"]["total_full_mask_count"] == 0
-    assert result_dict["dog"]["full_mask_counts_per_image"] == [0]
+    assert result_dict["dog"]["total_mask_count"] == 1  # Use visible count from metadata
+    assert result_dict["dog"]["mask_counts_per_image"] == [1]
+    # Assert deep_stats fields are NOT populated
+    assert (
+        "total_visible_mask_count" not in result_dict["dog"]
+        or result_dict["dog"]["total_visible_mask_count"] == 0
+    )
+    assert (
+        "visible_mask_counts_per_image" not in result_dict["dog"]
+        or result_dict["dog"]["visible_mask_counts_per_image"] == []
+    )
 
 
 @patch(
@@ -174,7 +188,7 @@ def test_basic_aggregation(mock_parse):
 def test_phrase_deduplication_per_sample(mock_parse):
     """Test that a phrase appearing multiple times in one sample is counted correctly (once)."""
     dataset = [MOCK_RAW_ROW_3]
-    result_dict, processed_count = aggregate_phrase_stats(dataset)
+    result_dict, processed_count = aggregate_phrase_stats(dataset)  # Default: count_only
 
     assert processed_count == 1
     assert "cat" in result_dict
@@ -185,18 +199,14 @@ def test_phrase_deduplication_per_sample(mock_parse):
     assert result_dict["cat"]["appearance_count"] == 1
     assert result_dict["cat"]["sample_ids"] == ["sample3"]
     # Should count masks only from the *first* time it sees 'cat' in the sample
-    assert result_dict["cat"]["total_visible_mask_count"] == 1
-    assert result_dict["cat"]["visible_mask_counts_per_image"] == [1]
-    assert result_dict["cat"]["total_full_mask_count"] == 0
-    assert result_dict["cat"]["full_mask_counts_per_image"] == [0]
+    assert result_dict["cat"]["total_mask_count"] == 1  # Use visible count from metadata
+    assert result_dict["cat"]["mask_counts_per_image"] == [1]
 
     # 'tree' stats
     assert result_dict["tree"]["appearance_count"] == 1
     assert result_dict["tree"]["sample_ids"] == ["sample3"]
-    assert result_dict["tree"]["total_visible_mask_count"] == 2
-    assert result_dict["tree"]["visible_mask_counts_per_image"] == [2]
-    assert result_dict["tree"]["total_full_mask_count"] == 1
-    assert result_dict["tree"]["full_mask_counts_per_image"] == [1]
+    assert result_dict["tree"]["total_mask_count"] == 2  # Use visible count from metadata
+    assert result_dict["tree"]["mask_counts_per_image"] == [2]
 
 
 @patch(
@@ -269,17 +279,17 @@ def test_pydantic_schema_error(mock_parse):
 def test_missing_phrase_data_in_item(mock_parse):
     """Test samples with missing/empty phrase data within an item."""
     dataset = [MOCK_RAW_ROW_4]
-    result_dict, processed_count = aggregate_phrase_stats(dataset, verbose=True)
+    result_dict, processed_count = aggregate_phrase_stats(
+        dataset, verbose=True
+    )  # Default: count_only
 
     assert processed_count == 1
     assert len(result_dict) == 1
     assert "dog" in result_dict
     assert result_dict["dog"]["appearance_count"] == 1
     assert result_dict["dog"]["sample_ids"] == ["sample4"]
-    assert result_dict["dog"]["total_visible_mask_count"] == 2
-    assert result_dict["dog"]["visible_mask_counts_per_image"] == [2]
-    assert result_dict["dog"]["total_full_mask_count"] == 1
-    assert result_dict["dog"]["full_mask_counts_per_image"] == [1]
+    assert result_dict["dog"]["total_mask_count"] == 2  # Use visible count from metadata
+    assert result_dict["dog"]["mask_counts_per_image"] == [2]
 
 
 @patch(
@@ -289,17 +299,15 @@ def test_missing_phrase_data_in_item(mock_parse):
 def test_aggregation_with_object_phrase(mock_parse):
     """Test aggregation specifically for the 'object' phrase based on the simplified sample."""
     dataset = [MOCK_RAW_ROW_OBJECT]
-    result_dict, processed_count = aggregate_phrase_stats(dataset)
+    result_dict, processed_count = aggregate_phrase_stats(dataset)  # Default: count_only
 
     assert processed_count == 1
     assert len(result_dict) == 1
     assert "object" in result_dict
     assert result_dict["object"]["appearance_count"] == 1
     assert result_dict["object"]["sample_ids"] == ["sample_obj"]
-    assert result_dict["object"]["total_visible_mask_count"] == 5
-    assert result_dict["object"]["visible_mask_counts_per_image"] == [5]
-    assert result_dict["object"]["total_full_mask_count"] == 3
-    assert result_dict["object"]["full_mask_counts_per_image"] == [3]
+    assert result_dict["object"]["total_mask_count"] == 5  # Use visible count from metadata
+    assert result_dict["object"]["mask_counts_per_image"] == [5]
 
 
 # --- Tests for skip_zero_masks ---
@@ -330,6 +338,7 @@ def mock_parse_logic_with_zero(json_string):
 def test_skip_zero_masks_false(mock_parse):
     """Test aggregation when skip_zero_masks is False (default)."""
     dataset = [MOCK_RAW_ROW_ZERO_MASKS]
+    # Default mode is count_only
     result_dict, processed_count = aggregate_phrase_stats(dataset, skip_zero_masks=False)
 
     assert processed_count == 1
@@ -339,23 +348,20 @@ def test_skip_zero_masks_false(mock_parse):
 
     # 'sky' should have 0 counts but still appear
     assert result_dict["sky"]["appearance_count"] == 1
-    assert result_dict["sky"]["total_visible_mask_count"] == 0
-    assert result_dict["sky"]["visible_mask_counts_per_image"] == [0]
-    assert result_dict["sky"]["total_full_mask_count"] == 0
-    assert result_dict["sky"]["full_mask_counts_per_image"] == [0]
+    assert result_dict["sky"]["total_mask_count"] == 0
+    assert result_dict["sky"]["mask_counts_per_image"] == [0]
 
     # 'cat' should have normal counts
     assert result_dict["cat"]["appearance_count"] == 1
-    assert result_dict["cat"]["total_visible_mask_count"] == 1
-    assert result_dict["cat"]["visible_mask_counts_per_image"] == [1]
-    assert result_dict["cat"]["total_full_mask_count"] == 1
-    assert result_dict["cat"]["full_mask_counts_per_image"] == [1]
+    assert result_dict["cat"]["total_mask_count"] == 1
+    assert result_dict["cat"]["mask_counts_per_image"] == [1]
 
 
 @patch("src.dataops.cov_segm.analyzer.parse_conversations", side_effect=mock_parse_logic_with_zero)
 def test_skip_zero_masks_true(mock_parse):
     """Test aggregation when skip_zero_masks is True."""
     dataset = [MOCK_RAW_ROW_ZERO_MASKS]
+    # Default mode is count_only
     result_dict, processed_count = aggregate_phrase_stats(dataset, skip_zero_masks=True)
 
     assert processed_count == 1
@@ -365,10 +371,8 @@ def test_skip_zero_masks_true(mock_parse):
 
     # Check 'cat' stats (should be unchanged)
     assert result_dict["cat"]["appearance_count"] == 1
-    assert result_dict["cat"]["total_visible_mask_count"] == 1
-    assert result_dict["cat"]["visible_mask_counts_per_image"] == [1]
-    assert result_dict["cat"]["total_full_mask_count"] == 1
-    assert result_dict["cat"]["full_mask_counts_per_image"] == [1]
+    assert result_dict["cat"]["total_mask_count"] == 1
+    assert result_dict["cat"]["mask_counts_per_image"] == [1]
 
 
 # --- Tests for calculate_summary_stats ---
@@ -405,8 +409,12 @@ TOTAL_PROCESSED_FOR_SUMMARY = 3  # Assume 3 samples were processed in total
 def test_calculate_summary_stats():
     """Test the summary statistics calculation."""
     percentiles_to_test = [0.5, 0.9]
+    # Pass mode="deep_stats" as SAMPLE_AGG_DATA has deep stats keys
     summary = calculate_summary_stats(
-        SAMPLE_AGG_DATA, TOTAL_PROCESSED_FOR_SUMMARY, percentiles=percentiles_to_test
+        SAMPLE_AGG_DATA,
+        TOTAL_PROCESSED_FOR_SUMMARY,
+        mode="deep_stats",  # <-- Added mode argument
+        percentiles=percentiles_to_test,
     )
 
     assert len(summary) == 3
@@ -449,5 +457,11 @@ def test_calculate_summary_stats():
 
 def test_calculate_summary_stats_empty_input():
     """Test summary calculation with empty aggregated data."""
-    summary = calculate_summary_stats({}, total_processed_samples=0, percentiles=[0.5])
+    # Pass a valid mode, although it doesn't affect the result here
+    summary = calculate_summary_stats(
+        {},
+        total_processed_samples=0,
+        mode="deep_stats",  # <-- Added mode argument
+        percentiles=[0.5],
+    )
     assert summary == []

@@ -3,9 +3,7 @@ import argparse
 import io
 import json
 import logging
-import os
-import pprint
-from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-party imports
 import numpy as np
@@ -13,43 +11,20 @@ from PIL import Image
 
 # Local imports
 from src.dataops.common.s3_fetcher import fetch_s3_uri, is_s3_uri
-from src.dataops.cov_segm.datamodel import ConversationItem, InstanceMask
+from src.dataops.cov_segm.datamodel import (
+    ConversationItem,
+    InstanceMask,
+    ProcessedConversationItem,
+    ProcessedCovSegmSample,
+    ProcessedMask,
+)
 
 # Configure basic logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Remove this basicConfig call - let the main script configure logging
+# logging.basicConfig(
+#     level=logging.INFO, format=\"%(asctime)s - %(name)s - %(levelname)s - %(message)s\"
+# )
 logger = logging.getLogger(__name__)
-
-
-# --- Type Definitions for Processed Output ---
-class ProcessedMask(TypedDict):
-    """Structure holding a loaded mask image and its metadata."""
-
-    mask: Image.Image
-    positive_value: int
-    source: str  # The column name from which the mask was loaded
-
-
-class ProcessedConversationItem(TypedDict):
-    """Structure holding processed data for a single conversation item."""
-
-    phrases: List[Dict[str, Any]]  # List of phrase dicts (e.g., from model_dump())
-    type: str
-    processed_instance_masks: List[ProcessedMask]
-    processed_full_masks: List[ProcessedMask]
-
-
-class ProcessedCovSegmSample(TypedDict):
-    """Structure holding the fully processed cov_segm sample data."""
-
-    id: str  # Sample ID (from input row or "unknown_id" if missing)
-    image: Image.Image  # The main S3 image
-    processed_conversations: List[ProcessedConversationItem]
-
-
-# Add global variable to cache the last parsed ConversationItem objects
-_last_parsed_conversations = []  # This will hold the most recently parsed conversation items
 
 
 def parse_conversations(json_string: str) -> List[ConversationItem]:
@@ -106,11 +81,11 @@ def _load_image_from_uri(uri: str) -> Optional[Image.Image]:
         logger.warning(f"Invalid S3 URI provided for image: {uri}")
         return None
     try:
-        logger.info(f"Attempting to fetch image from: {uri}")
+        logger.debug(f"Attempting to fetch image from: {uri}")
         content_bytes = fetch_s3_uri(uri)
         if content_bytes:
             image = Image.open(io.BytesIO(content_bytes))
-            logger.info(
+            logger.debug(
                 f"Successfully loaded image from {uri}. Format: {image.format}, "
                 f"Size: {image.size}, Mode: {image.mode}"
             )
@@ -196,6 +171,7 @@ def _load_mask(mask_info: InstanceMask, hf_cov_segm_row: Dict[str, Any]) -> Opti
     """Loads a mask from a specified column in a Hugging Face cov_segm row.
 
     Handles both direct column access and path-style notation (e.g., 'masks_rest/0').
+    Calculates pixel area and bounding box dimensions based on the positive_value.
 
     Args:
         mask_info: The InstanceMask object containing mask details.
@@ -203,60 +179,95 @@ def _load_mask(mask_info: InstanceMask, hf_cov_segm_row: Dict[str, Any]) -> Opti
                          Hugging Face cov_segm dataset.
 
     Returns:
-        A ProcessedMask TypedDict containing the loaded mask, its positive value,
-        and its source column name, or None if loading fails.
+        A ProcessedMask TypedDict containing the loaded mask and calculated geometry,
+        or None if loading fails.
     """
     mask_image: Optional[Image.Image] = None
     source: Optional[str] = None
 
-    if mask_info.column:
-        column_path = mask_info.column
-        source = column_path
-
-        # Move detailed logging to debug level
-        logger.debug(f"Attempting to load mask from path: '{column_path}'")
-
-        # Resolve the mask data path to its actual value
-        mask_data, success = _resolve_mask_path(column_path, hf_cov_segm_row)
-
-        if not success:
-            return None
-
-        # Process the mask data once we have it
-        try:
-            if isinstance(mask_data, Image.Image):
-                mask_image = mask_data
-                logger.debug(f"Loaded mask from '{source}' as PIL.Image")
-            elif isinstance(mask_data, np.ndarray):
-                mask_image = Image.fromarray(mask_data)
-                logger.debug(
-                    f"Loaded mask from '{source}' as np.ndarray and converted to PIL.Image"
-                )
-            else:
-                logger.warning(f"Unsupported mask type at '{source}': {type(mask_data)}")
-                return None
-        except Exception as e:
-            logger.error(f"Error converting mask data from '{source}': {e}")
-            return None
-    else:
+    if not mask_info.column:
         logger.warning(f"InstanceMask provided without a 'column' field: {mask_info}")
         return None
 
-    if mask_image and source is not None:
-        processed_mask: ProcessedMask = {
-            "mask": mask_image,
-            "positive_value": mask_info.positive_value,
-            "source": source,
-        }
-        logger.debug(
-            f"Successfully loaded mask from '{source}' with "
-            f"positive_value={mask_info.positive_value}"
-        )
-        return processed_mask
-    else:
-        if mask_info.column:
-            logger.warning(f"Failed to load mask from column: {mask_info.column}")
+    column_path = mask_info.column
+    source = column_path
+    logger.debug(f"Attempting to load mask from path: '{column_path}'")
+
+    # Resolve the mask data path to its actual value
+    mask_data, success = _resolve_mask_path(column_path, hf_cov_segm_row)
+
+    if not success:
         return None
+
+    # Convert mask data to PIL Image if necessary
+    try:
+        if isinstance(mask_data, Image.Image):
+            mask_image = mask_data
+            logger.debug(f"Loaded mask from '{source}' as PIL.Image")
+        elif isinstance(mask_data, np.ndarray):
+            # Ensure it's uint8 before converting
+            if mask_data.dtype != np.uint8:
+                logger.warning(
+                    f"Mask data from '{source}' is {mask_data.dtype}, converting to uint8."
+                )
+                mask_data = mask_data.astype(np.uint8)
+            mask_image = Image.fromarray(mask_data)
+            logger.debug(f"Loaded mask from '{source}' as np.ndarray and converted to PIL.Image")
+        else:
+            logger.warning(f"Unsupported mask type at '{source}': {type(mask_data)}")
+            return None
+    except Exception as e:
+        logger.error(f"Error converting mask data from '{source}': {e}")
+        return None
+
+    # Calculate pixel area and bounding box dimensions
+    pixel_area = 0
+    width = 0
+    height = 0
+    if mask_image:
+        try:
+            np_mask = np.array(mask_image)
+            # Calculate pixel area matching positive_value
+            match_indices = np_mask == mask_info.positive_value
+            pixel_area = int(np.sum(match_indices))
+
+            if pixel_area > 0:
+                # Calculate bounding box dimensions
+                rows, cols = np.where(match_indices)
+                min_row, max_row = rows.min(), rows.max()
+                min_col, max_col = cols.min(), cols.max()
+                height = int(max_row - min_row + 1)
+                width = int(max_col - min_col + 1)
+                logger.debug(
+                    f"Mask '{source}' (positive_value={mask_info.positive_value}): "
+                    f"Area={pixel_area}, Width={width}, Height={height}"
+                )
+            else:
+                logger.warning(
+                    f"No pixels matched positive_value={mask_info.positive_value} "
+                    f"in mask from source '{source}'. Area, width, height set to 0."
+                )
+        except Exception as e:
+            logger.error(f"Error calculating geometry for mask '{source}': {e}")
+            # Reset calculated values on error, but still return the mask if loaded
+            pixel_area = None
+            width = None
+            height = None
+
+    # Construct the ProcessedMask dictionary
+    processed_mask: ProcessedMask = {
+        "mask": mask_image,
+        "positive_value": mask_info.positive_value,
+        "source": source,
+        "pixel_area": pixel_area,
+        "width": width,
+        "height": height,
+    }
+    logger.debug(
+        f"Successfully processed mask from '{source}' with "
+        f"positive_value={mask_info.positive_value}"
+    )
+    return processed_mask
 
 
 def _process_mask_metadata(mask_metadata, hf_cov_segm_row) -> Optional[ProcessedMask]:
@@ -311,16 +322,6 @@ def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSam
         logger.error(f"Failed to parse conversations JSON: {e}", exc_info=True)
         return None
 
-    # --- Debugging: Log raw parsed conversation items if requested ---
-    if os.environ.get("VIBE_DEBUG_LOADER") == "1":
-        logger.info("-- Debug Loader: Raw Parsed Conversation Items --")
-        for idx, item in enumerate(parsed_conv_items):
-            logger.info(
-                f"Item {idx}: {pprint.pformat(item.model_dump())}"
-            )  # Use model_dump for Pydantic obj
-        logger.info("-- End Debug Loader --")
-    # --- End Debugging ---
-
     first_item = parsed_conv_items[0]
     if not first_item.image_uri or not first_item.image_uri.jpg:
         logger.error("First conversation item lacks image_uri or image_uri.jpg field.")
@@ -357,7 +358,8 @@ def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSam
                     ):
                         logger.warning(
                             f"Failed to load instance mask for sample {idx}, "
-                            f"conversation {idx}, definition '{mask_metadata}' (path: {potential_path})"
+                            f"conversation {idx}, definition '{mask_metadata}' "
+                            f"(path: {potential_path})"
                         )
 
         processed_full_masks: List[ProcessedMask] = []
@@ -378,12 +380,13 @@ def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSam
                     ):
                         logger.warning(
                             f"Failed to load instance full mask for sample {idx}, "
-                            f"conversation {idx}, definition '{mask_metadata}' (path: {potential_path})"
+                            f"conversation {idx}, definition '{mask_metadata}' "
+                            f"(path: {potential_path})"
                         )
 
         # Log summary info at INFO level
         phrases_text = [p.text for p in item.phrases]
-        logger.info(
+        logger.debug(
             f"ConversationItem {idx} with phrases {phrases_text}: "
             + f"Loaded {instance_masks_loaded}/{instance_masks_attempted} instance masks, "
             + f"{full_masks_loaded}/{full_masks_attempted} full masks"

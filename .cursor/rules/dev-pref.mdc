@@ -28,3 +28,9 @@ alwaysApply: true
 ## Handling Specific Code Types
 - **External Code (`/ext`, `/ref`):** Treat these directories as **READ-ONLY**. Do not modify contents.
 - **Notebooks (`.ipynb`):** To edit, generate a temporary `.py` file, modify it, then convert back using `jupytext --to notebook`.
+
+## Python Script Execution
+- **Use `-m`:** For project scripts, run with `python -m <module.path>` from the root directory to handle relative imports correctly.
+
+## Python Imports
+- **Prefer Full Paths:** Always use full import paths starting from the project root instead of relative imports (`.` or `..`).

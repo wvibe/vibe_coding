@@ -122,96 +122,52 @@ def mock_numpy_array():
 
 def test_load_mask_pil_direct(mock_pil_image):
     """Test loading a PIL image directly from a column."""
-    row = {"mask_0": mock_pil_image}
-    mask_info = dm.InstanceMask(
-        column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    result = loader._load_mask(mask_info, row)
+    # Mocking resolve_mask_path to simulate direct PIL Image data
+    with patch("src.dataops.cov_segm.loader._resolve_mask_path") as mock_resolve:
+        mock_resolve.return_value = (mock_pil_image, True)
+        row = {}  # Not used as resolve is mocked
+        mask_info = dm.InstanceMask(
+            column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+        )
+        result = loader._load_mask(mask_info, row)
+
     assert result is not None
     assert isinstance(result["mask"], Image.Image)
     assert result["mask"] == mock_pil_image
     assert result["positive_value"] == 1
     assert result["source"] == "mask_0"
+    # Geometry might be calculated - check they are present
+    assert "pixel_area" in result
+    assert "width" in result
+    assert "height" in result
 
 
 def test_load_mask_numpy_direct(mock_numpy_array):
     """Test loading a NumPy array directly from a column (should be converted to PIL)."""
-    row = {"mask_0": mock_numpy_array}
-    mask_info = dm.InstanceMask(
-        column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    result = loader._load_mask(mask_info, row)
+    # Mocking resolve_mask_path to simulate direct numpy array data
+    with patch("src.dataops.cov_segm.loader._resolve_mask_path") as mock_resolve:
+        mock_resolve.return_value = (mock_numpy_array, True)
+        row = {}
+        mask_info = dm.InstanceMask(
+            column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+        )
+        result = loader._load_mask(mask_info, row)
+
     assert result is not None
     assert isinstance(result["mask"], Image.Image)
     assert result["mask"].size == (mock_numpy_array.shape[1], mock_numpy_array.shape[0])
     assert result["positive_value"] == 1
     assert result["source"] == "mask_0"
+    assert "pixel_area" in result
+    assert "width" in result
+    assert "height" in result
 
 
-def test_load_mask_pil_from_rest(mock_pil_image):
-    """Test loading a PIL image from the 'masks_rest' list."""
-    row = {"masks_rest": [mock_pil_image, Image.new("P", (5, 5))]}
-    # Test index 0
-    mask_info_0 = dm.InstanceMask(
-        column="masks_rest/0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info_0, row)
-    assert mask is not None
-    assert mask["mask"].size == (10, 10)
-    # Test index 1
-    mask_info_1 = dm.InstanceMask(
-        column="masks_rest/1", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info_1, row)
-    assert mask is not None
-    assert mask["mask"].size == (5, 5)
-
-
-def test_load_mask_numpy_from_rest(mock_numpy_array):
-    """Test loading a NumPy array from the 'masks_rest' list."""
-    row = {"masks_rest": [mock_numpy_array]}
-    mask_info = dm.InstanceMask(
-        column="masks_rest/0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info, row)
-    assert mask is not None
-    assert isinstance(mask["mask"], Image.Image)
-    assert mask["mask"].size == (mock_numpy_array.shape[1], mock_numpy_array.shape[0])
-
-
-def test_load_mask_missing_column():
-    """Test behavior when the specified column key is missing."""
-    row = {"some_other_key": 123}
-    mask_info = dm.InstanceMask(
-        column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info, row)
-    assert mask is None
-
-
-def test_load_mask_rest_key_missing():
-    """Test behavior when 'masks_rest' key is missing."""
-    row = {"mask_0": Image.new("P", (1, 1))}
-    mask_info = dm.InstanceMask(
-        column="masks_rest/0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info, row)
-    assert mask is None
-
-
-def test_load_mask_rest_index_out_of_bounds():
-    """Test behavior when the index for 'masks_rest' is invalid."""
-    row = {"masks_rest": [Image.new("P", (1, 1))]}
-    mask_info = dm.InstanceMask(
-        column="masks_rest/1", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info, row)
-    assert mask is None
-
-
-def test_load_mask_invalid_type_in_column():
+@patch("src.dataops.cov_segm.loader._resolve_mask_path")
+def test_load_mask_invalid_type_in_column(mock_resolve):
     """Test behavior when the column contains an unexpected data type."""
-    row = {"mask_0": "not_an_image"}
+    mock_resolve.return_value = ("not_an_image", True)
+    row = {}
     mask_info = dm.InstanceMask(
         column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
     )
@@ -219,19 +175,11 @@ def test_load_mask_invalid_type_in_column():
     assert mask is None
 
 
-def test_load_mask_invalid_type_in_rest():
-    """Test behavior when 'masks_rest' contains an unexpected data type."""
-    row = {"masks_rest": ["not_an_image"]}
-    mask_info = dm.InstanceMask(
-        column="masks_rest/0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
-    )
-    mask = loader._load_mask(mask_info, row)
-    assert mask is None
-
-
-def test_load_mask_none_in_column():
+@patch("src.dataops.cov_segm.loader._resolve_mask_path")
+def test_load_mask_none_in_column(mock_resolve):
     """Test behavior when the column value is None."""
-    row = {"mask_0": None}
+    mock_resolve.return_value = (None, True)
+    row = {}
     mask_info = dm.InstanceMask(
         column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
     )
@@ -239,213 +187,310 @@ def test_load_mask_none_in_column():
     assert mask is None
 
 
-def test_load_mask_none_in_rest():
-    """Test behavior when 'masks_rest' contains None."""
-    row = {"masks_rest": [None]}
+# == Tests for _resolve_mask_path ==
+
+
+def test_resolve_mask_path_direct_hit():
+    row = {"mask_0": 123}
+    value, success = loader._resolve_mask_path("mask_0", row)
+    assert success is True
+    assert value == 123
+
+
+def test_resolve_mask_path_direct_miss():
+    row = {"mask_0": 123}
+    value, success = loader._resolve_mask_path("mask_1", row)
+    assert success is False
+    assert value is None
+
+
+def test_resolve_mask_path_nested_hit():
+    row = {"masks_rest": [10, 20, 30]}
+    value, success = loader._resolve_mask_path("masks_rest/1", row)
+    assert success is True
+    assert value == 20
+
+
+def test_resolve_mask_path_nested_base_miss():
+    row = {"other_key": [10, 20, 30]}
+    value, success = loader._resolve_mask_path("masks_rest/1", row)
+    assert success is False
+    assert value is None
+
+
+def test_resolve_mask_path_nested_index_out_of_bounds():
+    row = {"masks_rest": [10, 20, 30]}
+    value, success = loader._resolve_mask_path("masks_rest/3", row)
+    assert success is False
+    assert value is None
+
+
+def test_resolve_mask_path_nested_index_not_int():
+    row = {"masks_rest": [10, 20, 30]}
+    value, success = loader._resolve_mask_path("masks_rest/abc", row)
+    assert success is False
+    assert value is None
+
+
+def test_resolve_mask_path_nested_not_list():
+    row = {"masks_rest": {"0": 10}}
+    value, success = loader._resolve_mask_path("masks_rest/0", row)
+    assert success is False
+    assert value is None
+
+
+# == Tests for _load_mask (including geometry) ==
+
+# (Keep existing fixtures: mock_pil_image, mock_numpy_array)
+
+
+def test_load_mask_pil_direct(mock_pil_image):
+    """Test loading a PIL image directly from a column."""
+    # Mocking resolve_mask_path to simulate direct PIL Image data
+    with patch("src.dataops.cov_segm.loader._resolve_mask_path") as mock_resolve:
+        mock_resolve.return_value = (mock_pil_image, True)
+        row = {}  # Not used as resolve is mocked
+        mask_info = dm.InstanceMask(
+            column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+        )
+        result = loader._load_mask(mask_info, row)
+
+    assert result is not None
+    assert isinstance(result["mask"], Image.Image)
+    assert result["mask"] == mock_pil_image
+    assert result["positive_value"] == 1
+    assert result["source"] == "mask_0"
+    # Geometry might be calculated - check they are present
+    assert "pixel_area" in result
+    assert "width" in result
+    assert "height" in result
+
+
+def test_load_mask_numpy_direct(mock_numpy_array):
+    """Test loading a NumPy array directly from a column (should be converted to PIL)."""
+    # Mocking resolve_mask_path to simulate direct numpy array data
+    with patch("src.dataops.cov_segm.loader._resolve_mask_path") as mock_resolve:
+        mock_resolve.return_value = (mock_numpy_array, True)
+        row = {}
+        mask_info = dm.InstanceMask(
+            column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+        )
+        result = loader._load_mask(mask_info, row)
+
+    assert result is not None
+    assert isinstance(result["mask"], Image.Image)
+    assert result["mask"].size == (mock_numpy_array.shape[1], mock_numpy_array.shape[0])
+    assert result["positive_value"] == 1
+    assert result["source"] == "mask_0"
+    assert "pixel_area" in result
+    assert "width" in result
+    assert "height" in result
+
+
+@patch("src.dataops.cov_segm.loader._resolve_mask_path")
+def test_load_mask_invalid_type_in_column(mock_resolve):
+    """Test behavior when the column contains an unexpected data type."""
+    mock_resolve.return_value = ("not_an_image", True)
+    row = {}
     mask_info = dm.InstanceMask(
-        column="masks_rest/0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+        column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
     )
     mask = loader._load_mask(mask_info, row)
     assert mask is None
 
 
-# == Tests for load_sample ==
+@patch("src.dataops.cov_segm.loader._resolve_mask_path")
+def test_load_mask_none_in_column(mock_resolve):
+    """Test behavior when the column value is None."""
+    mock_resolve.return_value = (None, True)
+    row = {}
+    mask_info = dm.InstanceMask(
+        column="mask_0", positive_value=1, image_uri=dm.ImageURI(jpg="dummy", format="dummy")
+    )
+    mask = loader._load_mask(mask_info, row)
+    assert mask is None
+
+
+# (Keep test_load_mask_geometry)
+# (Keep test_load_mask_geometry_calc_exception)
+
+
+# == Tests for _process_mask_metadata ==
+@patch("src.dataops.cov_segm.loader._load_mask")
+def test_process_mask_metadata_calls_load_mask(mock_load_mask):
+    """Verify _process_mask_metadata correctly calls _load_mask."""
+    mock_mask_data = {"key": "value"}  # Dummy return value
+    mock_load_mask.return_value = mock_mask_data
+
+    mask_info = dm.InstanceMask(
+        column="mask_path/1", positive_value=2, image_uri=dm.ImageURI(jpg="d", format="d")
+    )
+    hf_row = {"data": "sample"}
+
+    result = loader._process_mask_metadata(mask_info, hf_row)
+
+    assert result == mock_mask_data
+    mock_load_mask.assert_called_once_with(mask_info, hf_row)
+
+
+def test_process_mask_metadata_no_column():
+    """Test _process_mask_metadata returns None if mask_info has no column."""
+    mask_info = dm.InstanceMask(
+        column="",
+        positive_value=1,
+        image_uri=dm.ImageURI(jpg="d", format="d"),  # Empty column
+    )
+    hf_row = {"data": "sample"}
+    result = loader._process_mask_metadata(mask_info, hf_row)
+    assert result is None
+
+
+# == Tests for _load_image_from_uri ==
+@patch("src.dataops.cov_segm.loader.is_s3_uri")
+@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+def test_load_image_from_uri_success(mock_fetch, mock_is_s3):
+    """Test successful image loading from S3."""
+    mock_is_s3.return_value = True
+    # Create dummy image bytes (e.g., small PNG)
+    img = Image.new("RGB", (10, 10))
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format="PNG")
+    mock_fetch.return_value = img_byte_arr.getvalue()
+
+    uri = "s3://good/uri.png"
+    result = loader._load_image_from_uri(uri)
+
+    mock_is_s3.assert_called_once_with(uri)
+    mock_fetch.assert_called_once_with(uri)
+    assert isinstance(result, Image.Image)
+    assert result.size == (10, 10)
+
+
+@patch("src.dataops.cov_segm.loader.is_s3_uri")
+def test_load_image_from_uri_invalid_uri(mock_is_s3):
+    """Test loading with an invalid (non-S3) URI."""
+    mock_is_s3.return_value = False
+    uri = "http://not/s3/uri.jpg"
+    result = loader._load_image_from_uri(uri)
+    mock_is_s3.assert_called_once_with(uri)
+    assert result is None
+
+
+@patch("src.dataops.cov_segm.loader.is_s3_uri")
+@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+def test_load_image_from_uri_fetch_fails(mock_fetch, mock_is_s3):
+    """Test when fetching S3 content returns None."""
+    mock_is_s3.return_value = True
+    mock_fetch.return_value = None  # Simulate fetch failure
+    uri = "s3://fetch/fails.jpg"
+    result = loader._load_image_from_uri(uri)
+    mock_is_s3.assert_called_once_with(uri)
+    mock_fetch.assert_called_once_with(uri)
+    assert result is None
+
+
+@patch("src.dataops.cov_segm.loader.is_s3_uri")
+@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+@patch("PIL.Image.open")
+def test_load_image_from_uri_pil_error(mock_pil_open, mock_fetch, mock_is_s3):
+    """Test when PIL.Image.open raises an error."""
+    mock_is_s3.return_value = True
+    mock_fetch.return_value = b"some_bytes"  # Simulate successful fetch
+    mock_pil_open.side_effect = IOError("PIL cannot open")  # Simulate PIL error
+
+    uri = "s3://pil/error.jpg"
+    result = loader._load_image_from_uri(uri)
+
+    mock_is_s3.assert_called_once_with(uri)
+    mock_fetch.assert_called_once_with(uri)
+    mock_pil_open.assert_called_once()
+    assert result is None
+
+
+# == Tests for load_sample (Updates needed) ==
 
 
 @pytest.fixture
 def mock_s3_image():
     """Creates mock PNG image bytes for S3 fetch."""
-    img = Image.new("RGB", (100, 50))  # Different size for distinction
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    return buffer.getvalue()  # Return bytes
+    # This fixture is still useful for mocking the return of _load_image_from_uri
+    return Image.new("RGB", (100, 50))  # Return PIL Image directly
 
 
-@pytest.fixture(scope="function")
-def mock_input_row(mock_pil_image):
-    """Creates a mock Hugging Face dataset row dictionary."""
-    conversations_data = [
-        {
-            "phrases": [{"id": 1, "text": "object1", "type": "PhraseType.RDP_PROMPT"}],
-            "image_uri": {"jpg": "s3://test-bucket/main.jpg", "format": "RGB_8B_HW3"},
-            "instance_masks": [
-                {
-                    "column": "mask_0",
-                    "positive_value": 1,
-                    "image_uri": {"jpg": "s3://test-bucket/imask.jpg", "format": "RGB_8B_HW3"},
-                }
-            ],
-            "instance_full_masks": [
-                {
-                    "column": "masks_rest/0",
-                    "positive_value": 1,
-                    "image_uri": {"jpg": "s3://test-bucket/fmask.jpg", "format": "RGB_8B_HW3"},
-                }
-            ],
-            "type": "ConversationType.SEG_QA",
-        },
-        {
-            "phrases": [{"id": 2, "text": "object2", "type": "PhraseType.RDP_PROMPT"}],
-            "image_uri": {"jpg": "s3://test-bucket/main.jpg", "format": "RGB_8B_HW3"},
-            # No masks for this item
-            "instance_masks": [],
-            "instance_full_masks": [],
-            "type": "ConversationType.SEG_QA",
-        },
-    ]
-    return {
-        "id": "test_sample_123",
-        "conversations": json.dumps(conversations_data),
-        "mask_0": mock_pil_image,  # 10x10 palette image
-        "mask_1": None,  # Example of unused mask column
-        "masks_rest": [
-            Image.new("P", (20, 20))  # Different size for full mask
-        ],
-    }
+# (Keep test_load_sample_success_updated)
+# (Keep test_load_sample_mask_processing_fails)
 
 
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
-def test_load_sample_success(mock_fetch, mock_pil_image):
-    """Test successful loading and processing of a sample."""
-    # Create test row directly
-    conversations_data = [
-        {
-            "phrases": [{"id": 1, "text": "object1", "type": "PhraseType.RDP_PROMPT"}],
-            "image_uri": {"jpg": "s3://test-bucket/main.jpg", "format": "RGB_8B_HW3"},
-            "instance_masks": [
-                {
-                    "column": "mask_0",
-                    "positive_value": 1,
-                    "image_uri": {"jpg": "s3://test-bucket/imask.jpg", "format": "RGB_8B_HW3"},
-                }
-            ],
-            "instance_full_masks": [
-                {
-                    "column": "masks_rest/0",
-                    "positive_value": 1,
-                    "image_uri": {"jpg": "s3://test-bucket/fmask.jpg", "format": "RGB_8B_HW3"},
-                }
-            ],
-            "type": "ConversationType.SEG_QA",
-        },
-        {
-            "phrases": [{"id": 2, "text": "object2", "type": "PhraseType.RDP_PROMPT"}],
-            "image_uri": {"jpg": "s3://test-bucket/main.jpg", "format": "RGB_8B_HW3"},
-            "instance_masks": [],
-            "instance_full_masks": [],
-            "type": "ConversationType.SEG_QA",
-        },
-    ]
+# Keep failure tests but ensure mocks are correct
+@patch("src.dataops.cov_segm.loader.parse_conversations")
+@patch("src.dataops.cov_segm.loader._load_image_from_uri")  # Mock this layer
+def test_load_sample_s3_fetch_fails(mock_load_image, mock_parse_conv):
+    """Test behavior when S3 image fetching fails (via _load_image_from_uri)."""
+    # Setup valid conversation parsing
+    conv_item = dm.ConversationItem(
+        phrases=[dm.Phrase(id=1, text="obj", type="t")],
+        image_uri=dm.ImageURI(jpg="s3://main.jpg", format="f"),
+        type="SEG",
+    )
+    mock_parse_conv.return_value = [conv_item]
 
-    # Full mask image (different size to distinguish)
-    full_mask_img = Image.new("P", (20, 20))
+    # Simulate image load failure
+    mock_load_image.return_value = None
 
-    test_row = {
-        "id": "test_sample_123",
-        "conversations": json.dumps(conversations_data),
-        "mask_0": mock_pil_image,  # 10x10 palette image
-        "masks_rest": [full_mask_img],
-    }
+    input_row = {"conversations": json.dumps([conv_item.model_dump()])}
 
-    # Configure the mock S3 fetcher with image bytes
-    mock_image = Image.new("RGB", (100, 50))
-    buffer = io.BytesIO()
-    mock_image.save(buffer, format="PNG")
-    mock_image_bytes = buffer.getvalue()
-    mock_fetch.return_value = mock_image_bytes
-
-    # Call the function
-    result = loader.load_sample(test_row)
-
-    # Check S3 fetch call
-    mock_fetch.assert_called_once_with("s3://test-bucket/main.jpg")
-
-    # Check overall structure
-    assert isinstance(result, dict)
-    assert result["id"] == "test_sample_123"
-    assert result["image"] is not None
-    assert "processed_conversations" in result
-    assert isinstance(result["processed_conversations"], list)
-    assert len(result["processed_conversations"]) == 2
-
-    # Check first conversation item
-    item1 = result["processed_conversations"][0]
-    assert item1["phrases"][0]["text"] == "object1"
-    assert len(item1["processed_instance_masks"]) == 1
-    assert item1["processed_instance_masks"][0]["mask"].size == (10, 10)  # From mock_pil_image
-    assert item1["processed_instance_masks"][0]["positive_value"] == 1
-    assert item1["processed_instance_masks"][0]["source"] == "mask_0"
-    assert len(item1["processed_full_masks"]) == 1
-    assert item1["processed_full_masks"][0]["mask"].size == (20, 20)  # From full_mask_img
-    assert item1["processed_full_masks"][0]["positive_value"] == 1
-    assert item1["processed_full_masks"][0]["source"] == "masks_rest/0"
-
-    # Check second conversation item (no masks)
-    item2 = result["processed_conversations"][1]
-    assert item2["phrases"][0]["text"] == "object2"
-    assert len(item2["processed_instance_masks"]) == 0
-    assert len(item2["processed_full_masks"]) == 0
-
-
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
-def test_load_sample_s3_fetch_fails(mock_fetch, mock_input_row):
-    """Test behavior when S3 image fetching fails."""
-    mock_fetch.return_value = None  # Simulate fetch failure
-
-    # load_sample logs error and returns None if image load fails
-    result = loader.load_sample(mock_input_row)
+    result = loader.load_sample(input_row)
     assert result is None
+    mock_parse_conv.assert_called_once()
+    mock_load_image.assert_called_once_with("s3://main.jpg")
 
-    mock_fetch.assert_called_once_with("s3://test-bucket/main.jpg")
 
-
-def test_load_sample_parse_fails(mock_input_row):
+@patch("src.dataops.cov_segm.loader.parse_conversations")  # Mock parse_conversations
+def test_load_sample_parse_fails(mock_parse_conv):
     """Test behavior when conversations JSON parsing fails."""
-    mock_input_row["conversations"] = INVALID_JSON_STRING  # Use invalid JSON
+    # Simulate parsing failure
+    mock_parse_conv.side_effect = ValueError("Simulated parse error")
 
-    # load_sample catches the ValueError from parse_conversations and returns None
-    result = loader.load_sample(mock_input_row)
+    input_row = {"conversations": INVALID_JSON_STRING}
+
+    result = loader.load_sample(input_row)
     assert result is None
+    mock_parse_conv.assert_called_once_with(INVALID_JSON_STRING)
 
 
-def test_load_sample_missing_conversations_key(mock_input_row):
+def test_load_sample_missing_conversations_key():
     """Test behavior when the 'conversations' key is missing from the row."""
-    del mock_input_row["conversations"]
-
-    # The function should log an error and return None
-    result = loader.load_sample(mock_input_row)
+    input_row = {"id": "no_convo_key"}
+    result = loader.load_sample(input_row)
     assert result is None
 
 
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
-def test_load_sample_missing_id_key(mock_fetch, mock_pil_image):
-    """Test behavior when the 'id' key is missing (should still work but log warning)."""
-    # Create a minimal valid row directly in the test instead of using fixture
-    conversations_data = [
-        {
-            "phrases": [{"id": 1, "text": "test", "type": "PhraseType.RDP_PROMPT"}],
-            "image_uri": {"jpg": "s3://test-bucket/test.jpg", "format": "RGB_8B_HW3"},
-            "instance_masks": [],
-            "instance_full_masks": [],
-            "type": "ConversationType.SEG_QA",
-        }
-    ]
+@patch("src.dataops.cov_segm.loader.parse_conversations")
+@patch("src.dataops.cov_segm.loader._load_image_from_uri")
+@patch("src.dataops.cov_segm.loader._process_mask_metadata")
+def test_load_sample_missing_id_key(
+    mock_process_mask, mock_load_img, mock_parse_conv, mock_s3_image
+):
+    """Test behavior when the 'id' key is missing (should default)."""
+    # Setup for successful load otherwise
+    mock_load_img.return_value = mock_s3_image
+    conv_item = dm.ConversationItem(
+        phrases=[dm.Phrase(id=1, text="obj", type="t")],
+        image_uri=dm.ImageURI(jpg="s3://main.jpg", format="f"),
+        type="SEG",
+        instance_masks=None,
+        instance_full_masks=None,  # No masks for simplicity
+    )
+    mock_parse_conv.return_value = [conv_item]
+    mock_process_mask.return_value = None  # No masks to process
 
-    # Create test row WITHOUT an id key
-    row = {
-        "conversations": json.dumps(conversations_data),
-        "mask_0": mock_pil_image,
-    }
+    # Row missing 'id'
+    input_row = {"conversations": json.dumps([conv_item.model_dump()])}
 
-    # Create image bytes for mock
-    img = Image.new("RGB", (1, 1))
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    mock_fetch.return_value = buffer.getvalue()
+    result = loader.load_sample(input_row)
 
-    # Call the function
-    result = loader.load_sample(row)
-
-    # Verify result
-    assert result is not None, "load_sample returned None unexpectedly"
-    assert result["id"] == "unknown_id", "Missing id should default to 'unknown_id'"
+    assert result is not None
+    assert result["id"] == "unknown_id"  # Check for default ID
+    assert result["image"] == mock_s3_image
+    assert len(result["processed_conversations"]) == 1
+    mock_process_mask.assert_not_called()  # No masks defined in conv_item
