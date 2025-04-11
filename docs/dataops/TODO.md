@@ -27,21 +27,40 @@ This document tracks the development tasks for the `src/dataops` module.
     *   **CLI:** Added command-line interface with arguments for sample selection (`start_index`, `sample_count`), prompt, mask type, output directory (`output_dir`), and debugging (`--debug`).
     *   **Output Handling:** Saves images to `output_dir` with filenames based on sample ID, prompt, and mask type. Suppresses interactive display when saving, unless `--show` is used.
     *   **[X] Added CLI usage examples to `docs/dataops/DESIGN.md`.**
-*   **[ ] Update Exploration Notebook:**
-    *   Modify `notebooks/dataset/lab42_segm_explorer.ipynb` to:
-        *   Import `datasets`.
-        *   Import `load_sample` from `src.dataops.cov_segm.loader`.
-        *   Import visualization functions from `src.dataops.cov_segm.visualizer`.
-        *   Load the dataset.
-        *   Iterate through samples, calling `load_sample` and the visualizer.
-*   **[ ] Add Unit Tests:**
-    *   Create `tests/dataops/cov_segm/test_loader.py`.
-    *   Implement tests for `parse_conversations` (valid/invalid JSON, schema errors).
-    *   Implement tests for `_load_mask` (mocking input row data - PIL, NumPy, missing columns, invalid types).
-    *   Implement tests for `load_sample` (mocking input row, mocking S3 fetch, asserting correct combination of data and output structure).
+*   **[X] Update Exploration Notebook:**
+    *   Updated `notebooks/dataset/lab42_segm_explorer.ipynb` with:
+        *   Proper imports for `datasets`, `PIL`, `matplotlib`.
+        *   Imports for `load_sample` from `src.dataops.cov_segm.loader`.
+        *   Imports for visualization functions from `src.dataops.cov_segm.visualizer`.
+        *   Dataset loading with error handling.
+        *   Sample iteration with visualization and logging.
+        *   Robust error handling and logging throughout.
+*   **[X] Add Unit Tests:**
+    *   Created `tests/dataops/cov_segm/test_loader.py`.
+    *   Implemented comprehensive tests for:
+        *   `parse_conversations` (valid/invalid JSON, schema errors)
+        *   `_load_mask` (mocking input row data - PIL, NumPy, missing columns, invalid types)
+        *   `load_sample` (mocking input row, mocking S3 fetch, asserting correct output structure)
+        *   Added fixtures for PIL images and NumPy arrays
+        *   Added error case handling tests
 
-## Medium Priority: YOLO Conversion
+## Medium Priority: Dataset Analysis & YOLO Conversion
 
+*   **[X] Implement `cov_segm` Analyzer:**
+    *   Created `src/dataops/cov_segm/analyzer.py`.
+    *   Implemented `aggregate_phrase_stats`:
+        *   Takes raw dataset rows, parses `conversations` JSON using `parse_conversations`.
+        *   Aggregates phrase occurrences, visible mask counts (`instance_masks`), and full mask counts (`instance_full_masks`).
+        *   Returns `(aggregated_stats_dict, total_processed_count)`.
+        *   Includes options `--verbose`, `--debug_phrase`, `--skip_zero`.
+    *   Implemented `calculate_summary_stats`:
+        *   Takes aggregated stats and total count.
+        *   Calculates appearance percentage, average mask counts, and percentiles for mask counts.
+        *   Returns a list of summary dicts per phrase, sorted by appearance count.
+    *   Added command-line interface (`if __name__ == "__main__"`):
+        *   Handles arguments for split, sample slicing, output files, percentiles, top N printing, skip zero, and verbosity.
+        *   Prints formatted summary or saves JSON files.
+    *   Added unit tests (`test_analyzer.py`) covering both functions and options.
 *   **[ ] Implement `cov_segm` to YOLO Format Converter:**
     *   Create `cov_segm/converter.py`.
     *   Add function `convert_to_yolo(processed_sample: ProcessedCovSegmSample, output_dir: str, class_map: Dict[str, int])` (using `ProcessedCovSegmSample` type hint).

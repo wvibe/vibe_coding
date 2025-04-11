@@ -35,6 +35,77 @@ This document outlines the design choices and architecture for the `dataops` mod
 
 *(Add notes on potential refactoring, future dataset support, etc.)*
 
+## Analyzer Module (`src/dataops/cov_segm/analyzer.py`)
+
+This module provides functions for analyzing and aggregating statistics across the `lab42/cov-segm-v3` dataset after it has been processed by the loader.
+
+### `aggregate_phrase_stats`
+
+- **Purpose:** To efficiently iterate through raw dataset samples and aggregate statistics based on unique phrases found by parsing the `conversations` JSON metadata, *without* loading full image/mask data.
+- **Input:**
+    - `dataset_iterable`: An `Iterable` yielding raw dataset rows (dictionaries).
+    - `verbose` (bool): Enables detailed logging.
+    - `debug_phrase` (Optional[str]): Logs details when a specific phrase is encountered.
+    - `skip_zero_masks` (bool): If True, ignores phrases in a sample if they have 0 visible AND 0 full masks.
+- **Processing:**
+    - Retrieves the `conversations` JSON string from each raw row.
+    - Uses `src.dataops.cov_segm.loader.parse_conversations` to parse the JSON into Pydantic `ConversationItem` models.
+    - Extracts the primary phrase (first phrase text) from each `ConversationItem`.
+    - Counts items in `instance_masks` (visible masks) and `instance_full_masks` (full masks) for each phrase per sample.
+    - Handles potential errors during JSON/Pydantic parsing gracefully.
+    - Aggregates statistics per unique phrase text based on its *first appearance* within a sample, applying `skip_zero_masks` logic if enabled.
+- **Output Structure:** Returns a tuple `(aggregated_stats_dict, total_processed_count)` where:
+    - `aggregated_stats_dict`: Dictionary mapping phrase text to:
+        ```python
+        {
+            "appearance_count": int,           # How many samples contain this phrase (respecting skip_zero_masks)
+            "sample_ids": List[str],         # IDs of samples containing this phrase
+            "total_visible_mask_count": int, # Sum of visible masks across all appearances
+            "visible_mask_counts_per_image": List[int], # List of visible mask counts per appearance
+            "total_full_mask_count": int,    # Sum of full masks across all appearances
+            "full_mask_counts_per_image": List[int]  # List of full mask counts per appearance
+        }
+        ```
+    - `total_processed_count`: The number of samples successfully parsed and considered.
+
+### `calculate_summary_stats`
+
+- **Purpose:** To process the aggregated statistics and compute summary metrics per phrase.
+- **Input:**
+    - `aggregated_stats`: The dictionary output from `aggregate_phrase_stats`.
+    - `total_processed_samples`: The total count returned by `aggregate_phrase_stats`.
+    - `percentiles`: A list of percentiles (0.0-1.0) to calculate.
+- **Processing:**
+    - Calculates appearance percentage relative to `total_processed_samples`.
+    - Calculates the mean number of visible and full masks per image appearance.
+    - Calculates the specified percentiles for the distribution of visible and full mask counts per image.
+- **Output Structure:** Returns a *list* of dictionaries, one per phrase, sorted by `appearance_count` (descending). Each dictionary contains:
+    ```python
+    {
+        "phrase": str,
+        "appearance_count": int,
+        "appearance_percentage": float,
+        "avg_visible_masks_per_image": float,
+        "avg_full_masks_per_image": float,
+        "visible_mask_percentiles": Dict[float, float],
+        "full_mask_percentiles": Dict[float, float]
+    }
+    ```
+
+### Command-Line Usage (`python -m src.dataops.cov_segm.analyzer ...`)
+
+The script can be run directly to perform aggregation and summarization.
+*   **Key Arguments:**
+    *   `--split`: Specify dataset split (default: `validation`).
+    *   `--sample_slice`: Specify sample slice (e.g., `[:100]`, `[50:150]`, default: `[:20]`, `''` for all).
+    *   `--output_file`: Base path for saving results (`_agg.json` and `_summary.json` are appended). If omitted, prints summary to console.
+    *   `--top`: Number of top phrases to print to console (default: `20`).
+    *   `--percentiles`: List of percentiles to calculate (default: `[0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]`).
+    *   `--skip_zero`: Flag to ignore phrases with zero masks in a sample during aggregation.
+    *   `--debug_phrase`: Specify a phrase for detailed debug logging (requires `-v`).
+    *   `-v` / `--verbose`: Enable verbose logging.
+*   **Output:** Either saves two JSON files or prints a formatted summary of the top N phrases to the console.
+
 ## Visualizer Usage Examples (`src/dataops/cov_segm/visualizer.py`)
 
 The visualizer script provides a command-line interface to inspect masks associated with specific text prompts within the dataset samples.
