@@ -1,0 +1,11 @@
+yolo_class_id,yolo_class_name,hf_phrase,sampling_ratio
+0,bin,bin,0.15
+1,object,object,0.25
+2,robot,robot,0.4
+3,wrapped_object,object that is wrapped in a plastic loose bag,0.3
+4,complex_object,object with a complex shape,1.0
+5,boxy_object,object with a boxy shape,1.0
+6,object_held,object held by a robot,1.0
+7,cylinder_object,object with a cylindrical shape,1.0
+8,wallflower,wallflower refill single,1.0
+9,open_package,object that has the packaging open,1.0

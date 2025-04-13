@@ -54,27 +54,35 @@ This document tracks the development tasks for the `src/dataops` module.
 
 *   **[X] Implement `cov_segm` Analyzer:**
     *   Created `src/dataops/cov_segm/analyzer.py`.
-    *   Implemented `aggregate_phrase_stats`:
-        *   Takes raw dataset rows and operates in two modes (`--mode`):
-            *   `counts_only` (default): Parses `conversations` JSON using `parse_conversations`. Aggregates phrase occurrences and mask counts based on metadata.
-            *   `deep_stats`: Loads full samples using `load_sample`. Aggregates phrase occurrences, mask counts, and pre-calculated mask geometry (area, width, height).
-        *   Returns `(aggregated_stats_dict, total_processed_count)`.
-        *   Includes options `--mode`, `--verbose`, `--debug_phrase`, `--skip_zero` (counts_only mode).
-    *   Implemented `calculate_summary_stats`:
-        *   Takes aggregated stats and total count.
-        *   Calculates appearance percentage, average mask counts, and percentiles for mask counts.
-        *   If `deep_stats` data is present, calculates average and percentile statistics for mask area, width, and height.
-        *   Returns a list of summary dicts per phrase, sorted by appearance count.
-    *   Added command-line interface (`if __name__ == "__main__"`):
-        *   Handles arguments for mode, split, sample slicing, output files, percentiles, top N printing, skip zero, and verbosity.
-        *   Prints formatted summary or saves JSON files.
-    *   Added unit tests (`test_analyzer.py`) covering both functions and options.
-*   **[ ] Implement `cov_segm` to YOLO Format Converter:**
-    *   Create `cov_segm/converter.py`.
-    *   Add function `convert_to_yolo(processed_sample: ProcessedCovSegmSample, output_dir: str, class_map: Dict[str, int])` (using `ProcessedCovSegmSample` type hint).
-    *   Define logic to generate YOLO bounding boxes/segmentation masks from `processed_sample.processed_conversations[*].processed_instance_masks`.
-    *   Handle mapping phrase text/types to class IDs using `class_map`.
-    *   Write images and labels to `output_dir`.
+    *   Implemented `aggregate_phrase_stats` and `calculate_summary_stats`.
+    *   Added command-line interface and unit tests.
+*   **[X] Implement `cov_segm` to YOLO Format Converter:**
+    *   **Goal:** Convert `lab42/cov-segm-v3` (using `ProcessedCovSegmSample` from loader) into YOLO segmentation format.
+    *   **Location:** `src/dataops/cov_segm/converter.py`
+    *   **Configuration:**
+        *   `--mapping-config` (str): Path to mapping/sampling CSV. Default: `'configs/dataops/cov_segm_yolo_mapping.csv'`.
+        *   `--mask-tag` (str): Mask type to process ('visible' or 'full'). Required.
+        *   `--skip-zero` (bool): Skip samples with no masks of the specified tag. Default: True.
+        *   `--no-overwrite` (bool): Skip writing files if they already exist. Default: False.
+    *   **Core Logic:**
+        *   Implement main script with `argparse` (see args below).
+        *   Load mapping CSV. Handle errors.
+        *   Initialize `random.seed()`.
+        *   Process a single `--train-split` (e.g., 'train' or 'test') per run.
+        *   Load specified HF dataset (`--hf-dataset-path`) split. Apply `--sample-count` if provided.
+        *   Use `loader.load_sample`. Handle errors.
+        *   Iterate conversations: Check mapping, check `--skip-zero`, apply sampling ratio (only if `--sample-count` is not specified).
+        *   Use `src.utils.common.geometry.mask_to_yolo_polygons` to convert kept binary masks (selected by `--mask-tag`) to normalized polygons.
+        *   Handle multiple polygons by taking the first polygon.
+        *   Handle dependencies (`opencv-python-headless`, etc.).
+    *   **Output:**
+        *   Determine output root from `--output-dir` arg or `COV_SEGM_ROOT` env var.
+        *   Determine dataset subfolder name from `--output-name` arg or `--mask-tag`.
+        *   Save images/labels to `{output_root}/{dataset_name}/{images|labels}/{train_split}/`.
+        *   Generate `dataset.yaml` in `configs/yolov11/cov_segm_segment_{dataset_name}.yaml` with absolute path and class names.
+    *   **Arguments:** `--mapping-config`, `--output-dir`, `--output-name`, `--mask-tag`, `--train-split`, `--hf-dataset-path`, `--sample-count`, `--seed`, `--skip-zero`, `--no-overwrite`.
+    *   **Statistics:** Implemented statistics tracking and reporting, including count, mean, percentiles by class ID.
+    *   **Verification:** Perform test run for each required split using `--sample-count`. Check output structure, format, and `dataset.yaml`.
 
 ## Low Priority
 

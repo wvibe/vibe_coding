@@ -28,7 +28,7 @@ This document outlines the design choices and architecture for the `dataops` mod
 - **Loaders (`<dataset>/loader.py` -> `load_sample`):** Orchestrate loading, parsing, fetching, combining data.
 - **Data Models (`<dataset>/datamodel.py`):** Define Pydantic models for raw data validation.
 - **Visualizers (`<dataset>/visualizer.py`):** Plot processed data.
-- **Converters (`<dataset>/converter.py`):** Transform processed data formats.
+- **Converters (`<dataset>/converter.py`):** Transform processed data formats (e.g., to YOLO).
 - **Common Utilities (`common/`):** Shared tools (e.g., `s3_fetcher.py`).
 
 ## Future Considerations
@@ -205,3 +205,50 @@ The visualizer includes robust debugging features:
 - Detailed logging of mask characteristics (mode, shape, min/max values)
 - Step-by-step tracking of mask interpretation
 - Clear error reporting for unmatched masks or unexpected values
+
+## YOLO Format Converter (`src/dataops/cov_segm/converter.py`)
+
+This module is responsible for converting the `lab42/cov-segm-v3` dataset, loaded via `src.dataops.cov_segm.loader.load_sample`, into the YOLO segmentation format.
+
+### Core Functionality
+
+- **Input:** Takes samples processed by `loader.load_sample` (`ProcessedCovSegmSample` TypedDict) from a specified HF dataset (`--hf-dataset-path`) and split (`--train-split`).
+- **Configuration:** Reads mapping and sampling rules from a user-provided CSV file (`--mapping-config`). The CSV defines:
+    - `yolo_class_id`: Unique integer ID for the target YOLO class.
+    - `yolo_class_name`: Human-readable name for the target class.
+    - `hf_phrase`: Phrase text to match in conversation items.
+    - `sampling_ratio`: Probability (0.0-1.0) for including matches of this phrase (ignored if `--sample-count` is specified).
+- **Mask Selection:** Processes either 'visible' or 'full' masks based on the `--mask-tag` argument. Optionally skips conversations with zero masks of the selected type (`--skip-zero`).
+- **Mask Conversion:** Uses `src.utils.common.geometry.mask_to_yolo_polygons` to convert binary masks (NumPy arrays) into normalized polygon coordinates required by YOLO.
+- **Polygon Handling:** For masks that generate multiple polygons, the converter tracks this in statistics but only processes the first polygon to maintain one annotation per mask.
+- **Sampling:** Applies the `sampling_ratio` from the configuration CSV probabilistically (`if random.random() < ratio: keep`) to each conversation item before processing its masks. This sampling is bypassed when `--sample-count` is specified for deterministic debugging runs.
+- **File Handling:** With the `--no-overwrite` flag, skips writing image and label files that already exist, tracking these skips in statistics.
+- **Output Structure:** Generates the standard YOLO dataset structure within a specific subfolder (`--output-name` or derived from `--mask-tag`) under the main output directory (`--output-dir` or `COV_SEGM_ROOT`):
+    - `{output_dir}/{dataset_name}/images/{split_name}/{image_id}.jpg`: Copied source images (only if annotations exist).
+    - `{output_dir}/{dataset_name}/labels/{split_name}/{image_id}.txt`: Text files containing annotations (`<class_id> <norm_x1> ...`).
+- **Dataset YAML:** Generates a `dataset.yaml` file (e.g., `configs/yolov11/cov_segm_segment_{dataset_name}.yaml`) containing the absolute dataset path and class names, suitable for training frameworks.
+- **Split Handling:** Processes only one dataset split (`--train-split`) per execution.
+
+### Statistics Tracking
+
+The converter tracks comprehensive statistics during processing:
+- **Sample-level stats:** Total samples, processed samples, samples with errors
+- **Conversation-level stats:** Total conversations, phrases, conversations skipped due to no mapping or sampling
+- **Mask-level stats:** Masks producing no polygons or multiple polygons
+- **File-level stats:** Files skipped due to existing (when `--no-overwrite` is used)
+- **Annotation-level stats:** Total annotations generated, images with annotations, class distribution
+
+### Statistics Reporting
+
+- **Basic Reporting:** At the end of conversion, logs summary statistics about the processing run
+- **Class-based Statistics:** Generates a table with statistics per class:
+  - Configurable metrics including count, sum, mean, percentiles, and max/min
+  - Header formatting based on chosen statistics
+  - Individual class rows with count, average, and percentile data
+
+### Implementation Details
+
+- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, sampling, etc.). Allows partial processing via `--sample-count`.
+- **Dependencies:** Requires `opencv-python-headless`, `datasets`, `pillow`, `numpy`, `python-dotenv`, `tqdm`.
+- **Error Handling:** Includes checks for file/directory existence, graceful handling of sample loading errors, mapping errors, and mask conversion issues.
+- **Reproducibility:** Uses `random.seed()` to ensure consistent sampling results with the same seed value.

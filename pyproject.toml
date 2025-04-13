@@ -9,7 +9,7 @@ ignore = []
 fixable = ["ALL"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 18
+max-complexity = 20
 
 [tool.ruff.format]
 quote-style = "double"

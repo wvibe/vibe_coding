@@ -1,0 +1,16 @@
+path: /Users/weimu/Development/vibe/hub/datasets/COV_SEGM/visible
+train: images/train
+val: images/validation
+test: images/test
+_processed_split: train
+names:
+  0: bin
+  1: object
+  2: robot
+  3: wrapped_object
+  4: complex_object
+  5: boxy_object
+  6: object_held
+  7: cylinder_object
+  8: wallflower
+  9: open_package
