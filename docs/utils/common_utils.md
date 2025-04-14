@@ -156,3 +156,102 @@ This module provides utility functions for geometric calculations, especially fo
   3. Flattens coordinates to YOLO format `[x1, y1, x2, y2, ...]`
   4. Performs validity checks (at least 3 points after processing)
 - **Output:** List of polygon coordinates in flattened YOLO format, normalized to [0,1] range.
+
+---
+
+## `stats.py` - Statistical Calculation and Formatting Utilities
+
+This module provides functions for calculating and displaying summary statistics from numerical data. It's designed to be easy to use for creating statistical tables from datasets with consistent formatting.
+
+### Constants
+
+- `DEFAULT_NA_VALUE`: The default value to display when a statistic cannot be computed (default: "N/A").
+
+### Main Public Functions
+
+#### `calculate_numeric_summary(values, metrics)`
+
+- **Purpose:** Calculates requested summary statistics for a list of numeric values, handling None/NaN values gracefully.
+- **Input:**
+  - `values`: A list of numbers (int/float) that may contain None or NaN values
+  - `metrics`: A list of strings specifying the statistics to calculate (e.g., "count", "mean", "p50", "max")
+- **Logic:**
+  1. Filters out None and NaN values from the input list
+  2. For empty lists, returns 0 for "count" and None for all other metrics
+  3. Uses NumPy for efficient statistical calculations
+  4. Handles different metric types: basic stats (mean, min, max), custom (count), percentiles (p50, p90)
+  5. Gracefully handles errors in calculation (e.g., for invalid metrics or computation issues)
+- **Output:** A tuple containing:
+  - A dictionary mapping each requested metric name (lowercase) to its calculated value
+  - A boolean indicating whether all requested metrics were successfully calculated
+
+#### `format_statistics_table(data_dict, format_string)`
+
+- **Purpose:** Generates a formatted table of statistics from a dictionary of numerical data lists using the provided format string.
+- **Input:**
+  - `data_dict`: A dictionary where keys are identifiers/labels and values are lists of numbers
+  - `format_string`: A Python f-string-like format template (e.g., `"{key:<10} {count:>5} {mean:>6.1f}"`) specifying:
+    - What statistics to calculate (metrics in the placeholders)
+    - How to format each column (width, alignment, precision)
+    - Order of columns in the table
+- **Logic:**
+  1. Parses the format string to identify required metrics and their format specifications
+  2. Validates that `{key}` is the first placeholder
+  3. Generates a header row with capitalized column names
+  4. For each key-value list pair:
+     - Calculates requested statistics using `calculate_numeric_summary`
+     - Formats the row according to the format string
+     - Handles type mismatches (e.g., integer format specifier with float values)
+     - Provides fallback formatting for errors
+  5. Returns a list of formatted strings representing the table
+- **Output:** A list of strings representing the table: [header, divider, row1, row2, ...]
+
+### Helper Functions
+
+#### `_parse_format_string(format_string)`
+
+- **Purpose:** Parses a format string to extract placeholder names, format specifications, and required metrics.
+- **Logic:** Uses regex to extract placeholder info, validates that 'key' is present and is the first placeholder.
+- **Output:** A tuple of (ordered_placeholders, format_specs, required_metrics).
+
+#### `_generate_header_and_divider(format_string, ordered_placeholders)`
+
+- **Purpose:** Generates the header and divider lines for the table based on the format string.
+- **Logic:** Creates a header using capitalized placeholder names, preserving alignment and width but removing type specifiers.
+- **Output:** A tuple of (header, divider) strings.
+
+#### `_create_row_format_string(format_string, calculated_stats)`
+
+- **Purpose:** Adapts the format string to handle special cases like None values or type mismatches.
+- **Logic:** Modifies format specifiers based on the actual data (e.g., removing format specifiers for None values, adapting integer specifiers for float values).
+- **Output:** A modified format string that can be safely used with the data.
+
+#### `_format_row(item_key, calculated_stats, format_string, ordered_placeholders)`
+
+- **Purpose:** Formats a single row of the table using the calculated statistics and format string.
+- **Logic:** Prepares a data dictionary, handles None values by replacing with DEFAULT_NA_VALUE, applies the format string using Python's string formatting.
+- **Output:** A formatted string representing a single row of the table.
+
+### Usage Example
+
+```python
+# Calculate statistics for selected metrics
+data = [1.2, 3.4, None, 5.6, 7.8]
+stats_dict, success = calculate_numeric_summary(data, ["count", "mean", "min", "max", "p50"])
+# stats_dict = {'count': 4, 'mean': 4.5, 'min': 1.2, 'max': 7.8, 'p50': 4.5}
+# success = True
+
+# Format a table for multiple data sets
+data_dict = {
+    "apples": [10, 12, 11, 13],
+    "bananas": [5, 6, 5, 7, 6],
+    "cherries": [100, 150]
+}
+format_string = "{key:<10} {count:>5} {mean:>7.1f} {min:>5} {max:>5}"
+table_lines = format_statistics_table(data_dict, format_string)
+# ['Key        Count   Mean    Min   Max',
+#  '------------------------------------',
+#  'apples         4    11.5     10    13',
+#  'bananas        5     5.8      5     7',
+#  'cherries       2   125.0    100   150']
+```

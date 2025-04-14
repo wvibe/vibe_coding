@@ -1,496 +1,354 @@
-"""Functions for analyzing and aggregating statistics from the cov-segm dataset."""
+"""Functions for analyzing and aggregating phrase statistics from cov-segm dataset metadata."""
 
+import argparse
 import json
 import logging
-import math
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
-import numpy as np
+# Third-party imports
+import datasets
 from tqdm.auto import tqdm
 
-from src.dataops.cov_segm.datamodel import (
-    ConversationItem,
-    ProcessedCovSegmSample,
-    ProcessedMask,  # Import ProcessedMask for type hints if needed later
-)
-
-# Use full import paths from src
-from src.dataops.cov_segm.loader import load_sample, parse_conversations
+# Project imports
+from src.dataops.cov_segm.datamodel import ConversationItem
+from src.dataops.cov_segm.loader import parse_conversations
+from src.utils.common.stats import format_statistics_table
 
 logger = logging.getLogger(__name__)
 
-# Type alias for the aggregated stats dictionary
-AggregatedStatsDict = Dict[str, Dict[str, Union[int, List[int], List[str]]]]
-# Type alias for the summary stats dictionary
-SummaryStat = Dict[str, Union[str, int, float, Dict[float, float], None]]
+# Type alias for the aggregated stats dictionary structure per phrase
+# Stores lists of raw counts per appearance
+PhraseStatsDict = Dict[str, Dict[str, Union[int, List[int]]]]
 
 
-# --- Helper Functions for Sample Processing ---
+# --- Helper to define the structure of per-phrase aggregation results ----
+def _phrase_stats_factory() -> Dict[str, Union[int, List[int]]]:
+    """Factory to create the default dictionary structure for phrase aggregation."""
+    return {
+        "appearance_count": 0,
+        "visible_mask_counts": [],  # List of visible mask counts per appearance
+        "full_mask_counts": [],  # List of full mask counts per appearance
+        "alternative_phrase_counts": [],  # List of counts of alt phrases per appearance
+    }
 
 
-def _extract_metadata_counts_for_sample(
-    parsed_conversations: List[ConversationItem],
-    sample_id: str,
-    verbose: bool,
-    debug_phrase: Optional[str],
-) -> Dict[str, Dict[str, int]]:
-    """Extracts visible mask counts from metadata for unique phrases in a sample."""
-    phrase_data = {}
-    for item in parsed_conversations:
-        phrases = item.phrases
-        if not phrases:
-            continue
-        phrase_text = phrases[0].text
-        if not phrase_text:
-            continue
-
-        if phrase_text not in phrase_data:
-            num_visible = len(getattr(item, "instance_masks", []) or [])
-            num_full = len(getattr(item, "instance_full_masks", []) or [])
-
-            if num_visible != num_full:
-                logger.warning(
-                    f"Sample '{sample_id}', Phrase '{phrase_text}': "
-                    f"Visible mask count ({num_visible}) differs from full mask count ({num_full}) "
-                    "in metadata. Using visible count for 'count_only' mode."
-                )
-
-            phrase_data[phrase_text] = {"count": num_visible}
-
-            if verbose and debug_phrase and phrase_text == debug_phrase:
-                logger.info(
-                    f"[DEBUG PHRASE - Metadata] Sample: {sample_id}, "
-                    f'Phrase: "{phrase_text}" (First Encounter), '
-                    f"Mask Count: {num_visible}"
-                )
-    return phrase_data
+# --- Aggregation Function ---
 
 
-def _extract_deep_stats_for_sample(
-    processed_sample: ProcessedCovSegmSample,
-    sample_id: str,
-    verbose: bool,
-    debug_phrase: Optional[str],
-) -> Dict[str, Dict[str, Union[int, List[int], List[ProcessedMask]]]]:
-    """Extracts counts and geometry stats from a processed sample for unique phrases."""
-    phrase_data = {}
-
-    # Helper to safely get geometry data from ProcessedMask, defaulting to 0
-    def get_geo(mask: ProcessedMask, key: str) -> int:
-        return mask.get(key, 0) or 0
-
-    for item in processed_sample["processed_conversations"]:
-        phrases_list = item.get("phrases", [])
-        if not phrases_list:
-            continue
-        phrase_text = phrases_list[0].get("text")
-        if not phrase_text:
-            continue
-
-        if phrase_text not in phrase_data:
-            vis_masks = item.get("processed_instance_masks", [])
-            full_masks = item.get("processed_full_masks", [])
-
-            phrase_data[phrase_text] = {
-                "visible_count": len(vis_masks),
-                "full_count": len(full_masks),
-                "vis_areas": [get_geo(m, "pixel_area") for m in vis_masks],
-                "vis_widths": [get_geo(m, "width") for m in vis_masks],
-                "vis_heights": [get_geo(m, "height") for m in vis_masks],
-                "full_areas": [get_geo(m, "pixel_area") for m in full_masks],
-                "full_widths": [get_geo(m, "width") for m in full_masks],
-                "full_heights": [get_geo(m, "height") for m in full_masks],
-                # Store masks for debug logging if needed (use list comp for typing)
-                "_vis_masks_debug": [m for m in vis_masks] if verbose and debug_phrase else None,
-                "_full_masks_debug": [m for m in full_masks] if verbose and debug_phrase else None,
-            }
-
-            if verbose and debug_phrase and phrase_text == debug_phrase:
-                logger.info(
-                    f"[DEBUG PHRASE - Deep Stats] Sample: {sample_id}, "
-                    f'Phrase: "{phrase_text}" (First Encounter)'
-                )
-                # Use stored masks for logging
-                debug_vis = phrase_data[phrase_text]["_vis_masks_debug"]
-                debug_full = phrase_data[phrase_text]["_full_masks_debug"]
-                if debug_vis:
-                    logger.info(f"  Visible Masks ({len(debug_vis)}):")
-                    for i, m in enumerate(debug_vis):
-                        logger.info(
-                            f"    - Mask {i}: Area={m.get('pixel_area')}, "
-                            f"W={m.get('width')}, H={m.get('height')}, Src={m.get('source')}"
-                        )
-                if debug_full:
-                    logger.info(f"  Full Masks ({len(debug_full)}):")
-                    for i, m in enumerate(debug_full):
-                        logger.info(
-                            f"    - Mask {i}: Area={m.get('pixel_area')}, "
-                            f"W={m.get('width')}, H={m.get('height')}, Src={m.get('source')}"
-                        )
-    return phrase_data
-
-
-# --- Main Aggregation Function ---
-
-
-def aggregate_phrase_stats(
+def _aggregate_stats_from_metadata(
     dataset_iterable: Iterable[Dict[str, Any]],
-    mode: str = "count_only",
-    verbose: bool = False,
-    debug_phrase: Optional[str] = None,
-    skip_zero_masks: bool = False,
-) -> Tuple[AggregatedStatsDict, int]:
+    skip_zero_masks: bool,
+) -> Tuple[Dict[str, PhraseStatsDict], int, int, int]:
     """
-    Aggregates statistics about phrases from dataset rows.
-
-    In 'count_only' mode, parses 'conversations' JSON metadata for speed, using visible mask counts.
-    In 'deep_stats' mode, loads full samples using `load_sample` to include mask geometry.
+    Aggregates phrase and overall stats using only dataset metadata (fast).
 
     Args:
         dataset_iterable: An iterable yielding raw dataset rows (dictionaries).
-        mode: Analysis mode ('count_only' or 'deep_stats').
-        verbose: If True, logs skipped samples and progress.
-        debug_phrase: If set, logs detailed info for items matching this phrase.
         skip_zero_masks: If True, phrases associated with zero masks in a sample
-                         (visible count for 'count_only', both for 'deep_stats')
                          will not contribute to the stats for that sample.
 
     Returns:
         A tuple containing:
-        - The aggregated statistics dictionary.
-        - The total number of samples successfully processed.
+        - phrase_agg_stats: Dictionary mapping primary phrase text to its aggregated stats.
+        - total_samples_processed: Total samples iterated over.
+        - total_conversations: Total conversation items encountered across processed samples.
+        - total_valid_conversations: Total conversation items with > 0 visible or full masks.
     """
-    if mode not in ["count_only", "deep_stats"]:
-        raise ValueError("Invalid mode. Choose 'count_only' or 'deep_stats'.")
-
-    # Factory defines the structure, supporting fields for both modes
-    def stats_factory():
-        return {
-            "appearance_count": 0,
-            "sample_ids": [],
-            # Unified Counts (populated ONLY in count_only mode)
-            "total_mask_count": 0,
-            "mask_counts_per_image": [],
-            # Counts (populated ONLY in deep_stats mode)
-            "total_visible_mask_count": 0,
-            "visible_mask_counts_per_image": [],
-            "total_full_mask_count": 0,
-            "full_mask_counts_per_image": [],
-            # Deep Stats Geometry (populated ONLY in deep_stats mode)
-            "visible_mask_pixel_areas": [],
-            "visible_mask_widths": [],
-            "visible_mask_heights": [],
-            "full_mask_pixel_areas": [],
-            "full_mask_widths": [],
-            "full_mask_heights": [],
-        }
-
-    phrase_agg_stats = defaultdict(stats_factory)
-    processed_count = 0
-    skipped_count = 0
-
-    logger.info(f"Starting aggregation in '{mode}' mode...")
-
-    # Determine total for progress bar if possible
+    phrase_agg_stats: Dict[str, PhraseStatsDict] = defaultdict(_phrase_stats_factory)
+    total_samples_processed = 0
+    total_skipped_samples = 0
+    total_conversations = 0
+    total_valid_conversations = 0
     total_samples = None
-    if hasattr(dataset_iterable, "__len__"):
-        try:
-            total_samples = len(dataset_iterable)
-            logger.info(f"Total samples to process: {total_samples}")
-        except TypeError:
-            logger.info("Processing stream, total samples unknown.")
-            total_samples = None
+    try:
+        total_samples = len(dataset_iterable)  # type: ignore
+    except TypeError:
+        pass  # Iterable might not have __len__ (like streaming dataset)
 
-    progress_bar_desc = f"Aggregating '{mode}' stats"
+    progress_bar_desc = "Aggregating metadata stats"
     iterable_with_progress = tqdm(
         dataset_iterable, desc=progress_bar_desc, total=total_samples, unit="sample"
     )
 
-    for row in iterable_with_progress:
-        processed_count += 1
-        sample_id = row.get("id", f"unknown_index_{processed_count - 1}")
-        phrase_data_this_sample: Optional[Dict] = None
+    for i, row in enumerate(iterable_with_progress):
+        total_samples_processed += 1
+        sample_id = row.get("id", f"unknown_index_{i}")
 
         try:
-            # --- Process Sample based on Mode ---
-            if mode == "count_only":
-                conversations_json_str = row.get("conversations")
-                if not conversations_json_str:
-                    if verbose:
-                        logger.debug(f"Skipping sample '{sample_id}': Missing 'conversations' key.")
-                    skipped_count += 1
-                    continue
-
-                parsed_conversations: List[ConversationItem] = parse_conversations(
-                    conversations_json_str
-                )
-                if not parsed_conversations:
-                    if verbose:
-                        logger.debug(
-                            f"Skipping sample '{sample_id}': Parsed conversations list is empty."
-                        )
-                    continue
-
-                phrase_data_this_sample = _extract_metadata_counts_for_sample(
-                    parsed_conversations, sample_id, verbose, debug_phrase
-                )
-
-            elif mode == "deep_stats":
-                processed_sample: Optional[ProcessedCovSegmSample] = load_sample(row)
-                if not processed_sample:
-                    logger.warning(f"Skipping sample '{sample_id}': Failed to load.")
-                    skipped_count += 1
-                    continue
-
-                phrase_data_this_sample = _extract_deep_stats_for_sample(
-                    processed_sample, sample_id, verbose, debug_phrase
-                )
-
-            # --- Update Aggregated Statistics for this Sample ---
-            if phrase_data_this_sample is None:  # Should not happen if mode is valid
-                logger.warning(
-                    f"Internal logic error: phrase_data_this_sample is None for sample {sample_id}"
-                )
+            conversations_json_str = row.get("conversations")
+            if not conversations_json_str or not isinstance(conversations_json_str, str):
+                logger.debug(f"Skipping sample '{sample_id}': Missing/invalid 'conversations'.")
+                total_skipped_samples += 1
                 continue
 
-            for phrase_text, data in phrase_data_this_sample.items():
-                # Perform skip check BEFORE accessing defaultdict
-                should_skip = False
-                if mode == "count_only":
-                    num_masks = data["count"]
-                    if skip_zero_masks and num_masks == 0:
-                        if verbose:
-                            logger.debug(
-                                f"Skipping '{phrase_text}' in {sample_id} (zero masks, count_only)."
-                            )
-                        should_skip = True
-                elif mode == "deep_stats":
-                    vis_count = data["visible_count"]
-                    full_count = data["full_count"]
-                    if skip_zero_masks and vis_count == 0 and full_count == 0:
-                        if verbose:
-                            logger.debug(
-                                f"Skipping '{phrase_text}' in {sample_id} (zero masks, deep_stats)."
-                            )
-                        should_skip = True
+            parsed_conversations: List[ConversationItem] = parse_conversations(
+                conversations_json_str
+            )
+            if not parsed_conversations:
+                logger.debug(f"Skipping sample '{sample_id}': Parsed conversations list is empty.")
+                # Still counts as processed, but contributes 0 conversations
+                continue
 
-                if should_skip:
+            total_conversations += len(parsed_conversations)
+            phrases_processed_in_sample = set()
+
+            for item in parsed_conversations:
+                # Calculate validity based on masks *first*
+                num_visible = len(getattr(item, "instance_masks", []) or [])
+                num_full = len(getattr(item, "instance_full_masks", []) or [])
+                is_valid_conversation = num_visible > 0 or num_full > 0
+                if is_valid_conversation:
+                    total_valid_conversations += 1
+
+                # Now check if there are phrases to process for stats
+                phrases = item.phrases
+                if not phrases:
                     continue
 
-                # --- Phrase is NOT skipped, proceed with updates ---
-                agg_entry = phrase_agg_stats[phrase_text]  # Now safe to access/create entry
+                # Use first phrase as the primary key
+                phrase_text = phrases[0].text
+                if not phrase_text or phrase_text in phrases_processed_in_sample:
+                    continue  # Skip if no text or already processed in this sample
 
-                if mode == "count_only":
-                    # Already got num_masks above
-                    # Increment counts and add sample ID
-                    agg_entry["appearance_count"] += 1
-                    agg_entry["sample_ids"].append(sample_id)
-                    # Update unified count fields
-                    agg_entry["mask_counts_per_image"].append(num_masks)
-                    agg_entry["total_mask_count"] += num_masks
-                elif mode == "deep_stats":
-                    # Already got vis_count and full_count above
-                    # Increment counts and add sample ID
-                    agg_entry["appearance_count"] += 1
-                    agg_entry["sample_ids"].append(sample_id)
-                    # Update deep_stats fields
-                    agg_entry["visible_mask_counts_per_image"].append(vis_count)
-                    agg_entry["total_visible_mask_count"] += vis_count
-                    agg_entry["full_mask_counts_per_image"].append(full_count)
-                    agg_entry["total_full_mask_count"] += full_count
-                    # Geometry Stats
-                    agg_entry["visible_mask_pixel_areas"].extend(data["vis_areas"])
-                    agg_entry["visible_mask_widths"].extend(data["vis_widths"])
-                    agg_entry["visible_mask_heights"].extend(data["vis_heights"])
-                    agg_entry["full_mask_pixel_areas"].extend(data["full_areas"])
-                    agg_entry["full_mask_widths"].extend(data["full_widths"])
-                    agg_entry["full_mask_heights"].extend(data["full_heights"])
+                phrases_processed_in_sample.add(phrase_text)
+
+                # Apply skip_zero_masks logic *before* updating stats
+                if skip_zero_masks and not is_valid_conversation:
+                    logger.debug(f"Skipping '{phrase_text}' in {sample_id} (zero masks).")
+                    continue  # Skip this phrase for this sample
+
+                # Update stats for this phrase (first appearance in sample)
+                agg_entry = phrase_agg_stats[phrase_text]
+                agg_entry["appearance_count"] += 1
+                agg_entry["visible_mask_counts"].append(num_visible)
+                agg_entry["full_mask_counts"].append(num_full)
+
+                alt_phrase_count = max(0, len(phrases) - 1)
+                agg_entry["alternative_phrase_counts"].append(alt_phrase_count)
 
         except (ValueError, TypeError, json.JSONDecodeError) as e:
-            skipped_count += 1
-            if verbose:
-                logger.warning(
-                    f"Skipping sample '{sample_id}' due to data error: {e}", exc_info=False
-                )
+            total_skipped_samples += 1
+            logger.debug(f"Skipping sample '{sample_id}' due to data error: {e}", exc_info=False)
             continue
         except Exception as e:
-            skipped_count += 1
-            if verbose:
-                logger.error(
-                    f"Skipping sample '{sample_id}' due to unexpected error: {e}", exc_info=True
-                )
+            total_skipped_samples += 1
+            logger.error(
+                f"Skipping sample '{sample_id}' due to unexpected error: {e}", exc_info=True
+            )
             continue
 
-    successfully_processed_count = processed_count - skipped_count
-    if verbose:
-        logger.info(
-            f"Aggregation complete. Processed rows: {processed_count}, "
-            f"Skipped rows: {skipped_count} => "
-            f"Successfully processed: {successfully_processed_count}"
+    successfully_processed_count = total_samples_processed - total_skipped_samples
+    logger.info(
+        f"Metadata Aggregation complete. Total Samples Iterated: {total_samples_processed}, "
+        f"Skipped: {total_skipped_samples} => Successfully Parsed: {successfully_processed_count}"
+    )
+    logger.info(f"Found {len(phrase_agg_stats)} unique primary phrases.")
+
+    return (
+        dict(phrase_agg_stats),
+        successfully_processed_count,
+        total_conversations,
+        total_valid_conversations,
+    )
+
+
+# --- Command Line Interface Setup ---
+
+
+def _setup_argparse() -> argparse.ArgumentParser:
+    """Creates and configures the argument parser for the analyzer CLI."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Aggregate and summarize phrase statistics from the lab42/cov-segm-v3 dataset metadata."
         )
-        logger.info(f"Found {len(phrase_agg_stats)} unique phrases.")
+    )
+    # --- Dataset Arguments ---
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        help="Dataset split to process (e.g., 'train', 'validation').",
+    )
+    parser.add_argument(
+        "--sample_slice",
+        type=str,
+        default="[:100]",
+        help=(
+            "Slice string to select samples (e.g., '[:100]', '[50:150]', ''). '' means all samples."
+        ),
+    )
+    # --- Output Arguments ---
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="Number of top phrases (by appearance count) to include in the statistics tables.",
+    )
+    parser.add_argument(
+        "--metrics-format",
+        type=str,
+        default="{key:<18} {count:>8} {mean:>7.1f} {p25:>6.0f} {p50:>6.0f} {p75:>6.0f} {max:>6}",
+        help="Format string for the statistics table output (follows f-string formatting).",
+    )
+    # --- Calculation Arguments ---
+    parser.add_argument(
+        "--skip_zero",
+        action="store_true",
+        help=(
+            "If set, phrases with zero metadata mask counts in a sample are ignored for that sample."
+        ),
+    )
+    return parser
 
-    return dict(phrase_agg_stats), successfully_processed_count
+
+# --- Output Formatting Function ---
 
 
-def _calculate_metric_stats(data: List[Union[int, float]], percentiles: List[float]) -> Dict:
-    """Helper to calculate mean and percentiles for a list of numbers."""
-    stats_results = {"avg": 0.0, "percentiles": {}}
-    # Filter out potential None or NaN values if geometry calculation failed or was invalid
-    valid_data = [d for d in data if d is not None and not (isinstance(d, float) and math.isnan(d))]
-
-    if valid_data:
-        try:
-            # Ensure data is suitable for numpy operations
-            np_data = np.array(valid_data, dtype=float)
-            stats_results["avg"] = float(np.mean(np_data))
-            percentile_values = np.percentile(np_data, [p * 100 for p in percentiles])
-            stats_results["percentiles"] = {
-                p: float(v) for p, v in zip(percentiles, percentile_values, strict=False)
-            }
-        except (IndexError, ValueError, Exception) as e:  # Added ValueError
-            logger.warning(
-                f"Could not calculate statistics for data (len={len(valid_data)}, Error: {e})"
-            )
-            # Reset on error, keeping keys but with default values
-            stats_results = {"avg": 0.0, "percentiles": {}}  # Assign default float for avg
-    return stats_results
-
-
-def calculate_summary_stats(
-    aggregated_stats: AggregatedStatsDict,
-    total_processed_samples: int,
-    mode: str,
-    percentiles: Optional[List[float]] = None,
-) -> List[SummaryStat]:
+def _print_phrase_details(
+    top_phrases_data_with_pct: List[Tuple[str, Dict[str, Any]]],
+    metrics_format: str,
+    num_phrases_to_show: int,
+) -> None:
     """
-    Calculates summary statistics from the aggregated phrase data based on the provided mode.
+    Prints the detailed statistics for the top N phrases in a combined format.
 
     Args:
-        aggregated_stats: The dictionary output from aggregate_phrase_stats.
-        total_processed_samples: The total number of samples successfully processed.
-        mode: The analysis mode used ('count_only' or 'deep_stats').
-        percentiles: A list of percentiles to calculate (e.g., [0.1, 0.5, 0.9]).
-
-    Returns:
-        A list of dictionaries, each containing summary statistics for a phrase,
-        sorted by appearance_count in descending order.
+        top_phrases_data_with_pct: List of (phrase, stats_dict) tuples, sorted by appearance.
+                                   The stats_dict must include 'appearance_count' and
+                                   'appearance_percentage'.
+        metrics_format: The f-string format for the statistics table (e.g., mean, p50).
+        num_phrases_to_show: The number of phrases being shown (for the header).
     """
-    if not aggregated_stats:
-        return []
+    if not top_phrases_data_with_pct:
+        print("\n--- No Phrase Details to Display ---")
+        return
 
-    if percentiles is None:
-        percentiles = [0.1, 0.25, 0.5, 0.75, 0.9]
+    print(f"\n--- Top {num_phrases_to_show} Phrase Details ---")
 
-    summary_stats_list: List[SummaryStat] = []
+    for rank, (phrase, data) in enumerate(top_phrases_data_with_pct, start=1):
+        count = data["appearance_count"]
+        percentage = data["appearance_percentage"]
 
-    logger.info(f"Calculating summary stats based on provided mode: '{mode}'")
+        print(f"\n{rank}. {phrase}")
+        print(f"   Appearances: {count}, Pct. of Total Processed: {percentage:.2f}%")
 
-    for phrase, phrase_agg_data in aggregated_stats.items():
-        appearance_count = phrase_agg_data.get("appearance_count", 0)
-        appearance_percentage = (
-            (appearance_count / total_processed_samples) * 100
-            if total_processed_samples > 0
-            else 0.0
-        )
-
-        # Initialize base summary dictionary
-        summary: SummaryStat = {
-            "phrase": phrase,
-            "appearance_count": appearance_count,
-            "appearance_percentage": float(appearance_percentage),
+        # Prepare data for the stats table for this specific phrase
+        single_phrase_stats_dict = {
+            "visible_mask": data["visible_mask_counts"],
+            "full_mask": data["full_mask_counts"],
+            "alternative_phrase": data["alternative_phrase_counts"],
         }
 
-        # --- Calculate Count Statistics based on detected mode ---
-        if mode == "count_only":
-            counts = phrase_agg_data.get("mask_counts_per_image", [])
-            # Always call helper, it handles empty lists returning 0.0 for avg
-            count_stats = _calculate_metric_stats(counts, percentiles)
-            summary["avg_masks_per_image"] = count_stats["avg"]
-            summary["mask_percentiles"] = count_stats["percentiles"]
-        elif mode == "deep_stats":
-            vis_counts = phrase_agg_data.get("visible_mask_counts_per_image", [])
-            full_counts = phrase_agg_data.get("full_mask_counts_per_image", [])
+        # Generate and print the table
+        try:
+            table_lines = format_statistics_table(single_phrase_stats_dict, metrics_format)
+            # Indent the table lines for better readability under the phrase header
+            for line in table_lines:
+                print(f"   {line}")
+        except Exception as e:
+            logger.error(f"Could not format statistics table for phrase '{phrase}': {e}")
+            print("   Error generating statistics table for this phrase.")
 
-            # Always call helper for visible counts
-            vis_count_stats = _calculate_metric_stats(vis_counts, percentiles)
-            summary["avg_visible_masks_per_image"] = vis_count_stats["avg"]
-            summary["visible_mask_percentiles"] = vis_count_stats["percentiles"]
 
-            # Always call helper for full counts
-            full_count_stats = _calculate_metric_stats(full_counts, percentiles)
-            summary["avg_full_masks_per_image"] = full_count_stats["avg"]
-            summary["full_mask_percentiles"] = full_count_stats["percentiles"]
+# --- Main Execution Logic ---
 
-        # --- Calculate Deep Statistics (Geometry) if mode is 'deep_stats' ---
-        if mode == "deep_stats":
-            vis_area_stats = _calculate_metric_stats(
-                phrase_agg_data.get("visible_mask_pixel_areas", []), percentiles
-            )
-            vis_width_stats = _calculate_metric_stats(
-                phrase_agg_data.get("visible_mask_widths", []), percentiles
-            )
-            vis_height_stats = _calculate_metric_stats(
-                phrase_agg_data.get("visible_mask_heights", []), percentiles
-            )
-            full_area_stats = _calculate_metric_stats(
-                phrase_agg_data.get("full_mask_pixel_areas", []), percentiles
-            )
-            full_width_stats = _calculate_metric_stats(
-                phrase_agg_data.get("full_mask_widths", []), percentiles
-            )
-            full_height_stats = _calculate_metric_stats(
-                phrase_agg_data.get("full_mask_heights", []), percentiles
-            )
 
-            # Update summary with geometry stats
-            summary["avg_visible_mask_pixels"] = vis_area_stats["avg"]
-            summary["visible_mask_pixel_percentiles"] = vis_area_stats["percentiles"]
-            summary["avg_visible_mask_width"] = vis_width_stats["avg"]
-            summary["visible_mask_width_percentiles"] = vis_width_stats["percentiles"]
-            summary["avg_visible_mask_height"] = vis_height_stats["avg"]
-            summary["visible_mask_height_percentiles"] = vis_height_stats["percentiles"]
+def main():
+    parser = _setup_argparse()
+    args = parser.parse_args()
 
-            summary["avg_full_mask_pixels"] = full_area_stats["avg"]
-            summary["full_mask_pixel_percentiles"] = full_area_stats["percentiles"]
-            summary["avg_full_mask_width"] = full_width_stats["avg"]
-            summary["full_mask_width_percentiles"] = full_width_stats["percentiles"]
-            summary["avg_full_mask_height"] = full_height_stats["avg"]
-            summary["full_mask_height_percentiles"] = full_height_stats["percentiles"]
+    # Configure logging - default to INFO, can be changed by external config
+    logging.basicConfig(
+        level=logging.INFO,  # Default level
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
 
-            # Calculate Saturation
-            avg_vis_pixels = summary["avg_visible_mask_pixels"]
-            avg_vis_w = summary["avg_visible_mask_width"]
-            avg_vis_h = summary["avg_visible_mask_height"]
-            vis_saturation = float("nan")
-            if (
-                isinstance(avg_vis_w, (int, float))
-                and avg_vis_w > 0
-                and isinstance(avg_vis_h, (int, float))
-                and avg_vis_h > 0
-                and isinstance(avg_vis_pixels, (int, float))
-            ):
-                vis_saturation = avg_vis_pixels / (avg_vis_w * avg_vis_h)
-            summary["visible_mask_saturation"] = vis_saturation
+    DATASET_NAME = "lab42/cov-segm-v3"
+    SPLIT = args.split
+    NUM_SAMPLES_STR = args.sample_slice if args.sample_slice else None
 
-            avg_full_pixels = summary["avg_full_mask_pixels"]
-            avg_full_w = summary["avg_full_mask_width"]
-            avg_full_h = summary["avg_full_mask_height"]
-            full_saturation = float("nan")
-            if (
-                isinstance(avg_full_w, (int, float))
-                and avg_full_w > 0
-                and isinstance(avg_full_h, (int, float))
-                and avg_full_h > 0
-                and isinstance(avg_full_pixels, (int, float))
-            ):
-                full_saturation = avg_full_pixels / (avg_full_w * avg_full_h)
-            summary["full_mask_saturation"] = full_saturation
+    try:
+        logger.info(
+            f"Loading dataset: {DATASET_NAME}, split: {SPLIT}, samples: {NUM_SAMPLES_STR or 'all'}"
+        )
+        # Stream only if processing all samples for efficiency
+        should_stream = not NUM_SAMPLES_STR
+        if should_stream:
+            logger.info("Streaming dataset as no sample slice is specified.")
+        dset = datasets.load_dataset(
+            DATASET_NAME,
+            split=f"{SPLIT}{NUM_SAMPLES_STR}" if NUM_SAMPLES_STR else SPLIT,
+            streaming=should_stream,
+            # trust_remote_code=True # Might be needed
+        )
+        dset_iterable = dset
+        logger.info(f"Prepared dataset iterable for split '{SPLIT}'.")
 
-        summary_stats_list.append(summary)
+        # --- Aggregation Step ---
+        logger.info("Starting phrase statistics aggregation from metadata...")
+        (
+            phrase_agg_stats,
+            total_processed,
+            total_conversations,
+            total_valid_conversations,
+        ) = _aggregate_stats_from_metadata(
+            dset_iterable,
+            skip_zero_masks=args.skip_zero,
+        )
+        logger.info("Aggregation finished.")
 
-    # Sort by appearance_count descending
-    summary_stats_list.sort(key=lambda x: x["appearance_count"], reverse=True)
+        if total_processed == 0:
+            logger.warning("No samples were successfully processed. Exiting.")
+            return
 
-    return summary_stats_list
+        # --- Prepare Data for Output ---
+
+        # 1. Calculate Overall Image Metrics
+        avg_conv_per_sample = total_conversations / total_processed if total_processed > 0 else 0
+        avg_valid_conv_per_sample = (
+            total_valid_conversations / total_processed if total_processed > 0 else 0
+        )
+
+        # 2. Sort phrases by appearance count
+        sorted_phrases = sorted(
+            phrase_agg_stats.items(), key=lambda item: item[1]["appearance_count"], reverse=True
+        )
+
+        # 3. Determine how many top phrases to show
+        num_phrases_to_show = min(args.top, len(sorted_phrases))
+
+        # 4. Prepare data for the top phrases, including calculated percentage
+        top_phrases_data_with_pct: List[Tuple[str, Dict[str, Any]]] = []
+        for phrase, data in sorted_phrases[:num_phrases_to_show]:
+            count = data["appearance_count"]
+            percentage = (count / total_processed) * 100 if total_processed > 0 else 0
+            updated_data = data.copy()  # Avoid modifying the original dict
+            updated_data["appearance_percentage"] = percentage
+            top_phrases_data_with_pct.append((phrase, updated_data))
+
+        # --- Print Output ---
+        print("\n--- Overall Statistics ---")
+        print(f"Total Samples Successfully Processed: {total_processed}")
+        print(f"Total Conversation Items Found     : {total_conversations}")
+        print(f"Total Valid Conversation Items (>0 masks): {total_valid_conversations}")
+        print(f"Average Conversations per Sample   : {avg_conv_per_sample:.2f}")
+        print(f"Average Valid Conversations per Sample: {avg_valid_conv_per_sample:.2f}")
+
+        # Print detailed phrase statistics using the new function
+        _print_phrase_details(
+            top_phrases_data_with_pct=top_phrases_data_with_pct,
+            metrics_format=args.metrics_format,
+            num_phrases_to_show=num_phrases_to_show,
+        )
+
+    except ImportError as ie:
+        logger.error(
+            f"Import error: {ie}. Make sure 'datasets', 'tqdm', and 'numpy' are installed."
+        )
+    except Exception as e:
+        logger.error(f"An error occurred during script execution: {e}", exc_info=True)
+
+
+if __name__ == "__main__":
+    main()

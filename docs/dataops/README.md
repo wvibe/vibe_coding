@@ -47,3 +47,54 @@ When adding tests, follow these principles:
 - Add parameterized tests for diverse inputs when applicable
 - Use fixtures to create test data that exercises key logic paths
 - Focus on assertions that validate behavior, not implementation details
+
+## Analyzer Module (`src/dataops/cov_segm/analyzer.py`)
+
+The `Analyzer` module is responsible for aggregating and summarizing phrase statistics from the `lab42/cov-segm-v3` dataset metadata. It operates solely on metadata for efficiency.
+
+### Key Features
+- Aggregates phrase statistics including appearance counts, visible/full mask counts, and alternative phrase counts.
+- Command-line interface for easy usage.
+
+### Command-Line Usage
+To run the analyzer, use the following command:
+```bash
+python -m src.dataops.cov_segm.analyzer --split train --sample_slice '[:100]' --top 10 --skip_zero
+```
+
+### Key Arguments
+- `--split`: Specify dataset split (default: `train`).
+- `--sample_slice`: Specify sample slice (e.g., `[:100]`, `[50:150]`, default: `[:100]`, `''` for all).
+- `--top`: Number of top phrases to include in the output (default: `10`).
+- `--skip_zero`: Flag to ignore phrases associated with zero masks in a sample during aggregation.
+
+## Converter Module (`src/dataops/cov_segm/converter.py`)
+
+The `Converter` module transforms the `lab42/cov-segm-v3` dataset into YOLO format for segmentation tasks. It utilizes the OOP data models and supports parallel processing for efficiency with large datasets.
+
+### Key Features
+- Converts dataset samples to YOLO segmentation format based on configurable class mappings
+- Supports parallel processing via Hugging Face's `datasets.map()` for efficient processing
+- Provides detailed statistics on processed samples, segments, and masks
+- Implements flexible sampling options with both per-class and global ratios
+
+### Command-Line Usage
+For a small test run:
+```bash
+python -m src.dataops.cov_segm.converter --train-split validation --mask-tag visible --sample-count 10 --num-proc 4
+```
+
+For a production run with sampling:
+```bash
+python -m src.dataops.cov_segm.converter --train-split train --mask-tag visible --sample-ratio 0.2 --num-proc 8 --output-name visible_20pct
+```
+
+### Key Arguments
+- `--train-split`: Dataset split to process (e.g., 'train', 'validation')
+- `--mask-tag`: Type of mask to convert ('visible' or 'full')
+- `--num-proc`: Number of processor cores for parallel loading
+- `--sample-ratio`: Global sampling ratio applied to all classes
+- `--sample-count`: Maximum number of samples to process (for testing)
+- `--mapping-config`: Path to the CSV mapping file
+- `--output-dir`: Root directory for YOLO dataset output
+- `--output-name`: Subdirectory name for this dataset version

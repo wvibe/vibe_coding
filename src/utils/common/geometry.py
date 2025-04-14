@@ -252,6 +252,7 @@ def mask_to_yolo_polygons(
     )
 
     if not simplified_contours:
+        logger.warning("No valid contours found in mask.")
         return []
 
     # --- Polygon Generation ---

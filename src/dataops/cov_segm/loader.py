@@ -1,5 +1,4 @@
 # Standard library imports
-import argparse
 import io
 import json
 import logging
@@ -12,18 +11,14 @@ from PIL import Image
 # Local imports
 from src.dataops.common.s3_fetcher import fetch_s3_uri, is_s3_uri
 from src.dataops.cov_segm.datamodel import (
+    ClsSegment,
     ConversationItem,
     InstanceMask,
-    ProcessedConversationItem,
-    ProcessedCovSegmSample,
-    ProcessedMask,
+    SegmMask,
+    SegmSample,
 )
 
-# Configure basic logging
-# Remove this basicConfig call - let the main script configure logging
-# logging.basicConfig(
-#     level=logging.INFO, format=\"%(asctime)s - %(name)s - %(levelname)s - %(message)s\"
-# )
+# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -40,32 +35,17 @@ def parse_conversations(json_string: str) -> List[ConversationItem]:
     Raises:
         ValueError: If the JSON is invalid or does not conform to the expected schema.
     """
-    global _last_parsed_conversations
     try:
         parsed_data = json.loads(json_string)
         if not isinstance(parsed_data, list):
             raise ValueError("Conversations JSON must be a list.")
 
         parsed_items = [ConversationItem.model_validate(item) for item in parsed_data]
-        # Store the parsed items for debugging
-        _last_parsed_conversations = parsed_items
-
         return parsed_items
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON: {e}") from e
     except Exception as e:
         raise ValueError(f"Invalid conversation data structure: {e}") from e
-
-
-def get_last_parsed_conversations() -> List[Dict[str, Any]]:
-    """Returns the most recently parsed conversation items as dictionaries.
-
-    This function is intended for debugging purposes only.
-
-    Returns:
-        A list of dictionaries containing the raw parsed conversation items.
-    """
-    return [item.model_dump() for item in _last_parsed_conversations]
 
 
 def _load_image_from_uri(uri: str) -> Optional[Image.Image]:
@@ -98,12 +78,12 @@ def _load_image_from_uri(uri: str) -> Optional[Image.Image]:
         return None
 
 
-def _resolve_mask_path(
+def _resolve_reference_path(
     column_path: str, hf_cov_segm_row: Dict[str, Any]
 ) -> Tuple[Optional[Any], bool]:
-    """Resolves a column path (possibly with path-style notation) to its data value.
+    """Resolves a column path (direct or nested like 'masks_rest/0') to its data value.
 
-    Handles both direct column access and path-style notation like 'masks_rest/0'.
+    Handles nested paths assuming a 'base_rest/index' structure.
 
     Args:
         column_path: The column path string (e.g., 'mask_0' or 'masks_rest/0')
@@ -111,324 +91,211 @@ def _resolve_mask_path(
 
     Returns:
         A tuple containing (resolved_value, success_flag)
-        - resolved_value: The data value if found, None otherwise
-        - success_flag: True if resolution was successful, False otherwise
     """
-    # Handle path-style column references like 'masks_rest/0'
     if "/" in column_path:
-        # Split into parts (e.g., ['masks_rest', '0'])
-        parts = column_path.split("/")
-        base_column = parts[0]
-
-        # Check if the base column exists in the row
-        if base_column in hf_cov_segm_row:
-            logger.debug(f"Found base column '{base_column}' - resolving path '{column_path}'")
-            try:
-                # Start with the base column value
-                value = hf_cov_segm_row[base_column]
-
-                # Navigate nested indices if it's a list
-                for index_str in parts[1:]:
-                    if isinstance(value, list) and index_str.isdigit():
+        parts = column_path.split("/", 1)  # Split only once
+        if len(parts) == 2:
+            base_column, index_str = parts
+            # Optional check: if not base_column.endswith("_rest"):
+            #    logger.warning(...) # Or raise error
+            if base_column in hf_cov_segm_row and index_str.isdigit():
+                base_value = hf_cov_segm_row[base_column]
+                if isinstance(base_value, list):
+                    try:
                         index = int(index_str)
-                        if 0 <= index < len(value):
-                            value = value[index]
-                            logger.debug(f"Accessed index {index} in list, continuing...")
-                        else:
-                            logger.warning(
-                                f"Index {index} out of range for {base_column} "
-                                f"list (length: {len(value)})"
-                            )
-                            return None, False
-                    else:
-                        logger.warning(
-                            f"Cannot access {index_str} in {type(value).__name__} for {column_path}"
+                        resolved_value = base_value[index]
+                        logger.debug(
+                            f"Successfully resolved nested path: '{column_path}' to index {index}"
                         )
-                        return None, False
-
-                # We've successfully navigated to the value
-                logger.debug(f"Successfully accessed nested data at path: '{column_path}'")
-                return value, True
-
-            except Exception as e:
-                logger.error(f"Error accessing nested path '{column_path}': {e}")
-                return None, False
-        else:
-            logger.warning(f"Base column '{base_column}' not found for path '{column_path}'")
-            return None, False
-
-    # Standard direct column access
-    elif column_path in hf_cov_segm_row:
-        logger.debug(f"Found column '{column_path}' directly in the dataset row")
-        return hf_cov_segm_row[column_path], True
-
-    else:
-        logger.warning(f"Mask column '{column_path}' not found in dataset row")
-        return None, False
-
-
-def _load_mask(mask_info: InstanceMask, hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedMask]:
-    """Loads a mask from a specified column in a Hugging Face cov_segm row.
-
-    Handles both direct column access and path-style notation (e.g., 'masks_rest/0').
-    Calculates pixel area and bounding box dimensions based on the positive_value.
-
-    Args:
-        mask_info: The InstanceMask object containing mask details.
-        hf_cov_segm_row: The raw dictionary representing one row from the
-                         Hugging Face cov_segm dataset.
-
-    Returns:
-        A ProcessedMask TypedDict containing the loaded mask and calculated geometry,
-        or None if loading fails.
-    """
-    mask_image: Optional[Image.Image] = None
-    source: Optional[str] = None
-
-    if not mask_info.column:
-        logger.warning(f"InstanceMask provided without a 'column' field: {mask_info}")
-        return None
-
-    column_path = mask_info.column
-    source = column_path
-    logger.debug(f"Attempting to load mask from path: '{column_path}'")
-
-    # Resolve the mask data path to its actual value
-    mask_data, success = _resolve_mask_path(column_path, hf_cov_segm_row)
-
-    if not success:
-        return None
-
-    # Convert mask data to PIL Image if necessary
-    try:
-        if isinstance(mask_data, Image.Image):
-            mask_image = mask_data
-            logger.debug(f"Loaded mask from '{source}' as PIL.Image")
-        elif isinstance(mask_data, np.ndarray):
-            # Ensure it's uint8 before converting
-            if mask_data.dtype != np.uint8:
-                logger.warning(
-                    f"Mask data from '{source}' is {mask_data.dtype}, converting to uint8."
-                )
-                mask_data = mask_data.astype(np.uint8)
-            mask_image = Image.fromarray(mask_data)
-            logger.debug(f"Loaded mask from '{source}' as np.ndarray and converted to PIL.Image")
-        else:
-            logger.warning(f"Unsupported mask type at '{source}': {type(mask_data)}")
-            return None
-    except Exception as e:
-        logger.error(f"Error converting mask data from '{source}': {e}")
-        return None
-
-    # Calculate pixel area and bounding box dimensions
-    pixel_area = 0
-    width = 0
-    height = 0
-    if mask_image:
-        try:
-            np_mask = np.array(mask_image)
-            # Calculate pixel area matching positive_value
-            match_indices = np_mask == mask_info.positive_value
-            pixel_area = int(np.sum(match_indices))
-
-            if pixel_area > 0:
-                # Calculate bounding box dimensions
-                rows, cols = np.where(match_indices)
-                min_row, max_row = rows.min(), rows.max()
-                min_col, max_col = cols.min(), cols.max()
-                height = int(max_row - min_row + 1)
-                width = int(max_col - min_col + 1)
-                logger.debug(
-                    f"Mask '{source}' (positive_value={mask_info.positive_value}): "
-                    f"Area={pixel_area}, Width={width}, Height={height}"
-                )
+                        return resolved_value, True
+                    except IndexError:
+                        logger.warning(
+                            f"Index {index_str} out of range for '{base_column}' "
+                            f"(length: {len(base_value)}) in path '{column_path}'"
+                        )
+                    except Exception as e:  # Catch other potential errors
+                        logger.error(f"Error accessing index {index_str} in '{base_column}': {e}")
+                else:
+                    logger.warning(f"Base '{base_column}' is not a list for path '{column_path}'")
             else:
-                logger.warning(
-                    f"No pixels matched positive_value={mask_info.positive_value} "
-                    f"in mask from source '{source}'. Area, width, height set to 0."
-                )
-        except Exception as e:
-            logger.error(f"Error calculating geometry for mask '{source}': {e}")
-            # Reset calculated values on error, but still return the mask if loaded
-            pixel_area = None
-            width = None
-            height = None
+                # Log conditions separately for clarity
+                if base_column not in hf_cov_segm_row:
+                    logger.warning(
+                        f"Base column '{base_column}' not found for path '{column_path}'"
+                    )
+                if not index_str.isdigit():
+                    logger.warning(f"Non-digit index '{index_str}' in path '{column_path}'")
+        else:
+            # Path contained '/' but didn't split into two parts
+            logger.warning(f"Invalid nested path format: '{column_path}'")
 
-    # Construct the ProcessedMask dictionary
-    processed_mask: ProcessedMask = {
-        "mask": mask_image,
-        "positive_value": mask_info.positive_value,
-        "source": source,
-        "pixel_area": pixel_area,
-        "width": width,
-        "height": height,
-    }
-    logger.debug(
-        f"Successfully processed mask from '{source}' with "
-        f"positive_value={mask_info.positive_value}"
-    )
-    return processed_mask
+    # Standard direct column access (or if nested lookup failed)
+    elif column_path in hf_cov_segm_row:
+        logger.debug(f"Successfully resolved direct path: '{column_path}'")
+        return hf_cov_segm_row[column_path], True
+    else:
+        logger.warning(f"Column '{column_path}' not found in dataset row")
+
+    # Default return if any failure occurs above
+    return None, False
 
 
-def _process_mask_metadata(mask_metadata, hf_cov_segm_row) -> Optional[ProcessedMask]:
-    """Process mask metadata and load the corresponding mask.
-
-    Handles both direct column references (mask_0) and path-style notation (masks_rest/0).
+def _process_mask_list(
+    mask_metadata_list: Optional[List[InstanceMask]],
+    hf_row: Dict[str, Any],
+    row_id: str,
+    conv_idx: int,
+    mask_type_desc: str,  # e.g., "visible" or "full"
+) -> List[SegmMask]:
+    """Processes a list of InstanceMask metadata to generate valid SegmMask objects.
 
     Args:
-        mask_metadata: The InstanceMask object containing mask details.
-        hf_cov_segm_row: The raw dictionary representing one row from the dataset.
+        mask_metadata_list: List of InstanceMask objects or None.
+        hf_row: The raw dataset row dictionary.
+        row_id: The ID of the current sample (for logging).
+        conv_idx: The index of the current conversation item (for logging).
+        mask_type_desc: Description of the mask type being processed (for logging).
 
     Returns:
-        A ProcessedMask or None if loading fails.
+        A list of valid SegmMask objects.
     """
-    if not mask_metadata.column:
-        return None
+    valid_masks: List[SegmMask] = []
+    if not mask_metadata_list:
+        return valid_masks  # Return empty list if input is None or empty
 
-    # Just directly use _load_mask which already handles both formats properly
-    # through the _resolve_mask_path function
-    return _load_mask(mask_metadata, hf_cov_segm_row)
+    for mask_metadata in mask_metadata_list:
+        if not mask_metadata.column:
+            logger.warning(
+                f"Row {row_id}, Conv {conv_idx}: Skipping {mask_type_desc} InstanceMask "
+                f"due to missing 'column': {mask_metadata}"
+            )
+            continue
+
+        column_path = mask_metadata.column
+        raw_data, success = _resolve_reference_path(column_path, hf_row)
+
+        if success and isinstance(raw_data, (Image.Image, np.ndarray)):
+            try:
+                # Instantiate SegmMask - it handles parsing internally
+                segm_mask = SegmMask(instance_mask_info=mask_metadata, raw_mask_data=raw_data)
+                if segm_mask.is_valid:
+                    valid_masks.append(segm_mask)
+                    logger.debug(
+                        f"Row {row_id}, Conv {conv_idx}: Parsed valid {mask_type_desc} mask "
+                        f"from '{column_path}' (Area: {segm_mask.pixel_area})"
+                    )
+                else:
+                    # Log if parsing happened but result was invalid (e.g., zero area)
+                    logger.debug(
+                        f"Row {row_id}, Conv {conv_idx}: Parsed {mask_type_desc} mask from "
+                        f"'{column_path}' but it was invalid (e.g., zero area)."
+                    )
+            except Exception as e:
+                # Catch errors during SegmMask instantiation/parsing
+                logger.error(
+                    f"Row {row_id}, Conv {conv_idx}: Error processing {mask_type_desc} mask "
+                    f"from '{column_path}': {e}",
+                    exc_info=True,
+                )
+        else:
+            # Log if raw data couldn't be loaded/resolved or was wrong type
+            logger.warning(
+                f"Row {row_id}, Conv {conv_idx}: Failed load/resolve {mask_type_desc} mask "
+                f"from '{column_path}'. Success: {success}, Type: {type(raw_data).__name__}"
+            )
+
+    return valid_masks
 
 
-def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[ProcessedCovSegmSample]:
+def load_sample(hf_cov_segm_row: Dict[str, Any]) -> Optional[SegmSample]:
     """Loads and processes a single row from the Hugging Face cov_segm dataset.
 
     Parses 'conversations' JSON, fetches the main image specified via S3 URI,
-    and loads associated masks from columns within the input row.
+    loads associated raw masks, and uses SegmMask class to parse them.
 
     Args:
         hf_cov_segm_row: A dictionary representing a raw row obtained from
                          `datasets.load_dataset('lab42/cov-segm-v3')`.
-                         Expected to have a 'conversations' key (JSON string)
-                         and columns like 'mask_0', 'mask_1', etc., containing
-                         mask image data (PIL.Image or np.ndarray).
 
     Returns:
-        A ProcessedCovSegmSample TypedDict containing the main image and processed
-        conversation data (including loaded mask images), or None if essential
-        components (conversations, main image) cannot be loaded/parsed.
+        A SegmSample object containing the main image and processed segments
+        (including parsed SegmMask objects), or None if essential components
+        (conversations, main image) cannot be loaded/parsed or no valid
+        segments are found.
     """
+    row_id = hf_cov_segm_row.get("id")
+    if not row_id:
+        logger.error("Row missing 'id' field.")
+        return None
+
     conversations_json = hf_cov_segm_row.get("conversations")
     if not conversations_json or not isinstance(conversations_json, str):
-        logger.error("Row missing 'conversations' string or value is not a string.")
+        logger.error(f"Row {row_id}: Missing 'conversations' string or value is not a string.")
         return None
 
     try:
         parsed_conv_items: List[ConversationItem] = parse_conversations(conversations_json)
         if not parsed_conv_items:
-            logger.error("Parsing conversations resulted in an empty list.")
+            logger.warning(f"Row {row_id}: Parsing conversations resulted in an empty list.")
             return None
     except ValueError as e:
-        logger.error(f"Failed to parse conversations JSON: {e}", exc_info=True)
+        logger.error(f"Row {row_id}: Failed to parse conversations JSON: {e}", exc_info=False)
         return None
 
     first_item = parsed_conv_items[0]
     if not first_item.image_uri or not first_item.image_uri.jpg:
-        logger.error("First conversation item lacks image_uri or image_uri.jpg field.")
+        logger.error(
+            f"Row {row_id}: First conversation item lacks image_uri or image_uri.jpg field."
+        )
         return None
-    main_image_uri = first_item.image_uri.jpg
 
+    main_image_uri = first_item.image_uri.jpg
     main_image = _load_image_from_uri(main_image_uri)
     if not main_image:
+        logger.error(f"Row {row_id}: Failed to load main image from URI: {main_image_uri}.")
         return None
 
-    processed_conversations: List[ProcessedConversationItem] = []
+    all_segments: List[ClsSegment] = []
     for idx, item in enumerate(parsed_conv_items):
-        # For summary logging
-        instance_masks_attempted = 0
-        instance_masks_loaded = 0
-        full_masks_attempted = 0
-        full_masks_loaded = 0
+        if item.image_uri.jpg != main_image_uri:
+            logger.error(
+                f"Row {row_id}: Conversation item {idx} has a different image_uri.jpg "
+                f"('{item.image_uri.jpg}') than the main image ('{main_image_uri}')."
+            )
+            return None  # Skip sample if conversation items reference different main images
 
-        processed_instance_masks: List[ProcessedMask] = []
-        if item.instance_masks:
-            instance_masks_attempted = len(item.instance_masks)
-            for mask_metadata in item.instance_masks:
-                loaded_mask = _process_mask_metadata(mask_metadata, hf_cov_segm_row)
-                if loaded_mask:
-                    processed_instance_masks.append(loaded_mask)
-                    instance_masks_loaded += 1
-                else:
-                    # Construct the potential path for logging if needed
-                    potential_path = mask_metadata.column
-                    # Log only if mask loading failed, not just missing columns/index
-                    if (
-                        mask_metadata.column
-                        and _resolve_mask_path(potential_path, hf_cov_segm_row)[1]
-                    ):
-                        logger.warning(
-                            f"Failed to load instance mask for sample {idx}, "
-                            f"conversation {idx}, definition '{mask_metadata}' "
-                            f"(path: {potential_path})"
-                        )
-
-        processed_full_masks: List[ProcessedMask] = []
-        if item.instance_full_masks:
-            full_masks_attempted = len(item.instance_full_masks)
-            for mask_metadata in item.instance_full_masks:
-                loaded_mask = _process_mask_metadata(mask_metadata, hf_cov_segm_row)
-                if loaded_mask:
-                    processed_full_masks.append(loaded_mask)
-                    full_masks_loaded += 1
-                else:
-                    # Construct the potential path for logging if needed
-                    potential_path = mask_metadata.column
-                    # Log only if mask loading failed, not just missing columns/index
-                    if (
-                        mask_metadata.column
-                        and _resolve_mask_path(potential_path, hf_cov_segm_row)[1]
-                    ):
-                        logger.warning(
-                            f"Failed to load instance full mask for sample {idx}, "
-                            f"conversation {idx}, definition '{mask_metadata}' "
-                            f"(path: {potential_path})"
-                        )
-
-        # Log summary info at INFO level
-        phrases_text = [p.text for p in item.phrases]
-        logger.debug(
-            f"ConversationItem {idx} with phrases {phrases_text}: "
-            + f"Loaded {instance_masks_loaded}/{instance_masks_attempted} instance masks, "
-            + f"{full_masks_loaded}/{full_masks_attempted} full masks"
+        # Use the helper function to process mask lists
+        visible_segm_masks = _process_mask_list(
+            item.instance_masks, hf_cov_segm_row, row_id, idx, "visible"
+        )
+        full_segm_masks = _process_mask_list(
+            item.instance_full_masks, hf_cov_segm_row, row_id, idx, "full"
         )
 
-        processed_item: ProcessedConversationItem = {
-            "phrases": [p.model_dump() for p in item.phrases],
-            "type": item.type,
-            "processed_instance_masks": processed_instance_masks,
-            "processed_full_masks": processed_full_masks,
-        }
-        processed_conversations.append(processed_item)
+        # Create ClsSegment only if there are phrases to describe it
+        if item.phrases:
+            cls_segment = ClsSegment(
+                phrases=item.phrases,
+                type=item.type,
+                visible_masks=visible_segm_masks,
+                full_masks=full_segm_masks,
+            )
+            all_segments.append(cls_segment)
+            logger.debug(
+                f"Row {row_id}, Conv {idx}: Created ClsSegment with {len(visible_segm_masks)} "
+                f"visible and {len(full_segm_masks)} full masks."
+            )
+        else:
+            logger.warning(
+                f"Row {row_id}, Conv {idx}: Skipping segment creation due to empty phrases."
+            )
 
-    # Extract sample ID or use default if missing
-    sample_id = hf_cov_segm_row.get("id", "unknown_id")
+    if not all_segments:
+        logger.warning(
+            f"Row {row_id}: No valid segments were created for this sample. Returning None."
+        )
+        return None
 
-    final_result: ProcessedCovSegmSample = {
-        "id": sample_id,
-        "image": main_image,
-        "processed_conversations": processed_conversations,
-    }
-    return final_result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Test loading an image from an S3 URI.")
-    parser.add_argument(
-        "s3_uri", help="The S3 URI of the image to load (e.g., s3://bucket/image.jpg)"
-    )
-    args = parser.parse_args()
-
-    print(f"Attempting to load image from: {args.s3_uri}")
-    loaded_image = _load_image_from_uri(args.s3_uri)
-
-    if loaded_image:
-        print("-" * 20)
-        print("Image loaded successfully!")
-        print(f"  Format: {loaded_image.format}")
-        print(f"  Size: {loaded_image.size}")
-        print(f"  Mode: {loaded_image.mode}")
-        print("-" * 20)
-    else:
-        print("-" * 20)
-        print("Failed to load image.")
-        print("-" * 20)
+    segm_sample = SegmSample(id=row_id, image=main_image, segments=all_segments)
+    logger.debug(f"Row {row_id}: Successfully loaded SegmSample with {len(all_segments)} segments.")
+    return segm_sample

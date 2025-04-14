@@ -54,8 +54,12 @@ This document tracks the development tasks for the `src/dataops` module.
 
 *   **[X] Implement `cov_segm` Analyzer:**
     *   Created `src/dataops/cov_segm/analyzer.py`.
-    *   Implemented `aggregate_phrase_stats` and `calculate_summary_stats`.
-    *   Added command-line interface and unit tests.
+    *   Implemented aggregation of phrase statistics (appearance count, visible/full mask counts, alternative phrase counts) directly from dataset metadata.
+    *   Removed the previous `deep_stats` mode and related geometric calculations.
+    *   Added command-line interface for metadata-based analysis and unit tests.
+*   **[X] Refactor `analyzer.py`:**
+    *   Completed refactoring to improve clarity and maintainability.
+    *   Updated function names and logic to focus on metadata-only aggregation.
 *   **[X] Implement `cov_segm` to YOLO Format Converter:**
     *   **Goal:** Convert `lab42/cov-segm-v3` (using `ProcessedCovSegmSample` from loader) into YOLO segmentation format.
     *   **Location:** `src/dataops/cov_segm/converter.py`
@@ -83,14 +87,101 @@ This document tracks the development tasks for the `src/dataops` module.
     *   **Arguments:** `--mapping-config`, `--output-dir`, `--output-name`, `--mask-tag`, `--train-split`, `--hf-dataset-path`, `--sample-count`, `--seed`, `--skip-zero`, `--no-overwrite`.
     *   **Statistics:** Implemented statistics tracking and reporting, including count, mean, percentiles by class ID.
     *   **Verification:** Perform test run for each required split using `--sample-count`. Check output structure, format, and `dataset.yaml`.
+*   **[X] Implement Parallel Processing for Analyzer/Converter:**
+    *   **Goal:** Significantly speed up `analyzer.py` and `converter.py` execution on large datasets (like `cov-segm-v3`) by leveraging multiprocessing.
+    *   **Approach:** Utilize Hugging Face `datasets.map(load_sample, num_proc=N, ...)` to parallelize the data loading and initial processing (`load_sample` returning `SegmSample`).
+    *   **Implementation:** Added parallel processing to `converter.py` using Hugging Face's `datasets.map()` with support for custom `num_proc` parameter.
+    *   **Optimizations:**
+        *   Added efficient binary mask compression with `np.packbits()` to reduce memory usage
+        *   Added serialization methods to all OOP data models (`SegmSample`, `ClsSegment`, `SegmMask`)
+        *   Added progress tracking via tqdm to maintain visibility during processing
+        *   Implemented global sampling ratio to control dataset size
 
-## Low Priority
+## Refactoring: `cov_segm` OOP Data Model
 
-*   **[ ] Add Support for Other Datasets:** Create new subdirectories (e.g., `dataops/other_dataset/`) following the established pattern (`datamodel.py`, `loader.py`, etc.).
-*   **[ ] Refactor Common Logic:** Identify and move any truly dataset-agnostic logic emerging in dataset modules to `common/`.
-*   **[ ] Expand Visualizer Capabilities:**
-    *   Add support for additional mask types (RGBA, LA, etc.)
-    *   Implement a mask format conversion utility for standardizing diverse input formats
-    *   Create an interactive visualization dashboard for exploring multiple samples/prompts
-    *   Add options for visual styling (colormap selection, transparency control, etc.)
-    *   Implement batch processing mode for generating visualizations across dataset slices
+**Goal:** Refactor `cov_segm` data handling (`loader`, `datamodel`, `visualizer`, `analyzer`, `converter`) to use a more robust Object-Oriented structure, replacing the previous `TypedDict`-based approach (see `DESIGN.md`). This enhances encapsulation (parsing logic within `SegmMask`), clarifies data flow, and improves maintainability.
+**Note:** This refactoring must maintain compatibility with parallel processing via Hugging Face `datasets.map(num_proc=N)` by ensuring `load_sample` and the returned object graph (`SegmSample` -> `ClsSegment` -> `SegmMask`) are pickleable.
+
+*   **[X] Phase 1: Refactor `datamodel.py`**
+    *   Define `SegmMask` class:
+        *   Attributes: `source_info: InstanceMask`, `binary_mask: Optional[np.ndarray]`, `pixel_area: Optional[int]`, `bbox: Optional[Tuple[int, int, int, int]]` (x_min, y_min, x_max, y_max), `is_valid: bool`.
+        *   Methods: `__init__(instance_mask_info, raw_mask_data)` (does *not* store `raw_mask_data`), `_parse(raw_mask_data)` (private, contains parsing logic, calculates bbox).
+    *   Define `ClsSegment` class:
+        *   Attributes: `phrases: List[Phrase]` (synonymous phrases for the class concept), `type: str`, `visible_masks: List[SegmMask]`, `full_masks: List[SegmMask]`.
+        *   Methods: `__init__`.
+    *   Define `SegmSample` class:
+        *   Attributes: `id: str`, `image: Image.Image`, `segments: List[ClsSegment]`.
+        *   Methods: `__init__`, `find_segment_by_prompt(prompt)`.
+    *   Remove old `TypedDict`s: `ProcessedMask`, `ProcessedConversationItem`, `ProcessedCovSegmSample`.
+    *   Ensure all necessary imports (`typing`, `PIL.Image`, `numpy`, existing Pydantic models) are correct.
+*   **[X] Phase 2: Refactor `loader.py`**
+    *   Update imports for new classes (`SegmSample`, `ClsSegment`, `SegmMask`, `InstanceMask`). Remove old `TypedDict` imports.
+    *   Keep helpers: `_load_image_from_uri`, `parse_conversations`.
+    *   Rename and simplify `_resolve_mask_path` to `_resolve_reference_path`.
+    *   Remove old functions: `_load_mask`, `_process_mask_metadata`.
+    *   Remove helper `_load_raw_mask`.
+    *   Add helper `_process_mask_list` to encapsulate mask loading/parsing loop.
+    *   Refactor `load_sample` to return `Optional[SegmSample]`, using the new helpers and classes.
+    *   Refactored unit tests in `test_loader.py` to match the new implementation.
+*   **[X] Phase 3: Refactor `visualizer.py` and `visualizer_main.py`**
+    *   Updated imports (`SegmSample`, `ClsSegment`, `SegmMask`).
+    *   Removed `_find_item_by_prompt` (use `SegmSample.find_segment_by_prompt`).
+    *   Refactored `visualize_prompt_masks` to accept `sample: SegmSample`. Iterated `target_segment.*_masks` (which are `SegmMask` lists), accessed `segm_mask.binary_mask` after filtering for valid masks.
+    *   Refactored `_apply_color_mask` signature to accept `binary_mask: np.ndarray` and simplified implementation.
+    *   Refactored `visualizer_main.py` CLI: Updated imports, simplified args (removed dpi, display group), adapted logic for `SegmSample`.
+    *   Refactored unit tests in `test_visualizer.py` to match the new implementation.
+*   **[X] Phase 4: Refactor `analyzer.py`**
+    *   Updated imports and function names to reflect the metadata-only approach.
+    *   Removed helper `_extract_deep_stats_for_sample` and related geometric calculations.
+    *   Refactored `_aggregate_stats_from_metadata` to focus on metadata-only aggregation.
+    *   Added `_print_phrase_details` function for improved output formatting.
+    *   Updated command-line interface to reflect the simplified approach.
+    *   Refactored unit tests to match the new implementation.
+*   **[X] Phase 5: Refactor `converter.py`**
+    *   Update imports and function signatures to use the new OOP data models.
+    *   Replace manual mask parsing with `SegmMask` built-in methods.
+    *   Implement parallel processing using HF `datasets.map()` with progress tracking via tqdm.
+    *   Add support for a global `--sample-ratio` parameter to apply to all classes.
+    *   Replace the custom statistics table printing with `stats.format_statistics_table` from the common utility.
+    *   Update the argument parser, removing unnecessary flags and simplifying options.
+    *   Revise counters and logging to focus on the new terminology (segments versus conversations).
+
+# Cov-Segm Dataset Tasks
+
+## Phase 1: Data Analysis and Strategy
+- [X] Implement analyzer module to study class (phrase) distribution
+- [X] Document findings on common phrases, frequencies and patterns
+- [X] Plan development track for different dataset handling approaches
+
+## Phase 2: Basic Data Handling Models
+- [X] Create data models for Phrases, Segments, and Masks
+- [X] Implement basic handling of segmentation data
+- [X] Create utilities to visualize masks and segments from the dataset
+
+## Phase 3: V1 Data Processing Implementation
+- [X] Implement simple single-process OOP-based data loader
+- [X] Add tests for the data loading and processing functionality
+- [X] Refine masks and segmentation handling
+
+## Phase 4: YOLO Format Conversion
+- [X] Implement converter for exporting segments to YOLO polygon format
+- [X] Add mapping configuration for translating phrases to standardized classes
+- [X] Support sampling to create balanced datasets
+- [X] Generate required YOLO folder structure
+
+## Phase 5: Converter Refinement
+- [X] Refactor `converter.py` to use OOP data models
+  - [X] Use `load_sample` to get complete sample with segments and masks
+  - [X] Add serialization to/from dict for all models
+  - [X] Support HF dataset.map() for parallel processing
+
+## Phase 6: Production-Ready Features
+- [X] Implement parallel processing for Analyzer/Converter
+- [X] Add comprehensive statistics gathering
+- [X] Improve error handling for robustness
+- [X] Optimize performance through caching and efficient processing
+
+## Phase 7: Tools and Documentation
+- [X] Create utility scripts for common operations
+- [X] Write API documentation
+- [X] Provide examples and usage scenarios

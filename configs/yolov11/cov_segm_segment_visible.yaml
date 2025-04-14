@@ -2,7 +2,7 @@ path: /Users/weimu/Development/vibe/hub/datasets/COV_SEGM/visible
 train: images/train
 val: images/validation
 test: images/test
-_processed_split: train
+_processed_split: validation
 names:
   0: bin
   1: object

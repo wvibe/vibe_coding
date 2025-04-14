@@ -6,59 +6,58 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import yaml
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
-from PIL import Image
 from tqdm import tqdm
 
-# Import the necessary types from datamodel using full paths
-from src.dataops.cov_segm.datamodel import (
-    ProcessedConversationItem,
-    ProcessedCovSegmSample,
-    ProcessedMask,
-)
+# Import the OOP data models
+from src.dataops.cov_segm.datamodel import ClsSegment, SegmMask, SegmSample
 
 # Import loader using full path
 from src.dataops.cov_segm.loader import load_sample
 from src.utils.common.geometry import mask_to_yolo_polygons
 
+# Import statistics formatting utility
+from src.utils.common.stats import format_statistics_table
+
 # Global stats counters (initialized in main)
 stats_counters: Dict[str, Any] = {
     "total_samples": 0,
-    "total_conversations": 0,
-    "total_phrases": 0,
     "processed_samples": 0,  # Samples successfully loaded by load_sample
+    "segments_loaded": 0,
     "skipped_samples_load_error": 0,
-    "skipped_samples_no_mapping": 0,  # Conversations skipped
-    "skipped_samples_sampling": 0,  # Conversations skipped
-    "skipped_samples_zero_masks": 0,  # Conversations skipped
+    "skipped_segments_no_mapping": 0,  # Segments skipped
+    "skipped_segments_sampling": 0,  # Segments skipped
+    "skipped_segments_zero_masks": 0,  # Segments skipped
+    "segments_processed": 0,  # Segments processed
+    "masks_skipped_invalid": 0,
+    "masks_for_annotation": 0,
     "mask_convert_no_polygon": 0,
     "mask_convert_multiple_polygons": 0,
-    "conversations_processed": 0,
     "skipped_existing_labels": 0,  # Labels skipped due to already existing
     "skipped_existing_images": 0,  # Images skipped due to already existing
     "generated_annotations": 0,
     "images_with_annotations": set(),
     "copied_images": 0,
-    "class_annotations_per_image": {},  # Dict mapping class_id -> List[int] (counts per image)
+    "class_masks_processed_per_segment": {},  # Dict mapping class_id -> List[int] (counts per segment)
 }
-
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def _get_sampled_mapping_info(
-    conversation: ProcessedConversationItem,
+    segment: ClsSegment,
     phrase_map: Dict[str, Dict[str, Any]],
+    global_sample_ratio: float = 1.0,
     random_sampling: bool = True,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
-    """Checks conversation phrases against the map and applies sampling.
+    """Checks segment phrases against the map and applies sampling.
 
     Args:
-        conversation: The processed conversation item.
+        segment: The segment containing phrases to check against the mapping.
         phrase_map: Mapping of phrases to class information.
+        global_sample_ratio: Global sampling ratio (0.0-1.0) to apply to all classes.
         random_sampling: If True, apply random sampling.
 
     Returns:
@@ -69,14 +68,12 @@ def _get_sampled_mapping_info(
     matched_phrase = None
     mapping_info = None
 
-    # Iterate through phrases (now dicts) in the conversation
-    for phrase_dict in conversation.get("phrases", []):
-        phrase_text = phrase_dict.get("text", "").strip()
+    # Iterate through phrases in the segment
+    for phrase in segment.phrases:
+        phrase_text = phrase.text.strip()
         if not phrase_text:  # Skip empty phrases
-            raise ValueError(f"Empty phrase in conversation {conversation['id']}")
+            logging.warning("Empty phrase in segment")
             continue
-
-        stats_counters["total_phrases"] += 1
 
         current_mapping = phrase_map.get(phrase_text)
         if current_mapping:  # Found a mapping
@@ -86,16 +83,17 @@ def _get_sampled_mapping_info(
 
     # Check if a mapping was found
     if mapping_info is None or matched_phrase is None:
-        stats_counters["skipped_samples_no_mapping"] += 1
-        # Reduced logging: No message here
+        stats_counters["skipped_segments_no_mapping"] += 1
         return None
 
     if random_sampling:
-        # Apply sampling based on the found mapping
-        # Skip random sampling in debug mode (when sample_count is specified)
-        sampling_ratio = mapping_info.get("sampling_ratio", 1.0)
-        if random.random() > sampling_ratio:
-            stats_counters["skipped_samples_sampling"] += 1
+        # Apply sampling based on the found mapping and global ratio
+        local_sampling_ratio = mapping_info.get("sampling_ratio", 1.0)
+        # Combine global and local ratios (both are 0.0-1.0, so multiply)
+        effective_ratio = global_sample_ratio * local_sampling_ratio
+
+        if random.random() > effective_ratio:  # Note: This has > not < as per original code
+            stats_counters["skipped_segments_sampling"] += 1
             return None
 
     return mapping_info, matched_phrase
@@ -264,21 +262,29 @@ def _setup_argparse() -> argparse.ArgumentParser:
         default=None,
         help="Maximum number of samples to process (for testing).",
     )
-    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
+    parser.add_argument(
+        "--sample-ratio",
+        type=float,
+        default=1.0,
+        help="Global sampling ratio (0.0-1.0) applied to all classes in addition to their individual ratios.",
+    )
     parser.add_argument(
         "--skip-zero",
         action="store_true",
         default=True,
-        help=(
-            "Skip conversation items with zero masks of the specified mask-tag."
-            " Use --no-skip-zero to disable."
-        ),
+        help="Skip segments with zero masks of the specified mask-tag.",
     )
     parser.add_argument(
-        "--no-skip-zero",
-        action="store_false",
-        dest="skip_zero",
-        help="Process conversation items even if they have zero masks.",
+        "--num-proc",
+        type=int,
+        default=1,
+        help="Number of processor cores to use for parallel loading (default: 1).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility.",
     )
     parser.add_argument(
         "--no-overwrite",
@@ -286,19 +292,14 @@ def _setup_argparse() -> argparse.ArgumentParser:
         default=False,
         help="Skip writing files if they already exist.",
     )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Enable detailed (DEBUG level) logging.",
-    )
     return parser
 
 
 def _configure_environment(args: argparse.Namespace) -> Tuple[Path, str, Path, Path]:
     """Configures logging, env vars, paths, and random seed."""
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.getLogger().setLevel(log_level)
+    # Validate sample_ratio
+    if not (0.0 <= args.sample_ratio <= 1.0):
+        raise ValueError(f"Invalid sample_ratio: {args.sample_ratio}. Must be between 0.0 and 1.0.")
 
     load_dotenv()  # Load environment variables from .env file
 
@@ -330,8 +331,14 @@ def _configure_environment(args: argparse.Namespace) -> Tuple[Path, str, Path, P
     return output_dir, output_name, image_dir, label_dir
 
 
-def _load_data(args: argparse.Namespace) -> Tuple[Any, Dict[str, Dict[str, Any]], Dict[int, str]]:
-    """Loads the mapping config and the Hugging Face dataset."""
+def _load_data(
+    args: argparse.Namespace,
+) -> Tuple[Dataset, Dict[str, Dict[str, Any]], Dict[int, str]]:
+    """Loads the mapping config and the Hugging Face dataset.
+
+    Returns:
+        A tuple of (dataset, phrase_map, class_names)
+    """
     try:
         phrase_map, class_names = load_mapping_config(args.mapping_config)
     except (FileNotFoundError, ValueError) as e:
@@ -342,9 +349,9 @@ def _load_data(args: argparse.Namespace) -> Tuple[Any, Dict[str, Dict[str, Any]]
     try:
         logging.info(f"Loading dataset '{args.hf_dataset_path}' split '{args.train_split}'...")
         dataset = load_dataset(args.hf_dataset_path, split=args.train_split)
-        if args.sample_count:
-            dataset = dataset.select(range(args.sample_count))
-            logging.info(f"Processing only the first {args.sample_count} samples.")
+        total_rows = len(dataset)
+        logging.info(f"Dataset loaded with {total_rows} samples.")
+
     except Exception as e:
         logging.exception(f"Failed to load dataset: {e}")
         raise  # Re-raise after logging
@@ -352,141 +359,203 @@ def _load_data(args: argparse.Namespace) -> Tuple[Any, Dict[str, Dict[str, Any]]
     return dataset, phrase_map, class_names
 
 
+def process_single_sample(sample_row):
+    """Process a single sample row and return a serialized dictionary.
+
+    This function is used with datasets.map() for parallel processing.
+    It loads a sample using the loader and then serializes it for PyArrow compatibility.
+
+    Args:
+        sample_row: A raw dataset row.
+
+    Returns:
+        Dictionary containing the serialized sample, or {"error": True} if loading failed.
+    """
+    try:
+        sample = load_sample(sample_row)
+        if sample is None:
+            return {"error": True, "reason": "load_sample returned None"}
+
+        # Convert the SegmSample object to a serializable dict
+        serialized = sample.to_dict()
+        # Add a flag to indicate success
+        serialized["error"] = False
+        return serialized
+
+    except Exception as e:
+        # Log the error but keep processing
+        logging.warning(f"Sample loading error: {e}", exc_info=True)
+        # Return an error flag that can be checked later
+        return {"error": True, "reason": str(e)}
+
+
 def _process_samples(
-    dataset: Any,
+    dataset: Dataset,
     phrase_map: Dict[str, Dict[str, Any]],
     image_dir: Path,
     label_dir: Path,
     args: argparse.Namespace,
 ):
-    """Iterates through samples, converts masks, writes output. Updates global stats."""
+    """Process samples in parallel using datasets.map() and the serialization methods.
+
+    Uses the OOP data model's serialization capabilities to work with PyArrow.
+    """
     global stats_counters
+
+    # Track total sample count
     total_samples = len(dataset)
     stats_counters["total_samples"] = total_samples
 
-    logging.info(f"Starting conversion for {total_samples} samples...")
+    # Apply sample count limit if specified
+    if args.sample_count is not None and args.sample_count < total_samples:
+        dataset = dataset.select(range(args.sample_count))
+        logging.info(
+            f"Processing only the first {args.sample_count} samples (of {total_samples} total)."
+        )
+        total_samples = len(dataset)
 
-    for i, sample_row in enumerate(tqdm(dataset, desc="Converting samples")):
-        # Removed incorrect sample_id assignment here
-        annotations_for_image = []
-        image_has_annotations = False
+    # Use datasets.map() for parallel processing
+    logging.info(f"Loading samples using {args.num_proc} processes...")
+    processed_dataset = dataset.map(
+        process_single_sample,
+        num_proc=args.num_proc if args.num_proc > 1 else None,
+        load_from_cache_file=False,  # Don't use cache initially
+        desc="Loading samples",  # Description for the progress bar
+    )
 
-        # Placeholder ID for error logging *before* loading succeeds
-        temp_id_for_logging = f"sample_at_index_{i}"
+    # Convert the loaded samples
+    logging.info("Converting samples to YOLO format...")
+    processed_iterator = tqdm(
+        enumerate(processed_dataset), desc="Converting samples", total=len(processed_dataset)
+    )
 
-        try:
-            processed_sample: ProcessedCovSegmSample = load_sample(sample_row)
-            stats_counters["processed_samples"] += 1
-            # ---- Get the CORRECT ID after loading ----
-            correct_id = processed_sample["id"]
-            # Validate and clean the ID if necessary (e.g., remove spaces), though expected format is usually safe
-            if not isinstance(correct_id, str) or not correct_id:
-                logging.warning(
-                    f"Invalid or missing ID '{correct_id}' in loaded sample for index {i}. Using fallback."
-                )
-                correct_id = f"invalid_id_index_{i}"
-            # ---- Define filenames using the correct ID ----
-            image_filename = f"{correct_id}.jpg"
-            label_filename = f"{correct_id}.txt"
-            label_path = label_dir / label_filename
-            image_output_path = image_dir / image_filename
-            # --------------------------------------------
+    # Track successful samples
+    samples_with_annotations = 0
 
-        except Exception as e:
-            logging.warning(
-                # Use the temporary ID here since loading failed
-                f"Skipping sample {temp_id_for_logging} due to loading error: {e}",
-                exc_info=args.verbose,
-            )
+    # Process each loaded sample
+    for i, sample_dict in processed_iterator:
+        # Check for loading errors
+        if sample_dict.get("error", False):
             stats_counters["skipped_samples_load_error"] += 1
             continue
 
-        # Use correct_id for further processing
-        main_image: Image.Image = processed_sample["image"]
+        try:
+            # Deserialize the sample
+            sample = SegmSample.from_dict(sample_dict)
+            stats_counters["processed_samples"] += 1
+        except Exception as e:
+            logging.error(f"Error deserializing sample at index {i}: {e}")
+            stats_counters["skipped_samples_load_error"] += 1
+            continue
 
-        for conversation in processed_sample["processed_conversations"]:
-            stats_counters["total_conversations"] += 1
+        # Get sample properties
+        sample_id = sample.id
+        main_image = sample.image
 
-            # random sampling only if no sample_count
+        # Initialize tracking for annotation writing
+        annotations_for_image = []
+
+        # Process each segment
+        for segment in sample.segments:
+            stats_counters["segments_loaded"] += 1
+
+            # Apply mapping and sampling
+            # Don't apply random sampling if sample_count is specified (deterministic testing)
             random_sampling = args.sample_count is None
-            mapping_result = _get_sampled_mapping_info(conversation, phrase_map, random_sampling)
+            mapping_result = _get_sampled_mapping_info(
+                segment, phrase_map, args.sample_ratio, random_sampling
+            )
 
             if mapping_result is None:
+                # Mapping or sampling failed
                 continue
 
             mapping_info, matched_phrase = mapping_result
             class_id = mapping_info["class_id"]
 
-            masks_to_process: List[ProcessedMask] = []
+            # Get the appropriate masks to process based on mask_tag
+            masks_to_process: List[SegmMask] = []
             if args.mask_tag == "visible":
-                masks_to_process = conversation.get("processed_instance_masks", [])
+                masks_to_process = segment.visible_masks
             elif args.mask_tag == "full":
-                masks_to_process = conversation.get("processed_full_masks", [])
+                masks_to_process = segment.full_masks
 
-            if args.skip_zero and not masks_to_process:
-                stats_counters["skipped_samples_zero_masks"] += 1
+            # Skip if no valid masks and skip_zero is enabled
+            valid_masks = [mask for mask in masks_to_process if mask.is_valid]
+            if len(valid_masks) != len(masks_to_process):
+                stats_counters["masks_skipped_invalid"] += len(masks_to_process) - len(valid_masks)
+
+            if args.skip_zero and len(valid_masks) == 0:
+                stats_counters["skipped_segments_zero_masks"] += 1
                 continue
 
-            for mask_data in masks_to_process:
-                # Convert PIL Image to numpy array
-                mask_np = np.array(mask_data["mask"])
-                if mask_np.dtype != bool and mask_np.dtype.kind != "i":
-                    mask_np = mask_np > 0
-                elif mask_np.dtype.kind == "i":
-                    unique_vals = np.unique(mask_np)
-                    if not np.all(np.isin(unique_vals, [0, 1])):
-                        mask_np = mask_np > 0
-
+            masks_processed = 0
+            stats_counters["masks_for_annotation"] += len(valid_masks)
+            # Process each valid mask
+            for mask in valid_masks:
                 try:
+                    # Get the binary mask (already properly parsed by SegmMask)
+                    binary_mask = mask.binary_mask
+
                     # Get image dimensions from the mask
-                    mask_height, mask_width = mask_np.shape
+                    mask_height, mask_width = binary_mask.shape
+
+                    # Convert mask to YOLO polygons
                     polygons = mask_to_yolo_polygons(
-                        binary_mask=mask_np,
+                        binary_mask=binary_mask,
                         img_shape=(mask_height, mask_width),
-                        connect_parts=True,  # Process all contour together
+                        connect_parts=True,
                     )
+
                     if polygons:
                         if len(polygons) > 1:
                             stats_counters["mask_convert_multiple_polygons"] += 1
+                            # For now, just take the first polygon
 
-                        # only process the first polygon for now
+                        # Process only the first polygon for now
                         polygon = polygons[0]
                         annotation_line = f"{class_id} {' '.join(map(str, polygon))}"
                         annotations_for_image.append(annotation_line)
-                        image_has_annotations = True
-                        # Update global stats for total annotations and per-class annotations
+
+                        # Update stats for annotations
                         stats_counters["generated_annotations"] += 1
+                        masks_processed += 1
                     else:
                         stats_counters["mask_convert_no_polygon"] += 1
 
                 except Exception as e:
                     logging.warning(
-                        # Use correct_id here
-                        f"Sample {correct_id}: Failed to convert mask for mapped phrase"
-                        f" '{matched_phrase}' to polygon. Error: {e}",
-                        exc_info=args.verbose,
+                        f"Sample {sample_id}: Failed to convert mask for mapped phrase"
+                        f" '{matched_phrase}' to polygon. Error: {e}"
                     )
 
-            # Update per-class stats and total conversations processed
-            if class_id not in stats_counters["class_annotations_per_image"]:
-                stats_counters["class_annotations_per_image"][class_id] = []
-            stats_counters["class_annotations_per_image"][class_id].append(len(masks_to_process))
-            stats_counters["conversations_processed"] += 1
+            # Update per-class stats
+            if class_id not in stats_counters["class_masks_processed_per_segment"]:
+                stats_counters["class_masks_processed_per_segment"][class_id] = []
+            stats_counters["class_masks_processed_per_segment"][class_id].append(masks_processed)
+            stats_counters["segments_processed"] += 1
 
-        if image_has_annotations:
-            # Check if label file already exists
+        # If annotations were generated, save them and the image
+        if len(annotations_for_image) > 0:
+            # Set up file paths
+            image_filename = f"{sample_id}.jpg"
+            label_filename = f"{sample_id}.txt"
+            label_path = label_dir / label_filename
+            image_output_path = image_dir / image_filename
+
+            # Write label file if needed
             if args.no_overwrite and label_path.exists():
                 stats_counters["skipped_existing_labels"] += 1
             else:
                 try:
                     with open(label_path, "w", encoding="utf-8") as f:
                         f.write("\n".join(annotations_for_image) + "\n")
-                    # Use correct_id here, converting to string just in case
-                    stats_counters["images_with_annotations"].add(str(correct_id))
+                    stats_counters["images_with_annotations"].add(str(sample_id))
+                    samples_with_annotations += 1
                 except Exception as e:
                     logging.error(f"Failed to write label file {label_path}: {e}")
 
-            # Check if image file already exists
+            # Save image file if needed
             if args.no_overwrite and image_output_path.exists():
                 stats_counters["skipped_existing_images"] += 1
             else:
@@ -500,69 +569,9 @@ def _process_samples(
                         f"Failed to save image {image_filename} to {image_output_path}: {e}"
                     )
 
-    # No return value - stats updated globally
-
-
-def _print_statistics_table(
-    class_counts: Dict[int, List[int]],
-    class_names: Dict[int, str],
-    format_spec: str = "count,mean,p25,p50,p75,p90",
-) -> List[str]:
-    """Format a complete statistics table with headers and class rows based on format specification.
-
-    Args:
-        class_counts: Dictionary mapping class IDs to lists of counts.
-        class_names: Dictionary mapping class IDs to class names.
-        format_spec: Comma-separated list of statistics to include.
-                     Supported: count, mean, min, max, and percentiles as pN (e.g., p25, p90).
-
-    Returns:
-        List of formatted lines ready for logging.
-    """
-    parts = [part.strip().lower() for part in format_spec.split(",")]
-
-    # Create header parts - just capitalize each stat name
-    header_parts = ["ID", "Name"]
-    for part in parts:
-        header_parts.append(part.capitalize())
-
-    # Format header
-    header = f"{'ID':<2} {'Name':<15} " + " ".join(f"{part:<6}" for part in header_parts[2:])
-    logging.info(header)
-    logging.info("-" * (len(header_parts) * 6 + 10))  # Divider line based on number of columns
-
-    # Process each class
-    for class_id, counts in sorted(class_counts.items()):
-        if not counts:
-            continue
-
-        class_name = class_names.get(class_id, "N/A")
-
-        # Format class row
-        row = f"{class_id:<2} {class_name[:15]:<15} "
-
-        for part in parts:
-            if part == "count":
-                value = len(counts)
-                value_str = f"{value:<7d}"
-            elif part == "sum":
-                value = np.sum(counts)
-                value_str = f"{value:<7d}"
-            elif part == "mean":
-                value = np.mean(counts)
-                value_str = f"{value:<7.1f}"
-            elif part == "min":
-                value = np.min(counts)
-                value_str = f"{value:<7d}"
-            elif part == "max":
-                value = np.max(counts)
-                value_str = f"{value:<7d}"
-            elif part.startswith("p") and part[1:].isdigit():
-                value = int(np.percentile(counts, int(part[1:]), method="nearest"))
-                value_str = f"{value:<7d}"
-            row += value_str
-
-        logging.info(row)
+    logging.info(
+        f"Finished processing. Images with annotations: {samples_with_annotations}/{stats_counters['processed_samples']}"
+    )
 
 
 def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
@@ -570,15 +579,16 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
     logging.info("Conversion finished.")
     logging.info(f"Total samples in dataset split: {counters['total_samples']}")
     logging.info(f"Successfully loaded samples: {counters['processed_samples']}")
+    logging.info(f"Segments loaded: {counters['segments_loaded']}")
     logging.info(f"Samples skipped (load error): {counters['skipped_samples_load_error']}")
-    logging.info(f"Total conversations: {counters['total_conversations']}")
-    logging.info(f"Total phrases in conversations: {counters['total_phrases']}")
-    logging.info(f"Conversations skipped (no mapping): {counters['skipped_samples_no_mapping']}")
-    logging.info(f"Conversations skipped (sampling): {counters['skipped_samples_sampling']}")
-    logging.info(f"Conversations skipped (zero masks): {counters['skipped_samples_zero_masks']}")
+    logging.info(f"Segments skipped (no mapping): {counters['skipped_segments_no_mapping']}")
+    logging.info(f"Segments skipped (sampling): {counters['skipped_segments_sampling']}")
+    logging.info(f"Segments skipped (zero masks): {counters['skipped_segments_zero_masks']}")
+    logging.info(f"Segments processed: {counters['segments_processed']}")
+    logging.info(f"Masks skipped (invalid): {counters['masks_skipped_invalid']}")
+    logging.info(f"Masks for annotation: {counters['masks_for_annotation']}")
     logging.info(f"Masks skipped (no polygon): {counters['mask_convert_no_polygon']}")
     logging.info(f"Masks skipped (multiple polygons): {counters['mask_convert_multiple_polygons']}")
-    logging.info(f"Conversations processed: {counters['conversations_processed']}")
     logging.info(f"Labels skipped (already exist): {counters['skipped_existing_labels']}")
     logging.info(f"Images skipped (already exist): {counters['skipped_existing_images']}")
     logging.info(f"Total annotations generated: {counters['generated_annotations']}")
@@ -586,14 +596,27 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
     logging.info(f"Images copied to output: {counters['copied_images']}")
 
     # Calculate and log per-class statistics
-    if counters["class_annotations_per_image"]:
+    if counters["class_masks_processed_per_segment"]:
         logging.info("Annotation statistics:")
 
-        # Define the format specification for statistics
-        stats_format = "count,mean,p25,p50,p75,max"
+        # Prepare data for stats.format_statistics_table
+        stats_data = {}
+        for class_id, counts in counters["class_masks_processed_per_segment"].items():
+            class_name = class_names.get(class_id, f"Unknown-{class_id}")
+            stats_data[class_name] = counts
 
-        # Generate and log the entire statistics table
-        _print_statistics_table(counters["class_annotations_per_image"], class_names, stats_format)
+        # Define format string for the table
+        # This will create a table with class name, count, mean, median, and max
+        format_string = (
+            "{key:<20} {count:>6d} {sum:>6d} {mean:>7.1f} {p25:>6d} {p50:>6d} {p75:>6d} {max:>6d}"
+        )
+
+        # Generate the formatted table using the utility
+        table_lines = format_statistics_table(stats_data, format_string)
+
+        # Log each line of the table
+        for line in table_lines:
+            logging.info(line)
 
 
 def main():
@@ -603,22 +626,48 @@ def main():
     args = parser.parse_args()
 
     try:
-        output_dir, output_name, image_dir, label_dir = _configure_environment(args)
-        dataset, phrase_map, class_names = _load_data(args)
+        # Configure environment
+        try:
+            output_dir, output_name, image_dir, label_dir = _configure_environment(args)
+        except ValueError as e:
+            logging.error(f"Configuration error: {e}")
+            return 1
 
-        _process_samples(dataset, phrase_map, image_dir, label_dir, args)
-        _log_summary(stats_counters, class_names)  # Pass the global dict to log summary
+        # Load dataset and mapping
+        try:
+            dataset, phrase_map, class_names = _load_data(args)
+        except Exception as e:
+            logging.error(f"Failed to load dataset or mapping: {e}", exc_info=True)
+            return 1
 
-        # Generate YAML file after successful processing
-        if class_names:
-            generate_yolo_yaml(output_dir, output_name, class_names, args.train_split)
-        else:
-            logging.warning("No class names found from mapping, skipping YAML generation.")
+        # Process samples
+        try:
+            _process_samples(dataset, phrase_map, image_dir, label_dir, args)
+        except Exception as e:
+            logging.error(f"Error during sample processing: {e}", exc_info=True)
+            return 1
 
-    except (FileNotFoundError, ValueError, Exception) as e:
-        logging.error(f"Conversion failed: {e}", exc_info=args.verbose)  # Show traceback if verbose
-        # Consider sys.exit(1) here for script mode
+        # Log summary statistics
+        _log_summary(stats_counters, class_names)
+
+        # Generate YAML file
+        try:
+            if class_names:
+                generate_yolo_yaml(output_dir, output_name, class_names, args.train_split)
+            else:
+                logging.warning("No class names found from mapping, skipping YAML generation.")
+        except Exception as e:
+            logging.error(f"Failed to generate YAML file: {e}", exc_info=True)
+            return 1
+
+        logging.info("Conversion completed successfully.")
+        return 0
+
+    except Exception as e:
+        logging.error(f"Conversion failed with unexpected error: {e}", exc_info=True)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    exit_code = main()
+    exit(exit_code)

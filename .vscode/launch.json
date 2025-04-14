@@ -8,12 +8,15 @@
             "name": "Python: Debug Module (converter)", // 给配置起一个描述性的名字
             "type": "debugpy",                      // 或者使用 "python" (debugpy 是较新的标准)
             "request": "launch",
-            "module": "src.dataops.cov_segm.converter", // <-- 使用 "module" 指定要运行的模块
+            "module": "src.dataops.cov_segm.analyzer", // <-- 使用 "module" 指定要运行的模块
             "args": [                               // <-- 将模块后面的参数放在这里
-                "--train-split",
+                "--split",
                 "train",
-                "--sample-count",
-                "3"
+                "--sample_slice",
+                "[:100]",
+                "--top",
+                "10",
+                "--skip_zero"
             ],
             "console": "integratedTerminal",        // 在集成终端中显示输出/处理输入
             "cwd": "${workspaceFolder}"             // (通常推荐) 设置工作目录为项目根目录，确保模块路径能正确解析
