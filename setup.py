@@ -23,6 +23,7 @@ setup(
         "transformers>=4.0.0",
         "datasets>=2.0.0",
         # Utilities
+        "boto3>=1.37.0",
         "tqdm>=4.65.0",
         "python-dotenv>=1.0.0",
         "scikit-learn>=1.0.0",
