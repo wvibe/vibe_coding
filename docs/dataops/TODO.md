@@ -138,13 +138,13 @@ This document tracks the development tasks for the `src/dataops` module.
     *   Updated command-line interface to reflect the simplified approach.
     *   Refactored unit tests to match the new implementation.
 *   **[X] Phase 5: Refactor `converter.py`**
-    *   Update imports and function signatures to use the new OOP data models.
-    *   Replace manual mask parsing with `SegmMask` built-in methods.
-    *   Implement parallel processing using HF `datasets.map()` with progress tracking via tqdm.
-    *   Add support for a global `--sample-ratio` parameter to apply to all classes.
-    *   Replace the custom statistics table printing with `stats.format_statistics_table` from the common utility.
-    *   Update the argument parser, removing unnecessary flags and simplifying options.
-    *   Revise counters and logging to focus on the new terminology (segments versus conversations).
+    *   Updated imports and function signatures to use the new OOP data models.
+    *   Replaced manual mask parsing with `SegmMask` built-in methods.
+    *   Implemented parallel processing using HF `datasets.map()` with progress tracking via tqdm.
+    *   Added support for a global `--sample-ratio` parameter to apply to all classes.
+    *   Replaced the custom statistics table printing with `stats.format_statistics_table` from the common utility.
+    *   Updated the argument parser, removing unnecessary flags and simplifying options (added `--sample-slice`, removed `--sample-count`).
+    *   Revised counters and logging to focus on the new terminology (segments versus conversations).
 
 # Cov-Segm Dataset Tasks
 
@@ -179,7 +179,7 @@ This document tracks the development tasks for the `src/dataops` module.
 - [X] Implement parallel processing for Analyzer/Converter
 - [X] Add comprehensive statistics gathering
 - [X] Improve error handling for robustness
-- [X] Optimize performance through caching and efficient processing
+- [X] Optimize performance through caching and efficient processing (e.g., `load_from_cache_file=False`, `writer_batch_size`)
 
 ## Phase 7: Tools and Documentation
 - [X] Create utility scripts for common operations

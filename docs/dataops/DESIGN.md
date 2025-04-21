@@ -145,20 +145,19 @@ This module is responsible for converting the `lab42/cov-segm-v3` dataset, loade
 
 ### Core Functionality
 
-- **Input:** Takes samples processed by `loader.load_sample` (`SegmSample` objects) from a specified HF dataset (`--hf-dataset-path`) and split (`--train-split`).
+- **Input:** Takes samples processed by `loader.load_sample` (`SegmSample` objects) from a specified HF dataset (`--hf-dataset-path`) and split (`--train-split`). Can process a subset using `--sample-slice [start:stop]`.
 - **Configuration:** Reads mapping and sampling rules from a user-provided CSV file (`--mapping-config`). The CSV defines:
     - `yolo_class_id`: Unique integer ID for the target YOLO class.
     - `yolo_class_name`: Human-readable name for the target class.
     - `hf_phrase`: Phrase text to match in conversation items.
     - `sampling_ratio`: Probability (0.0-1.0) for including matches of this phrase.
 - **Mask Selection:** Processes either 'visible' or 'full' masks based on the `--mask-tag` argument. Optionally skips segments with zero masks of the selected type (`--skip-zero`).
-- **Parallel Processing:** Uses Hugging Face's `datasets.map()` with the specified number of processes (`--num-proc`) to load samples in parallel from the dataset.
+- **Parallel Processing:** Uses Hugging Face's `datasets.map()` with the specified number of processes (`--num-proc`) to load samples in parallel from the dataset. Uses `load_from_cache_file=False` and `writer_batch_size=100` for better resource management.
 - **Mask Conversion:** Uses `src.utils.common.geometry.mask_to_yolo_polygons` to convert binary masks (NumPy arrays) from `SegmMask.binary_mask` into normalized polygon coordinates required by YOLO.
 - **Polygon Handling:** For masks that generate multiple polygons, the converter tracks this in statistics but only processes the first polygon to maintain one annotation per mask.
 - **Sampling:**
     - Applies a global sampling ratio (`--sample-ratio`) as a multiplier to each class's individual ratio.
     - The effective ratio for a class becomes `global_ratio * local_ratio`.
-    - For deterministic testing, sampling is bypassed when `--sample-count` is specified.
 - **File Handling:** With the `--no-overwrite` flag, skips writing image and label files that already exist, tracking these skips in statistics.
 - **Output Structure:** Generates the standard YOLO dataset structure within a specific subfolder (`--output-name` or derived from `--mask-tag`) under the main output directory (`--output-dir` or `COV_SEGM_ROOT`):
     - `{output_dir}/{dataset_name}/images/{split_name}/{image_id}.jpg`: Copied source images (only if annotations exist).
@@ -169,21 +168,21 @@ This module is responsible for converting the `lab42/cov-segm-v3` dataset, loade
 ### Statistics Tracking
 
 The converter tracks comprehensive statistics during processing:
-- **Sample-level stats:** Total samples, processed samples, samples with errors
-- **Segment-level stats:** Segments skipped due to no mapping, sampling, or zero masks
-- **Mask-level stats:** Masks producing no polygons or multiple polygons
-- **File-level stats:** Files skipped due to existing (when `--no-overwrite` is used)
-- **Annotation-level stats:** Total annotations generated, images with annotations, class distribution
+- **Sample-level stats:** Total samples (in slice or full), processed samples, samples with errors, unique samples with annotations.
+- **Segment-level stats:** Segments skipped due to no mapping, sampling, or zero masks.
+- **Mask-level stats:** Masks producing no polygons or multiple polygons.
+- **File-level stats:** Files skipped due to existing (when `--no-overwrite` is used), labels written, images copied.
+- **Annotation-level stats:** Total annotations generated, class distribution (including per-segment mask counts).
 
 ### Statistics Reporting
 
-- **Basic Reporting:** At the end of conversion, logs summary statistics about the processing run
-- **Class-based Statistics:** Generates a table with statistics per class using the common `stats.format_statistics_table` utility
-- **Metrics:** Reports count, mean, median, and maximum valid masks per segment for each class
+- **Basic Reporting:** At the end of conversion, logs summary statistics about the processing run.
+- **Class-based Statistics:** Generates a table with statistics per class using the common `stats.format_statistics_table` utility.
+- **Metrics:** Reports count, sum, mean, percentiles (p25, p50, p75), and maximum valid masks per segment for each class.
 
 ### Implementation Details
 
-- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, sampling, etc.).
+- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, slicing, sampling, etc.). `--sample-count` has been removed in favor of `--sample-slice`.
 - **Parallel Processing:** Leverages the OOP data model to support parallel loading with HF `datasets.map()` while showing progress with tqdm.
 - **Dependencies:** Requires `opencv-python-headless`, `datasets`, `pillow`, `numpy`, `python-dotenv`, `tqdm`.
 - **Error Handling:** Includes checks for file/directory existence, graceful handling of sample loading errors, mapping errors, and mask conversion issues.
