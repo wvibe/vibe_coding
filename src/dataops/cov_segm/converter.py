@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import random
-from collections import defaultdict  # 确保已导入
+from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,24 +25,26 @@ from src.utils.common.geometry import mask_to_yolo_polygons
 from src.utils.common.stats import format_statistics_table
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)  # Use logger instance
+logger = logging.getLogger(__name__)
 
 
 # Define stats counter name constants
 SC_SAMPLE_LOADED = "sample_loaded"
+SC_SAMPLE_PREP_ERROR = "sample_prep_error"
+
 SC_SEGMENT_LOADED = "segment_loaded"
 SC_SEGMENT_SKIPPED_NO_MATCH = "segment_skipped_no_match"
 SC_SEGMENT_SKIPPED_SAMPLING = "segment_skipped_sampling"
 SC_SEGMENT_SKIPPED_ZERO_MASK = "segment_skipped_zero_mask"
-SC_SEGMENT_PROCESSED = "segment_processed"
+SC_SEGMENT_PROCESSED_PREP = "segment_processed_prep"  # Processed in preparation phase
 
-SC_MASK_FOR_LABELING = "mask_for_labeling"
+SC_MASK_PREPARED_FOR_LABELING = "mask_prepared_for_labeling"  # Masks identified for processing
 SC_MASK_SKIPPED_MULTIPLE_POLYGONS = "mask_skipped_multiple_polygons"
 SC_MASK_SKIPPED_NO_POLYGON = "mask_skipped_no_polygon"
 SC_MASK_LABEL_GENERATED = "mask_label_generated"
 
-SC_IMAGE_WITH_LABELS = "image_with_labels"
-SC_CLASS_STATS_DICT = "class_stats_dict"
+SC_IMAGE_WITH_PENDING_LABELS = "image_with_pending_labels"  # Image has masks to process
+SC_CLASS_STATS_DICT = "class_stats_dict"  # Key for nested class stats dictionary
 
 SC_FILE_LABEL_WRITTEN = "file_label_written"
 SC_FILE_LABEL_WRITE_ERROR = "file_label_write_error"
@@ -61,6 +63,8 @@ MC_SAMPLING_RATIO = "sampling_ratio"
 MI_CLASS_ID = "class_id"
 MI_CLASS_NAME = "class_name"
 MI_SAMPLING_RATIO = "sampling_ratio"
+
+SC_ERROR_INCIDENT = "error_incident"  # Single counter for all error incidents
 
 
 def _setup_argparse() -> argparse.ArgumentParser:
@@ -336,12 +340,12 @@ def _get_sampled_mapping_info(
     return mapping_info, matched_phrase
 
 
-def process_and_convert_sample(
+def prepare_sample_for_conversion(
     sample_row: Dict, phrase_map: Dict[str, Dict[str, Any]], args: argparse.Namespace
 ) -> Dict[str, Any]:
     """
-    Processes a single sample row: loads, maps, samples, converts masks to polygons,
-    and returns data ready for writing.
+    Prepares a single sample row for later conversion: loads, maps, samples, and
+    serializes valid masks for later polygon generation.
 
     Args:
         sample_row: A raw dataset row.
@@ -349,29 +353,35 @@ def process_and_convert_sample(
         args: Namespace containing sample_ratio, mask_tag, skip_zero etc.
 
     Returns:
-        Dictionary containing: sample_id, image_bytes (optional), annotation_lines (list),
-        stats (dict), error (bool), reason (str, optional).
+        Dictionary containing: sample_id, image_bytes, pending_masks (list of tuples),
+        prep_stats_json, error, reason.
     """
-    stats = defaultdict(int)  # Initialize stats for THIS sample
+    prep_stats = defaultdict(int)  # Initialize stats for THIS sample preparation step
 
     try:
         sample: Optional[SegmSample] = load_sample(sample_row)
         if sample is None:
-            return {"error": True, "reason": "load_sample returned None", "stats": dict(stats)}
-        stats[SC_SAMPLE_LOADED] += 1
+            return {
+                "sample_id": sample_row.get("id", "unknown"),
+                "image_bytes": None,
+                "pending_masks": [],
+                "prep_stats_json": json.dumps(dict(prep_stats)),
+                "error": True,
+                "reason": "load_sample returned None",
+            }
+        prep_stats[SC_SAMPLE_LOADED] += 1
 
         sample_id = sample.id
         main_image = sample.image
         image_bytes = None  # Only serialize if needed
-        image_labels = []
-        class_inst_cnt = defaultdict(int)  # Track masks processed per class for this sample
+        pending_masks = []  # List to hold serialized masks for later processing
 
         for segment in sample.segments:
-            stats[SC_SEGMENT_LOADED] += 1
+            prep_stats[SC_SEGMENT_LOADED] += 1
 
             # Apply mapping and sampling (pass local stats dict)
             mapping_result = _get_sampled_mapping_info(
-                segment, phrase_map, stats, args.sample_ratio
+                segment, phrase_map, prep_stats, args.sample_ratio
             )
 
             if mapping_result is None:
@@ -387,51 +397,38 @@ def process_and_convert_sample(
             elif args.mask_tag == "full":
                 masks_to_process = segment.full_masks
 
-            valid_masks = [mask for mask in masks_to_process if mask.is_valid]
+            valid_masks = [
+                mask for mask in masks_to_process if mask.is_valid and mask.binary_mask is not None
+            ]
+
             if len(masks_to_process) - len(valid_masks) > 0:
-                logger.warning(f"Skipping {len(masks_to_process) - len(valid_masks)} invalid masks")
+                logger.warning(
+                    f"Skipping {len(masks_to_process) - len(valid_masks)} invalid or empty masks"
+                )
 
             if args.skip_zero and len(valid_masks) == 0:
-                stats[SC_SEGMENT_SKIPPED_ZERO_MASK] += 1
+                prep_stats[SC_SEGMENT_SKIPPED_ZERO_MASK] += 1
                 continue
 
-            stats[SC_MASK_FOR_LABELING] += len(valid_masks)
-            masks_processed_for_segment = 0
+            # Prepare valid masks for later polygon generation
+            masks_prepared_for_segment = 0
             for mask in valid_masks:
                 try:
-                    binary_mask = mask.binary_mask
-                    mask_height, mask_width = binary_mask.shape
-
-                    polygons = mask_to_yolo_polygons(
-                        binary_mask=binary_mask,
-                        img_shape=(mask_height, mask_width),
-                        connect_parts=True,
-                    )
-
-                    if polygons:
-                        if len(polygons) > 1:
-                            stats[SC_MASK_SKIPPED_MULTIPLE_POLYGONS] += 1
-
-                        # Use first polygon
-                        polygon = polygons[0]
-                        label = f"{class_id_str} {' '.join(map(str, polygon))}"
-                        image_labels.append(label)
-                        masks_processed_for_segment += 1
-                    else:
-                        stats[SC_MASK_SKIPPED_NO_POLYGON] += 1
-
+                    # Use SegmMask.to_dict() for serialization
+                    mask_dict = mask.to_dict()
+                    pending_masks.append((class_id_str, mask_dict))
+                    masks_prepared_for_segment += 1
                 except Exception as e:
-                    logger.warning(
-                        f"Sample {sample_id}: Failed to convert mask for phrase "
-                        f"'{matched_phrase}'. Error: {e}"
+                    logger.error(
+                        f"Sample {sample_id}: Failed to serialize mask for '{matched_phrase}': {e}"
                     )
 
-            class_inst_cnt[class_id_str] += masks_processed_for_segment
-            stats[SC_MASK_LABEL_GENERATED] += masks_processed_for_segment
-            stats[SC_SEGMENT_PROCESSED] += 1  # Count segment if masks were processed
+            prep_stats[SC_MASK_PREPARED_FOR_LABELING] += masks_prepared_for_segment
+            if masks_prepared_for_segment > 0:
+                prep_stats[SC_SEGMENT_PROCESSED_PREP] += 1  # Count segment if masks were prepared
 
-        # If annotations were generated, prepare image bytes
-        if len(image_labels) > 0:
+        # If masks were prepared, serialize the image
+        if len(pending_masks) > 0:
             try:
                 buffer = BytesIO()
                 img_to_save = main_image
@@ -439,81 +436,112 @@ def process_and_convert_sample(
                     img_to_save = img_to_save.convert("RGB")
                 img_to_save.save(buffer, format="JPEG", quality=95)
                 image_bytes = buffer.getvalue()
-                stats[SC_IMAGE_WITH_LABELS] = 1  # Use 1/0 for aggregation
+                prep_stats[SC_IMAGE_WITH_PENDING_LABELS] = 1  # Use 1/0 for aggregation
             except Exception as e:
-                logger.error(f"Sample {sample_id}: Failed to prepare image bytes. Error: {e}")
-                image_bytes = None  # Ensure image is not saved if bytes failed
-                image_labels = []  # Do not save labels if image failed preparation
-
-        # Add per-class mask counts to stats dict
-        stats[SC_CLASS_STATS_DICT] = dict(class_inst_cnt)
+                logger.error(f"Sample {sample_id}: Failed to prepare image bytes: {e}")
+                raise
 
         return {
             "sample_id": sample_id,
             "image_bytes": image_bytes,
-            "labels": image_labels,
-            "stats_json": json.dumps(dict(stats)),
+            "pending_masks": pending_masks,  # List of (class_id_str, mask_dict) tuples
+            "prep_stats_json": json.dumps(dict(prep_stats)),
             "error": False,
             "reason": None,
         }
 
     except Exception as e:
-        logger.error(f"Error processing sample row. Error: {e}", exc_info=True)
+        logger.error(
+            f"Error preparing sample {sample_row.get('id', 'unknown')}: {e}", exc_info=True
+        )
         return {
-            "sample_id": sample_row.get("id"),  # Try to get ID if possible
+            "sample_id": sample_row.get("id", "unknown"),
             "image_bytes": None,
-            "labels": [],
-            "stats_json": json.dumps(dict(stats)),
+            "pending_masks": [],
+            "prep_stats_json": json.dumps(dict(prep_stats)),
             "error": True,
             "reason": str(e),
         }
 
 
-# Define Features for the output of process_and_convert_sample (using JSON for stats)
+# Define Features for the output of prepare_sample_for_conversion
 map_output_features = Features(
     {
         "sample_id": Value("string"),
-        "image_bytes": Value("large_binary"),  # Image bytes might still be large
-        "labels": Sequence(Value("string")),
-        "stats_json": Value(
-            "large_string"
-        ),  # Stats are now a JSON string (use large_string just in case)
+        "image_bytes": Value("large_binary"),
+        # Store pending masks as a sequence of tuples (class_id_str, mask_dict_json)
+        "pending_masks": Sequence(
+            {
+                "class_id": Value("string"),
+                "mask_dict_json": Value("large_string"),  # JSON string of mask_dict
+            }
+        ),
+        "prep_stats_json": Value("large_string"),
         "error": Value("bool"),
-        "reason": Value("string"),  # Allowed to be None
+        "reason": Value("string"),
     }
 )
 
 
-def process_slice(
-    dataset_path: str,
-    split: str,
+# Helper function to serialize pending masks for datasets.map
+def _serialize_pending_masks(
+    pending_masks_list: List[Tuple[str, Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Convert list of (class_id, mask_dict) to format suitable for Features schema."""
+    serialized = []
+    for class_id, mask_dict in pending_masks_list:
+        try:
+            # Convert the mask_dict to JSON string
+            mask_dict_json = json.dumps(mask_dict)
+            serialized.append({"class_id": class_id, "mask_dict_json": mask_dict_json})
+        except Exception as e:
+            logger.error(f"Failed to serialize mask_dict to JSON: {e}")
+            # Skip this mask if serialization fails
+    return serialized
+
+
+# Helper function to deserialize pending masks after datasets.map
+def _deserialize_pending_masks(
+    serialized_masks: List[Dict[str, Any]],
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Convert serialized masks back to list of (class_id, mask_dict) tuples."""
+    deserialized = []
+    for item in serialized_masks:
+        try:
+            class_id = item["class_id"]
+            mask_dict = json.loads(item["mask_dict_json"])
+            deserialized.append((class_id, mask_dict))
+        except Exception as e:
+            logger.error(f"Failed to deserialize mask data: {e}")
+            # Skip this mask if deserialization fails
+    return deserialized
+
+
+def _prepare_dataset_slice(
     start: int,
     end: int,
     phrase_map: Dict[str, Dict[str, Any]],
     args: argparse.Namespace,
-    image_dir: Path,  # Pass specific output dirs for this split
-    label_dir: Path,
-) -> Dict[str, Any]:
-    """Loads, processes, and writes a slice of the dataset."""
+    global_stats: Dict[str, Any],
+) -> Optional[Any]:
+    """
+    Load a dataset slice and prepare it for conversion using parallel processing.
 
-    logger.info(f"--- Processing slice: {split}[{start}:{end}] ---")
-    aggr_stats = defaultdict(int)
-    aggr_cls_stats = defaultdict(list)
-
+    Returns:
+        The prepared dataset or None if loading fails.
+    """
     try:
-        # 1. Load Dataset Slice
-        logger.info("Loading dataset slice...")
+        logger.info(f"Loading dataset slice {args.train_split}[{start}:{end}]...")
         dset_slice = load_dataset(
-            dataset_path,
-            split=f"{split}[{start}:{end}]",
-            streaming=False,  # Process slice in memory/cache
+            args.hf_dataset_path,
+            split=f"{args.train_split}[{start}:{end}]",
+            streaming=False,
         )
         logger.info(f"Slice loaded with {len(dset_slice)} samples.")
 
-        # 2. Prepare Map Arguments
+        # Prepare map arguments for parallel preparation
         map_fn_kwargs = {
             "phrase_map": phrase_map,
-            # Pass only necessary args fields to avoid potential pickle issues
             "args": argparse.Namespace(
                 sample_ratio=args.sample_ratio,
                 mask_tag=args.mask_tag,
@@ -521,179 +549,340 @@ def process_slice(
             ),
         }
 
-        # 3. Run Map Operation
-        logger.info(f"Applying map function with {args.num_proc} processes...")
-        processed_dataset = dset_slice.map(
-            process_and_convert_sample,
-            num_proc=args.num_proc if args.num_proc > 1 else None,
-            load_from_cache_file=False,  # Always re-process
-            desc=f"Processing slice {start}-{end}",
-            features=map_output_features,  # Use defined features
-            fn_kwargs=map_fn_kwargs,
-            remove_columns=dset_slice.column_names,  # Keep only map output
-        )
-        logger.info("Map operation completed for slice.")
+        # Run parallel preparation
+        logger.info(f"Applying preparation map function with {args.num_proc} processes...")
 
-        # 4. Process Results and Write Files
-        logger.info("Writing outputs and aggregating stats for slice...")
-        # Ensure output dirs exist for this slice/split
+        # Serialize the pending_masks lists
+        def prepare_with_serialization(sample_row):
+            result = prepare_sample_for_conversion(sample_row, **map_fn_kwargs)
+            result["pending_masks"] = _serialize_pending_masks(result["pending_masks"])
+            return result
+
+        prepared_dataset = dset_slice.map(
+            prepare_with_serialization,
+            num_proc=args.num_proc if args.num_proc > 1 else None,
+            load_from_cache_file=False,
+            desc=f"Preparing slice {start}-{end}",
+            features=map_output_features,
+            remove_columns=dset_slice.column_names,
+        )
+        logger.info("Preparation map operation completed for slice.")
+
+        return prepared_dataset
+
+    except Exception:
+        logger.exception(
+            f"Error loading or preparing dataset slice {args.train_split}[{start}:{end}]"
+        )
+        global_stats[SC_ERROR_INCIDENT] += 1
+        return None
+
+
+def _process_mask_to_polygon(
+    class_id_str: str,
+    mask_dict: Dict[str, Any],
+    sample_id: str,
+    global_stats: Dict[str, Any],
+) -> Optional[str]:
+    """
+    Process a single mask: deserialize it, convert to polygons, and return the YOLO label.
+
+    Returns:
+        The YOLO label string or None if conversion fails.
+    """
+    try:
+        # Reconstruct the mask using SegmMask.from_dict
+        segm_mask = SegmMask.from_dict(mask_dict)
+
+        # Check if binary_mask was successfully deserialized
+        if segm_mask.binary_mask is None or not segm_mask.is_valid:
+            logger.debug(f"Sample {sample_id}: Invalid mask after deserialization")
+            return None
+
+        # Call mask_to_yolo_polygons in main process
+        polygons = mask_to_yolo_polygons(
+            binary_mask=segm_mask.binary_mask,
+            img_shape=segm_mask.binary_mask.shape,
+            connect_parts=True,
+        )
+
+        if not polygons:
+            global_stats[SC_MASK_SKIPPED_NO_POLYGON] += 1
+            return None
+
+        if len(polygons) > 1:
+            global_stats[SC_MASK_SKIPPED_MULTIPLE_POLYGONS] += 1
+            logger.debug(f"Sample {sample_id}: Using first of {len(polygons)} polygons")
+
+        # Use first polygon
+        polygon = polygons[0]
+        label = f"{class_id_str} {' '.join(map(str, polygon))}"
+        global_stats[SC_MASK_LABEL_GENERATED] += 1
+        return label
+
+    except Exception as e:
+        logger.error(f"Error converting mask to polygon for sample {sample_id}: {str(e)}")
+        global_stats[SC_ERROR_INCIDENT] += 1
+        return None
+
+
+def _write_label_and_image(
+    sample_id: str,
+    image_labels: List[str],
+    image_bytes: bytes,
+    image_dir: Path,
+    label_dir: Path,
+    args: argparse.Namespace,
+    global_stats: Dict[str, Any],
+) -> bool:
+    """
+    Write label and image files for a sample.
+
+    Returns:
+        True if files were written successfully, False otherwise.
+    """
+    try:
+        # Setup file paths
+        image_filename = f"{sample_id}.jpg"
+        label_filename = f"{sample_id}.txt"
+        image_path = image_dir / image_filename
+        label_path = label_dir / label_filename
+
+        # Write label file
+        write_label = not (args.no_overwrite and label_path.exists())
+        if write_label:
+            with open(label_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(image_labels) + "\n")
+            global_stats[SC_FILE_LABEL_WRITTEN] += 1
+        elif args.no_overwrite and label_path.exists():
+            global_stats[SC_FILE_LABEL_SKIPPED_EXISTING] += 1
+
+        # Save image file (only if label was written or skipped)
+        write_image = (
+            image_bytes
+            and (write_label or (args.no_overwrite and label_path.exists()))
+            and not (args.no_overwrite and image_path.exists())
+        )
+
+        if write_image:
+            img = Image.open(BytesIO(image_bytes))
+            img.save(image_path, "JPEG", quality=95)
+            global_stats[SC_FILE_IMAGE_WRITTEN] += 1
+        elif image_bytes and args.no_overwrite and image_path.exists():
+            global_stats[SC_FILE_IMAGE_SKIPPED_EXISTING] += 1
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Error writing files for sample {sample_id}: {str(e)}")
+        global_stats[SC_ERROR_INCIDENT] += 1
+        return False
+
+
+def process_slice(
+    start: int,
+    end: int,
+    phrase_map: Dict[str, Dict[str, Any]],
+    args: argparse.Namespace,
+    global_stats: Dict[str, Any],  # Single global stats dictionary
+    image_dir: Path,
+    label_dir: Path,
+) -> bool:
+    """
+    Loads a slice, prepares data in parallel, then converts masks and writes sequentially.
+
+    Returns True if slice processed without fatal errors, False otherwise.
+    """
+    logger.info(f"--- Processing slice: {args.train_split}[{start}:{end}] ---")
+
+    try:
+        # 1. Load Dataset Slice and Prepare in Parallel
+        prepared_dataset = _prepare_dataset_slice(start, end, phrase_map, args, global_stats)
+
+        if prepared_dataset is None:
+            return False  # Fatal error during slice loading or preparation
+
+        # Ensure output directories exist
         image_dir.mkdir(parents=True, exist_ok=True)
         label_dir.mkdir(parents=True, exist_ok=True)
 
+        # Ensure class stats dictionary exists in global_stats
+        if SC_CLASS_STATS_DICT not in global_stats:
+            global_stats[SC_CLASS_STATS_DICT] = defaultdict(list)
+
+        # 2. Sequential Processing Loop
+        logger.info("Converting masks and writing outputs...")
+
         write_iterator = tqdm(
-            processed_dataset, desc=f"Writing slice {start}-{end}", total=len(processed_dataset)
+            prepared_dataset,
+            desc=f"Converting/Writing slice {start}-{end}",
+            total=len(prepared_dataset),
         )
+
         for result in write_iterator:
-            # Decode stats JSON
-            sample_stats = {}
-            stats_json_str = result.get("stats_json")
-            if stats_json_str:
-                try:
-                    sample_stats = json.loads(stats_json_str)  # <--- 从 JSON 还原字典
-                except json.JSONDecodeError:
-                    logger.error(
-                        f"Failed to decode stats JSON for sample: {result.get('sample_id')}"
-                    )
-                    continue
+            # Decode preparation stats JSON and aggregate
+            try:
+                prep_stats = json.loads(result.get("prep_stats_json", "{}"))
 
-            # Aggregate basic counters
-            for key, value in sample_stats.items():
-                if key == SC_CLASS_STATS_DICT:
-                    if isinstance(value, dict):
-                        for class_id_str, count in value.items():
-                            # The defaultdict handles list creation automatically
-                            aggr_cls_stats[class_id_str].append(count)  # Append directly
-                elif isinstance(value, (int, float)):
-                    aggr_stats[key] += value
+                # Aggregate preparation stats directly into global_stats
+                for key, value in prep_stats.items():
+                    if isinstance(value, (int, float)):
+                        global_stats[key] += value
 
+            except json.JSONDecodeError:
+                logger.error(f"Failed to decode stats JSON for sample: {result.get('sample_id')}")
+                global_stats[SC_ERROR_INCIDENT] += 1
+                continue
+
+            # Handle preparation errors
             if result.get("error"):
                 logger.error(
-                    f"Slice {start}-{end}: Error processing sample {result.get('sample_id')}"
+                    f"Error preparing sample {result.get('sample_id')}: {result.get('reason')}"
                 )
+                global_stats[SC_ERROR_INCIDENT] += 1
                 continue
 
-            labels = result.get("labels", [])
-            if not labels:
-                continue
-
+            # Extract sample data
             sample_id = result["sample_id"]
             image_bytes = result.get("image_bytes")
-            if not image_bytes:
-                logger.error(
-                    f"Slice {start}-{end}: No image bytes generated for sample "
-                    f"{result.get('sample_id')}"
-                )
+            serialized_pending_masks = result.get("pending_masks", [])
+
+            # Skip if no masks were prepared or image failed serialization
+            if not serialized_pending_masks or not image_bytes:
+                logger.debug(f"Sample {sample_id}: Skipping due to missing data")
                 continue
 
-            # Setup file paths
-            image_filename = f"{sample_id}.jpg"
-            label_filename = f"{sample_id}.txt"
-            image_path = image_dir / image_filename
-            label_path = label_dir / label_filename
+            # 3. Process Masks to Generate Labels
+            image_labels = []  # Labels for the current image
+            sample_class_counts = defaultdict(int)  # Per-sample class counts
 
-            # Write label file
-            write_label = labels and not (args.no_overwrite and label_path.exists())
-            if write_label:
-                try:
-                    with open(label_path, "w", encoding="utf-8") as f:
-                        f.write("\n".join(labels) + "\n")
-                    aggr_stats[SC_FILE_LABEL_WRITTEN] += 1
-                except Exception as e:
-                    aggr_stats[SC_FILE_LABEL_WRITE_ERROR] += 1
-                    logger.error(f"Slice {start}-{end}: Failed to write label {label_path}: {e}")
-            else:
-                aggr_stats[SC_FILE_LABEL_SKIPPED_EXISTING] += 1
+            # Deserialize the pending masks
+            pending_masks = _deserialize_pending_masks(serialized_pending_masks)
 
-            # Save image file (only if label was written or overwrite disabled check passed)
-            write_image = image_bytes and not (args.no_overwrite and image_path.exists())
-            if write_image:
-                try:
-                    # Convert bytes back to PIL Image to save
-                    img = Image.open(BytesIO(image_bytes))
-                    img.save(image_path, "JPEG", quality=95)
-                    aggr_stats[SC_FILE_IMAGE_WRITTEN] += 1
-                except Exception as e:
-                    aggr_stats[SC_FILE_IMAGE_WRITE_ERROR] += 1
-                    logger.error(f"Slice {start}-{end}: Failed to save image {image_path}: {e}")
-            elif image_bytes:  # Image exists but wasn't written due to no_overwrite
-                aggr_stats[SC_FILE_IMAGE_SKIPPED_EXISTING] += 1
+            # Process each mask to generate polygon/label
+            for class_id_str, mask_dict in pending_masks:
+                label = _process_mask_to_polygon(class_id_str, mask_dict, sample_id, global_stats)
+                if label:
+                    image_labels.append(label)
+                    sample_class_counts[class_id_str] += 1
 
-        logger.info(f"--- Finished processing slice: {split}[{start}:{end}] ---")
+            # Skip if no valid labels were generated
+            if not image_labels:
+                logger.debug(f"Sample {sample_id}: No valid labels generated, skipping")
+                continue
 
-    except Exception as e:
-        logger.exception(f"FATAL error processing slice {split}[{start}:{end}]: {e}")
+            # 4. Write Label and Image Files
+            success = _write_label_and_image(
+                sample_id, image_labels, image_bytes, image_dir, label_dir, args, global_stats
+            )
 
-    aggr_stats[SC_CLASS_STATS_DICT] = dict(aggr_cls_stats)
-    return dict(aggr_stats)  # Return aggregated stats for this slice
+            if not success:
+                continue
+
+            # 5. Add class counts for this sample to the global class stats
+            class_stats_dict = global_stats[SC_CLASS_STATS_DICT]
+            for cls_id, count in sample_class_counts.items():
+                class_stats_dict[cls_id].append(count)
+
+        logger.info(f"--- Finished processing slice: {args.train_split}[{start}:{end}] ---")
+        return True  # Successful slice processing
+
+    except Exception:
+        logger.exception(f"FATAL error processing slice {args.train_split}[{start}:{end}]")
+        global_stats[SC_ERROR_INCIDENT] += 1
+        return False  # Fatal error in slice processing
 
 
-def _log_summary(stats: Dict[str, Any], cls_stats: Dict[str, Any], class_names: Dict[int, str]):
-    """Logs the final conversion statistics from the global counters dict."""
-    logging.info("Conversion finished.")
-    logging.info(f"Total samples loaded: {stats[SC_SAMPLE_LOADED]}")
-    logging.info(f"Total segments loaded: {stats[SC_SEGMENT_LOADED]}")
-    logging.info(f"Segments skipped (no mapping): {stats[SC_SEGMENT_SKIPPED_NO_MATCH]}")
-    logging.info(f"Segments skipped (sampling): {stats[SC_SEGMENT_SKIPPED_SAMPLING]}")
-    logging.info(f"Segments skipped (zero mask): {stats[SC_SEGMENT_SKIPPED_ZERO_MASK]}")
-    logging.info(f"Segments processed: {stats[SC_SEGMENT_PROCESSED]}")
+def _log_summary(stats: Dict[str, Any], class_names: Dict[int, str]):
+    """Logs the final conversion statistics."""
+    logging.info("--- Conversion Summary ---")
+    logging.info(f"Total samples loaded: {stats.get(SC_SAMPLE_LOADED, 0)}")
+    logging.info(f"Total segments loaded: {stats.get(SC_SEGMENT_LOADED, 0)}")
+    logging.info(f"Segments skipped (no mapping): {stats.get(SC_SEGMENT_SKIPPED_NO_MATCH, 0)}")
+    logging.info(f"Segments skipped (sampling): {stats.get(SC_SEGMENT_SKIPPED_SAMPLING, 0)}")
+    logging.info(f"Segments skipped (zero mask): {stats.get(SC_SEGMENT_SKIPPED_ZERO_MASK, 0)}")
+    logging.info(f"Segments prepared for conversion: {stats.get(SC_SEGMENT_PROCESSED_PREP, 0)}")
 
-    logging.info(f"Masks for labeling: {stats[SC_MASK_FOR_LABELING]}")
-    logging.info(f"Masks skipped (no polygon): {stats[SC_MASK_SKIPPED_NO_POLYGON]}")
-    logging.info(f"Masks skipped (multiple polygons): {stats[SC_MASK_SKIPPED_MULTIPLE_POLYGONS]}")
-    logging.info(f"Masks converted to labels: {stats[SC_MASK_LABEL_GENERATED]}")
+    logging.info(f"Masks prepared for labeling: {stats.get(SC_MASK_PREPARED_FOR_LABELING, 0)}")
+    logging.info(f"Masks skipped (no polygon): {stats.get(SC_MASK_SKIPPED_NO_POLYGON, 0)}")
+    logging.info(
+        f"Masks skipped (multiple polygons): {stats.get(SC_MASK_SKIPPED_MULTIPLE_POLYGONS, 0)}"
+    )
+    logging.info(f"Masks converted to labels: {stats.get(SC_MASK_LABEL_GENERATED, 0)}")
 
-    logging.info(f"Images generated with labels: {stats[SC_IMAGE_WITH_LABELS]}")
-    logging.info(f"Images file written: {stats[SC_FILE_IMAGE_WRITTEN]}")
-    logging.info(f"Images file write errored: {stats[SC_FILE_IMAGE_WRITE_ERROR]}")
-    logging.info(f"Images file skipped (already exist): {stats[SC_FILE_IMAGE_SKIPPED_EXISTING]}")
-    logging.info(f"Labels file written: {stats[SC_FILE_LABEL_WRITTEN]}")
-    logging.info(f"Labels file write errored: {stats[SC_FILE_LABEL_WRITE_ERROR]}")
-    logging.info(f"Labels file skipped (already exist): {stats[SC_FILE_LABEL_SKIPPED_EXISTING]}")
+    logging.info(f"Images with pending labels: {stats.get(SC_IMAGE_WITH_PENDING_LABELS, 0)}")
+    logging.info(f"Images file written: {stats.get(SC_FILE_IMAGE_WRITTEN, 0)}")
+    logging.info(
+        f"Images file skipped (already exist): {stats.get(SC_FILE_IMAGE_SKIPPED_EXISTING, 0)}"
+    )
+    logging.info(f"Labels file written: {stats.get(SC_FILE_LABEL_WRITTEN, 0)}")
+    logging.info(
+        f"Labels file skipped (already exist): {stats.get(SC_FILE_LABEL_SKIPPED_EXISTING, 0)}"
+    )
 
-    # Calculate and log per-class statistics
+    # Log error incidents
+    error_count = stats.get(SC_ERROR_INCIDENT, 0)
+    if error_count > 0:
+        logging.warning(f"Total error incidents during processing: {error_count}")
+        logging.warning("See log file for detailed error information")
+
+    # Calculate and log per-class statistics (based on successfully generated labels)
+    cls_stats = stats.get(SC_CLASS_STATS_DICT, {})
     if cls_stats:
-        logging.info("Class masks statistics:")
+        logging.info("--- Class Label Statistics (Masks resulting in labels per image) ---")
 
-        # Prepare data for stats.format_statistics_table
         stats_data = {}
         for class_id_str, counts in cls_stats.items():
-            class_id = int(class_id_str)
-            class_name = class_names.get(class_id)
-            stats_data[class_name] = counts
+            try:
+                class_id = int(class_id_str)
+                class_name = class_names.get(class_id, f"Unknown ClassID {class_id_str}")
+                stats_data[class_name] = counts
+            except ValueError:
+                logger.warning(
+                    f"Invalid class ID string encountered in class stats: {class_id_str}"
+                )
 
-        # Define format string for the table
-        # This will create a table with class name, count, mean, median, and max
-        format_string = (
-            "{key:<20} {count:>6d} {sum:>6d} {mean:>7.1f} {p25:>6d} {p50:>6d} {p75:>6d} {max:>6d}"
-        )
+        if stats_data:
+            # Define format string for the table
+            format_string = "{key:<25} {count:>8d} {sum:>8d} {mean:>8.1f} {p25:>8d} {p50:>8d} {p75:>8d} {max:>8d}"
 
-        # Generate the formatted table using the utility
-        table_lines = format_statistics_table(stats_data, format_string)
-
-        # Log each line of the table
-        for line in table_lines:
-            logging.info(line)
+            # Generate the formatted table using the utility
+            try:
+                table_lines = format_statistics_table(stats_data, format_string)
+                # Log each line of the table
+                for line in table_lines:
+                    logging.info(line)
+            except Exception as e:
+                logging.error(f"Failed to format class statistics table: {e}")
+                global_stats[SC_ERROR_INCIDENT] += 1
+        else:
+            logging.info("No valid class statistics were generated.")
+    else:
+        logging.info("No class statistics were generated.")
 
 
 def _find_dataset_samples(hf_dataset_path: str, train_split: str) -> int:
-    # Determine total samples and slicing strategy
+    """Determine total samples in the specified dataset split."""
     logger.debug(f"Getting total number of samples for split '{train_split}'...")
     try:
-        # Load only the necessary info or a small part to get length
-        # This still might download index files
         builder = load_dataset_builder(hf_dataset_path)
+        if train_split not in builder.info.splits:
+            raise ValueError(f"Split '{train_split}' not found in dataset '{hf_dataset_path}'.")
         return builder.info.splits[train_split].num_examples
     except Exception as e:
-        logger.error(f"Failed to get total sample count for split '{train_split}'. Error: {e}")
-        raise e
+        logger.error(f"Failed to get total sample count for split '{train_split}': {e}")
+        raise
 
 
 # --- Main Function ---
 def main():
     parser = _setup_argparse()
     args = parser.parse_args()
-    global_stats = defaultdict(int)  # Use defaultdict for easier aggregation
-    global_class_stats = defaultdict(list)
+
+    # Initialize a single global_stats dictionary
+    global_stats = defaultdict(int)
+    # Initialize the nested class_stats dictionary
+    global_stats[SC_CLASS_STATS_DICT] = defaultdict(list)
 
     try:
         try:
@@ -706,7 +895,6 @@ def main():
         num_total_samples = _find_dataset_samples(args.hf_dataset_path, args.train_split)
         logger.info(f"Found {num_total_samples} total samples in split '{args.train_split}'.")
 
-        # Determine total samples and slicing strategy
         samples_to_process = num_total_samples
         if args.sample_count is not None:
             samples_to_process = min(args.sample_count, num_total_samples)
@@ -719,44 +907,49 @@ def main():
             return 0
 
         slice_size = args.slice_size
-        if slice_size is None or slice_size > samples_to_process:
+        if slice_size is None or slice_size <= 0 or slice_size > samples_to_process:
             slice_size = samples_to_process
             logger.info("Processing all samples in a single pass (no slicing).")
+        else:
+            logger.info(
+                f"Processing in slices of {slice_size} with {args.num_proc} processes for preparation."
+            )
 
         # Loop through slices
         for i in range(0, samples_to_process, slice_size):
             start = i
-            # Adjust end to not exceed samples_to_process
             end = min(i + slice_size, samples_to_process)
             if start >= end:
                 continue  # Skip if start >= end
 
-            slice_stats = process_slice(
-                dataset_path=args.hf_dataset_path,
-                split=args.train_split,
-                start=start,
-                end=end,
-                phrase_map=phrase_map,
-                args=args,
-                image_dir=image_dir,
-                label_dir=label_dir,
+            # Process the slice, updates global_stats directly
+            success = process_slice(
+                start,
+                end,
+                phrase_map,
+                args,
+                global_stats,  # Pass the global stats dictionary
+                image_dir,
+                label_dir,
             )
 
-            # Simple aggregation for now (modify _aggregate_stats)
-            # Aggregate basic counters
-            for key, value in slice_stats.items():
-                if key == SC_CLASS_STATS_DICT:
-                    if isinstance(value, dict):
-                        for class_id_str, count in value.items():
-                            global_class_stats[class_id_str].extend(count)
-                elif isinstance(value, (int, float)):
-                    global_stats[key] += value
+            # Break loop if slice had a fatal error
+            if not success:
+                logger.error(f"Stopping processing due to fatal error in slice {start}-{end}.")
+                break
 
-        # Log final summary from aggregated stats
-        _log_summary(global_stats, global_class_stats, class_names)
+        # Log final summary from aggregated global_stats
+        _log_summary(global_stats, class_names)
 
-        logger.info("Conversion finished.")
-        return 0
+        # Determine exit code based on error incidents
+        if global_stats.get(SC_ERROR_INCIDENT, 0) > 0:
+            logger.warning("Conversion finished with some errors. Check logs for details.")
+            return (
+                1 if global_stats.get(SC_ERROR_INCIDENT, 0) > 10 else 0
+            )  # Only fail if many errors
+        else:
+            logger.info("Conversion finished successfully with no errors.")
+            return 0
 
     except FileNotFoundError as e:
         logger.error(f"Configuration file not found: {e}")
