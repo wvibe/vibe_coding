@@ -28,6 +28,24 @@
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Debug Module (yolo_segment_viz)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.utils.visualization.yolo_segment_viz",
+            "args": [
+                "--ds-root-env",
+                "COV_SEGM_ROOT",
+                "--ds-subname",
+                "visible",
+                "--tags",
+                "validation",
+                "--sample-count",
+                "10"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

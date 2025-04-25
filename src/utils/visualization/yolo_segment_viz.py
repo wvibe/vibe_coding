@@ -7,11 +7,15 @@ then draws the polygons and class labels onto the images.
 Supports processing single images (with display) or batches (saving images).
 Optionally calculates and reports statistics on annotations per image.
 
-Expects dataset structure:
-    <voc_root>/segment/images/<tag><year>/<image_id>.jpg
-    <voc_root>/segment/labels/<tag><year>/<image_id>.txt
+Expected dataset structure:
+    <dataset_root>/<dataset_name>/images/<tag>[<year>]/<image_id>.jpg
+    <dataset_root>/<dataset_name>/labels/<tag>[<year>]/<image_id>.txt
+Where [<year>] is optional. If --years is not provided, it expects:
+    <dataset_root>/<dataset_name>/images/<tag>/<image_id>.jpg
+    <dataset_root>/<dataset_name>/labels/<tag>/<image_id>.txt
+
 Output structure:
-    <output_root>/segment/visual/<tag><year>/<image_id>.png
+    <output_root>/<output_subdir>/<tag>[<year>]/<image_id>.png
 """
 
 import argparse
@@ -44,12 +48,35 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize YOLO format segmentation labels.")
 
     parser.add_argument(
-        "--years",
+        "--ds-root-path",
+        type=str,
+        default=None,
+        help=("Direct path to the dataset root directory. Overrides environment variable if set."),
+    )
+    parser.add_argument(
+        "--ds-root-env",
+        type=str,
+        default="VOC_ROOT",  # Keep VOC_ROOT as default for backward compatibility
+        help=(
+            "Name of the environment variable containing the dataset root path "
+            "(e.g., 'VOC_ROOT', 'COV_SEGM_ROOT'). Used if --ds-root-path is not set."
+        ),
+    )
+    parser.add_argument(
+        "--ds-subname",
         type=str,
         required=True,
+        help="Subdirectory name for the dataset within the root (e.g., 'segment', 'coco').",
+    )
+
+    parser.add_argument(
+        "--years",
+        type=str,
+        default=None,  # Make year optional
         help=(
-            "Comma-separated list of dataset years (e.g., '2007', '2007,2012'). Used to find input"
-            " folders."
+            "Optional: Comma-separated list of dataset years (e.g., '2007', '2007,2012'). "
+            "If provided, expects folder structure '<tag><year>'. "
+            "If not provided, expects folder structure '<tag>'."
         ),
     )
     parser.add_argument(
@@ -80,25 +107,19 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--voc-root",
-        type=str,
-        default=None,
-        help=(
-            "Path to the VOC dataset root directory (containing images/, labels_segment/). "
-            "Uses $VOC_ROOT if not set."
-        ),
-    )
-    parser.add_argument(
         "--output-root",
         type=str,
         default=None,
-        help="Root directory for saving visualizations. Defaults to voc-root.",
+        help="Root directory for saving visualizations. Defaults to dataset-root.",
     )
     parser.add_argument(
         "--output-subdir",
         type=str,
-        default="segment/visual",  # Default output subfolder name
-        help="Subdirectory within output-root to save visualizations.",
+        default="visual",  # Default output subfolder name, relative to output-root
+        help=(
+            "Subdirectory within output-root to save visualizations "
+            "(e.g., 'segment/visual', 'coco/visual')."
+        ),
     )
     parser.add_argument(
         "--fill-polygons",
@@ -125,67 +146,69 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _setup_paths(args: argparse.Namespace, voc_root_env: Optional[str]) -> Tuple[Path, Path, Path]:
-    """Determine base VOC root, output root, and final output directory.
+def _setup_paths(args: argparse.Namespace) -> Tuple[Path, Path]:
+    """Determine base dataset root and final output directory.
 
-    Handles logic for using --voc-root, $VOC_ROOT, and --output-root arguments,
+    Handles logic for using --ds-root-path, --ds-root-env, and --output-root arguments,
     including defaults and validation.
 
     Returns:
-        Tuple[Path, Path, Path]: base_voc_root, output_root, output_dir
+        Tuple[Path, Path]: base_dataset_root, output_dir
 
     Raises:
-        ValueError: If VOC root cannot be determined or doesn't seem valid.
+        ValueError: If dataset root cannot be determined or doesn't seem valid.
     """
-    base_voc_root_str = args.voc_root or voc_root_env
-    if not base_voc_root_str:
-        logger.error("VOC root directory not specified via --voc-root or $VOC_ROOT.")
-        raise ValueError("VOC root not specified")
+    # Determine Dataset Root
+    base_dataset_root_str = args.ds_root_path or os.getenv(args.ds_root_env)
+    if not base_dataset_root_str:
+        logger.error(
+            f"Dataset root directory not specified via --ds-root-path or ${args.ds_root_env}."
+        )
+        raise ValueError("Dataset root not specified")
 
-    base_voc_root = Path(base_voc_root_str).expanduser().resolve()
+    base_dataset_root = Path(base_dataset_root_str).expanduser().resolve()
 
-    # Basic check: Does it contain 'segment/images' and 'segment/labels'?
-    if (
-        not (base_voc_root / "segment" / "images").is_dir()
-        or not (base_voc_root / "segment" / "labels").is_dir()
-    ):
+    # Basic check: Does it contain '<ds_subname>/images' and '<ds_subname>/labels'?
+    expected_images_dir = base_dataset_root / args.ds_subname / "images"
+    expected_labels_dir = base_dataset_root / args.ds_subname / "labels"
+    if not expected_images_dir.is_dir() or not expected_labels_dir.is_dir():
         logger.warning(
-            f"Base VOC Root {base_voc_root} does not contain expected "
-            f"'segment/images' and 'segment/labels' subdirectories."
+            f"Base Dataset Root {base_dataset_root} does not contain expected "
+            f"'{args.ds_subname}/images' and '{args.ds_subname}/labels' subdirectories."
         )
         # Continue anyway, maybe structure is different but paths will fail later if invalid
 
-    logger.info(f"Using Base VOC Root: {base_voc_root}")
+    logger.info(f"Using Base Dataset Root: {base_dataset_root}")
 
     # Determine Output Root
     if args.output_root:
         output_root = Path(args.output_root).expanduser().resolve()
         logger.info(f"Using specified output root: {output_root}")
     else:
-        output_root = base_voc_root  # Default output root to base_voc_root
-        logger.info(f"Using default output root (same as voc-root): {output_root}")
+        output_root = base_dataset_root  # Default output root to base_dataset_root
+        logger.info(f"Using default output root (same as dataset-root): {output_root}")
 
     output_dir = output_root / args.output_subdir
     # Create the directory here for convenience
     output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Output visualization directory: {output_dir}")
+    logger.info(f"Base output visualization directory: {output_dir}")
 
-    return base_voc_root, output_root, output_dir
+    return base_dataset_root, output_dir
 
 
 def _get_image_ids_for_split(
-    year: str, tag: str, base_voc_root: Path
-) -> List[Tuple[str, str, str]]:
-    """Helper function to find image IDs for a specific year/tag split.
+    year: Optional[str], tag: str, base_dataset_root: Path, ds_subname: str
+) -> List[Tuple[str, Optional[str], str]]:
+    """Helper function to find image IDs for a specific tag (and optional year) split.
 
     Scans the label directory and checks for corresponding images.
 
     Returns:
-        List of (image_id, year, tag) tuples found for this split.
+        List of (image_id, year, tag) tuples found for this split. Year is None if not applicable.
     """
-    tag_year = f"{tag}{year}"
-    label_dir = base_voc_root / "segment" / "labels" / tag_year
-    image_dir = base_voc_root / "segment" / "images" / tag_year
+    split_name = f"{tag}{year}" if year else tag
+    label_dir = base_dataset_root / ds_subname / "labels" / split_name
+    image_dir = base_dataset_root / ds_subname / "images" / split_name
     ids_found = []
 
     if not label_dir.is_dir():
@@ -204,45 +227,41 @@ def _get_image_ids_for_split(
         else:
             missing_images += 1
 
-    logger.info(f"Found {found_in_split} label/image pairs in {tag_year}.")
+    logger.info(f"Found {found_in_split} label/image pairs in {split_name}.")
     if missing_images > 0:
         logger.warning(
-            f"Could not find corresponding images for {missing_images} labels in {tag_year}."
+            f"Could not find corresponding images for {missing_images} labels in {split_name}."
         )
     return ids_found
 
 
 def get_target_image_list(
-    args: argparse.Namespace, base_voc_root: Path
-) -> List[Tuple[str, str, str]]:
+    args: argparse.Namespace, base_dataset_root: Path
+) -> List[Tuple[str, Optional[str], str]]:
     """Determines the list of (image_id, year, tag) tuples to process
     by scanning label directories and checking for corresponding images."""
     ids_to_process = []
-    years = [y.strip() for y in args.years.split(",") if y.strip()]
+    years = (
+        [y.strip() for y in args.years.split(",") if y.strip()] if args.years else [None]
+    )  # Use [None] if years not specified
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
-    if not years or not tags:
-        logger.error("No valid years or tags provided.")
+    if not tags:
+        logger.error("No valid tags provided.")
         return []
 
     if args.image_id:
-        # Single image mode - Keep this part simple
-        first_year = years[0]
+        # Single image mode
         first_tag = tags[0]
-        logger.info(f"Single image mode: Checking {args.image_id} from {first_tag}{first_year}")
+        first_year = years[0]  # This will be None if args.years is None
+        split_name = f"{first_tag}{first_year}" if first_year else first_tag
+
+        logger.info(f"Single image mode: Checking {args.image_id} from split '{split_name}'")
         image_path = (
-            base_voc_root
-            / "segment"
-            / "images"
-            / f"{first_tag}{first_year}"
-            / f"{args.image_id}.jpg"
+            base_dataset_root / args.ds_subname / "images" / split_name / f"{args.image_id}.jpg"
         )
         label_path = (
-            base_voc_root
-            / "segment"
-            / "labels"
-            / f"{first_tag}{first_year}"
-            / f"{args.image_id}.txt"
+            base_dataset_root / args.ds_subname / "labels" / split_name / f"{args.image_id}.txt"
         )
 
         if not image_path.is_file():
@@ -258,7 +277,7 @@ def get_target_image_list(
         all_ids_found = []
         for year in years:
             for tag in tags:
-                split_ids = _get_image_ids_for_split(year, tag, base_voc_root)
+                split_ids = _get_image_ids_for_split(year, tag, base_dataset_root, args.ds_subname)
                 all_ids_found.extend(split_ids)
 
         if not all_ids_found:
@@ -384,10 +403,11 @@ def parse_yolo_segmentation_label(
 
 def process_and_visualize_image(
     image_id: str,
-    year: str,
+    year: Optional[str],  # Year can be None
     tag: str,
-    voc_root: Path,
-    output_dir: Path,  # This is <output_root>/segment/visual
+    base_dataset_root: Path,  # Renamed from voc_root
+    output_dir: Path,  # This is <output_root>/<output_subdir>
+    ds_subname: str,  # Added dataset subname
     class_names: List[str],
     do_save: bool,
     do_display: bool,
@@ -403,9 +423,9 @@ def process_and_visualize_image(
     """
     save_success = False
     display_success = False
-    tag_year = f"{tag}{year}"
-    image_path = voc_root / "segment" / "images" / tag_year / f"{image_id}.jpg"
-    label_path = voc_root / "segment" / "labels" / tag_year / f"{image_id}.txt"
+    split_name = f"{tag}{year}" if year else tag
+    image_path = base_dataset_root / ds_subname / "images" / split_name / f"{image_id}.jpg"
+    label_path = base_dataset_root / ds_subname / "labels" / split_name / f"{image_id}.txt"
 
     try:
         # Load Image
@@ -457,8 +477,8 @@ def process_and_visualize_image(
         # Save or Display
         if do_save:
             save_subdir = (
-                output_dir / tag_year
-            )  # Output is <output_root>/segment/visual/<tag><year>/
+                output_dir / split_name
+            )  # Output is <output_root>/<output_subdir>/<split_name>/
             save_subdir.mkdir(parents=True, exist_ok=True)
             save_path = save_subdir / f"{image_id}.png"  # Save as <id>.png
             try:
@@ -484,10 +504,12 @@ def process_and_visualize_image(
     except FileNotFoundError as e:
         # This might catch the image file not found if the check in get_target_image_list somehow
         # missed it
-        logger.error(f"File not found error for {image_id}: {e}. Skipping.")
+        logger.error(f"File not found error for {image_id} in split {split_name}: {e}. Skipping.")
         return False, None, None, None, save_success, display_success
     except Exception as e:
-        logger.error(f"Unexpected error processing {image_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error processing {image_id} in split {split_name}: {e}", exc_info=True
+        )
         return False, None, None, None, save_success, display_success
 
 
@@ -563,9 +585,10 @@ def _report_statistics(
 
 
 def _process_images(
-    ids_to_process: List[Tuple[str, str, str]],
-    base_voc_root: Path,
-    output_dir: Path,
+    ids_to_process: List[Tuple[str, Optional[str], str]],  # Year is optional
+    base_dataset_root: Path,  # Renamed
+    output_dir: Path,  # Base output dir
+    ds_subname: str,  # Added
     class_names: List[str],
     do_display: bool,
     do_save: bool,
@@ -581,10 +604,11 @@ def _process_images(
         label_success, num_polygons, num_classes, points_per_polygon, saved, displayed = (
             process_and_visualize_image(
                 image_id,
-                year,
+                year,  # Pass year (can be None)
                 tag,
-                base_voc_root,
-                output_dir,
+                base_dataset_root,  # Pass renamed root
+                output_dir,  # Pass base output dir
+                ds_subname,  # Pass dataset subname
                 class_names,
                 do_save,
                 do_display,
@@ -618,13 +642,10 @@ def main():
 
     try:
         # --- Path Setup ---
-        voc_root_env = os.getenv("VOC_ROOT")
-        base_voc_root, _, output_dir = _setup_paths(
-            args, voc_root_env
-        )  # output_root not needed here
+        base_dataset_root, output_dir = _setup_paths(args)  # Get base paths
 
         # --- Identify Images ---
-        ids_to_process = get_target_image_list(args, base_voc_root)
+        ids_to_process = get_target_image_list(args, base_dataset_root)
         if not ids_to_process:
             logger.info("No images found to process based on arguments.")
             return  # Exit cleanly
@@ -640,8 +661,9 @@ def main():
 
         stats = _process_images(
             ids_to_process,
-            base_voc_root,
-            output_dir,
+            base_dataset_root,  # Pass renamed root
+            output_dir,  # Pass base output dir
+            args.ds_subname,  # Pass dataset subname
             class_names,
             do_display,
             do_save,
