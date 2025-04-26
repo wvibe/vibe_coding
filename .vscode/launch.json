@@ -46,6 +46,20 @@
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Debug Module (yolov11_train_segment)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.models.ext.yolov11.train_segment",
+            "args": [
+                "--config",
+                "configs/yolov11/finetune_segment_cov_segm.yaml",
+                "--name",
+                "cov_segm_ft_yolo11l_260k"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

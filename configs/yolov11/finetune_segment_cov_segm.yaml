@@ -1,51 +1,42 @@
-# Training configuration for fine-tuning YOLOv11 SEGMENTATION on COV_SEGM dataset
+# Training configuration optimized for 8x A10G GPUs fine-tuning YOLOv11 SEGMENTATION
+# on FULL COV_SEGM dataset, with strong regularization to combat overfitting.
 
 # --- Base Model & Dataset ---
-# Base model weights file (YOLOv11 Large Segmentation)
-model: yolo11l-seg.pt
-# Path to the dataset definition yaml (relative to project root)
-data: configs/yolov11/cov_segm_segment_visible.yaml
+model: yolo11l-seg.pt  # Base model weights file (YOLOv11 Large Segmentation)
+data: configs/yolov11/cov_segm_segment_visible.yaml # Path to the dataset definition yaml.
+                      # !! IMPORTANT: Ensure this points to FULL train (216k) & val (10k) sets !!
 
 # --- Training Hyperparameters ---
-# Number of epochs (increased to compensate for dataset subsampling with fraction)
-epochs: 50
-# Training image size
-imgsz: 640
-# Batch size (slightly increased to reduce iterations, while cautious of OOM on T4 GPUs)
-# Adjust based on GPU memory (e.g., 12 means 3 per GPU with 4 GPUs)
-batch: 64
-# Number of worker threads for data loading (increased for large dataset)
-workers: 32
-# Optimizer: 'SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp', 'auto'
-# Explicitly set to SGD to use the specified lr0
-optimizer: SGD
-# Initial learning rate (e.g., 0.01 for SGD, 0.001 for AdamW)
-# Suitable for batch=12 on 4 GPUs
-lr0: 0.01
-# Final learning rate (lr0 * lrf)
-lrf: 0.01
-# Close mosaic augmentation for the last N epochs (e.g., 10, or 0 to disable)
-close_mosaic: 10
-# Fraction of dataset to use for training (e.g., 0.1 means use 10% of training data per epoch)
-# Added to reduce training time per epoch for very large datasets
-fraction: 0.4
-# Add other hyperparameters from YOLOv11 docs as needed
-# e.g., weight_decay, momentum, warmup_epochs, augmentations (hsv_h, etc.)
-# patience: 100
+epochs: 50            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
+imgsz: 640            # Training image size.
+batch: 192            # Batch size for 8x A10G (24GB VRAM). 192 = 24 images/GPU.
+                      # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
+workers: 64           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
+optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
+lr0: 0.01             # Initial learning rate for SGD. Kept relatively low due to strong regularization.
+lrf: 0.01             # Final learning rate factor (final_lr = lr0 * lrf).
+cos_lr: True          # Use cosine learning rate annealing schedule (Recommended).
+fraction: 1.0         # Use 100% of the training dataset per epoch (Essential).
+close_mosaic: 10      # Disable mosaic augmentation for the last N epochs (Standard practice).
+
+# --- Regularization & Augmentation to Prevent Overfitting ---
+mixup: 0.1            # Enable MixUp augmentation (Helps regularization). Adjust value (0.05-0.15) if needed.
+copy_paste: 0.1       # Enable Copy-Paste augmentation (Helps segmentation regularization). Adjust if needed.
+dropout: 0.1          # Add dropout for regularization. Check model structure compatibility if issues arise.
+weight_decay: 0.0005  # Explicitly set weight decay for SGD.
+patience: 30          # Enable early stopping. Stop if val mAP50-95 doesn't improve for 30 epochs.
+# Other augmentation defaults from Ultralytics are usually active (e.g., hsv, flip).
+# You can tune them further if needed (e.g., scale, translate).
 
 # --- Execution Settings ---
-# Device: '' for auto, 'cpu', '0', '0,1'
-# Set for 4 T4 GPUs
-device: '0,1,2,3'
-# Pretrained weights (MUST be True for fine-tuning)
-pretrained: True
-# Allow overwriting/appending to existing run directory when resuming
-exist_ok: True
+device: '0,1,2,3,4,5,6,7' # Use all 8 A10G GPUs.
+pretrained: True      # Start from pretrained weights (Fine-tuning).
+exist_ok: True        # Allow overwriting/appending to existing run when resuming (though resume=False here).
+amp: True             # Enable Automatic Mixed Precision (Recommended for A10G). Should be default.
 
 # --- Output Settings ---
-# Default project directory (relative to project root, can be overridden by --project CLI arg)
 project: runs/finetune/segment_cov_segm
+save_period: 5
 
-# --- Wandb Logging (will be used automatically if logged in) ---
-# Set to False to disable wandb even if installed/logged in
-enable_wandb: True
+# --- Wandb Logging ---
+enable_wandb: True    # Set to True to use WandB (ensure you are logged in).

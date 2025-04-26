@@ -24,5 +24,6 @@ dist/
 *.bin
 *.safetensors
 # Weights & Biases
-wandb/
-ref/
+wandb
+ref
+weights
