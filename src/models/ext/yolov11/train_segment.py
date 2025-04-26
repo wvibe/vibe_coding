@@ -211,6 +211,7 @@ def prepare_train_kwargs(
         # Segmentation specific args (though YOLO often auto-detects task type)
         "overlap_mask",
         "mask_ratio",
+        "fraction",  # Added to allow subsampling of large datasets for faster training
     }
     train_kwargs = {k: v for k, v in main_config.items() if k in valid_train_args}
 
