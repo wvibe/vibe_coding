@@ -7,16 +7,16 @@ data: configs/yolov11/cov_segm_segment_visible.yaml # Path to the dataset defini
                       # !! IMPORTANT: Ensure this points to FULL train (216k) & val (10k) sets !!
 
 # --- Training Hyperparameters ---
-epochs: 50            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
+epochs: 30            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
 imgsz: 640            # Training image size.
-batch: 192            # Batch size for 8x A10G (24GB VRAM). 192 = 24 images/GPU.
+batch: 96             # Batch size for 8x A10G (24GB VRAM). 192 = 24 images/GPU.
                       # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
-workers: 64           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
+workers: 32           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
 optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
-lr0: 0.01             # Initial learning rate for SGD. Kept relatively low due to strong regularization.
+lr0: 0.015            # Initial learning rate for SGD. Kept relatively low due to strong regularization.
 lrf: 0.01             # Final learning rate factor (final_lr = lr0 * lrf).
 cos_lr: True          # Use cosine learning rate annealing schedule (Recommended).
-fraction: 1.0         # Use 100% of the training dataset per epoch (Essential).
+fraction: 0.5         # Use 100% of the training dataset per epoch (Essential).
 close_mosaic: 10      # Disable mosaic augmentation for the last N epochs (Standard practice).
 
 # --- Regularization & Augmentation to Prevent Overfitting ---
@@ -29,7 +29,7 @@ patience: 30          # Enable early stopping. Stop if val mAP50-95 doesn't impr
 # You can tune them further if needed (e.g., scale, translate).
 
 # --- Execution Settings ---
-device: '0,1,2,3,4,5,6,7' # Use all 8 A10G GPUs.
+device: '0,1,2,3'     # Use all 4 A10G GPUs.
 pretrained: True      # Start from pretrained weights (Fine-tuning).
 exist_ok: True        # Allow overwriting/appending to existing run when resuming (though resume=False here).
 amp: True             # Enable Automatic Mixed Precision (Recommended for A10G). Should be default.

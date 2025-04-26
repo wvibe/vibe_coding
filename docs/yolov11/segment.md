@@ -60,3 +60,47 @@ Following Milestone 1, the immediate next step is to develop a robust command-li
 4.  **Utility Functions (`predict_utils.py`):** Adapt existing functions (`_load_config`, `_merge_args`, `_validate_config`, `_prepare_output_dir`, `_run_yolo_prediction`) to align with the new argument structure and data flow (e.g., `name` instead of `name_prefix`, removing `_process_source_path`).
 5.  **Documentation:** Update `docs/yolov11/README.md` with the new CLI usage and config structure for `predict_segment.py`. Update this doc (`segment.md`) to reflect the final implementation details.
 6.  **Unit Tests:** Add unit tests for helper functions in `predict_utils.py` and `predict_segment.py` (excluding file operations and external library calls).
+
+# YOLOv11 Segmentation Training
+
+This document outlines the process and considerations for training YOLOv11 models specifically for segmentation tasks within the project.
+
+## Overview
+
+YOLOv11 segmentation models are trained using the `train_segment.py` script located in `src/models/ext/yolov11/`. This script leverages the Ultralytics library to handle the training process, supporting both finetuning from pretrained models and resuming interrupted training runs.
+
+## Training Process
+
+[Existing content about training process...]
+
+## Limitations and Workarounds
+
+### Resuming Training Limitations with Ultralytics YOLO
+
+A known limitation with the Ultralytics YOLO library (as of version 8.3.117) is that resuming training from a checkpoint (`last.pt`) may fail if the library determines that the total number of epochs specified in the checkpoint's metadata has been reached. When this occurs, attempting to resume with `resume=True` results in an `AssertionError` indicating that training is already finished, even if additional epochs are desired.
+
+- **Error Message**: `AssertionError: <path/to/last.pt> training to <N> epochs is finished, nothing to resume.`
+- **Cause**: The Ultralytics trainer checks the `epochs` value embedded in the checkpoint file and compares it against the current epoch. If the current epoch is equal to or greater than the total epochs, it prevents resuming.
+- **Impact**: This prevents extending training beyond the originally specified number of epochs when using the `--resume-with` argument in `train_segment.py`.
+
+### Workaround for Additional Training
+
+To perform additional training based on the last model output when resuming fails due to the epoch limit:
+
+1. **Start a New Training Job with the Checkpoint**:
+   Instead of using `--resume-with`, use the `--model` argument to specify the path to the `last.pt` checkpoint file. This starts a new training job from epoch 0, using the weights from the checkpoint as the starting point, without attempting to resume the optimizer state or other metadata.
+
+   ```bash
+   python -m src.models.ext.yolov11.train_segment --config configs/yolov11/finetune_segment_cov_segm.yaml --name new_finetune_run --model runs/finetune/segment_cov_segm/finetune_yolo11l-seg_260k_20250426_142406/weights/last.pt
+   ```
+
+   - **Effect**: This creates a new run with a fresh WandB trace (if enabled) and allows setting a new number of epochs or other training parameters via the configuration file.
+   - **Trade-off**: Unlike a true resume, this approach does not preserve the optimizer state, learning rate scheduler, or current epoch from the checkpoint, which may affect training convergence or require additional epochs to stabilize.
+
+2. **Adjust Configuration**: Ensure the configuration YAML file specifies the desired number of epochs and other parameters for the new training job.
+
+This workaround is implemented in the updated `train_segment.py` script, which supports the `--model` argument to override the model specified in the configuration file and start a new training session.
+
+## Usage Examples
+
+[Existing content about usage examples...]

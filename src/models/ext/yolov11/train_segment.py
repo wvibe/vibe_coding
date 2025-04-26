@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from ultralytics import YOLO
+import torch
 
 # --- Vibe Imports --- #
 # Assuming src is in PYTHONPATH or handled by execution environment
@@ -169,12 +170,12 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
         # New run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name_to_use = f"{args.name}_{timestamp}"
-        model_to_load = main_config.get("model")
+        model_to_load = args.model if args.model else main_config.get("model")
         resume_flag = False  # Explicitly false
         wandb_id_to_use = None  # New runs don't automatically reuse IDs
         logging.info(f"Starting new run with name: {name_to_use}")
         if not model_to_load:
-            raise ValueError("Missing 'model' key in configuration for new run.")
+            raise ValueError("Missing 'model' key in configuration for new run or not provided via --model.")
 
     return model_to_load, name_to_use, resume_flag, wandb_id_to_use
 
@@ -222,7 +223,7 @@ def prepare_train_kwargs(
     name: str,
     resume: bool,
     effective_project_path: str,
-    absolute_data_config_path: Path,
+    absolute_data_config_path: Path
 ) -> dict:
     """Prepare the keyword arguments for the model.train() call.
 
@@ -298,6 +299,50 @@ def prepare_train_kwargs(
     return train_kwargs
 
 
+def execute_training(
+    model: YOLO,
+    train_kwargs: dict,
+    effective_project_path: str,
+    name_to_use: str,
+    project_root: Path,
+) -> tuple[Path | None, bool]:
+    """Execute the training process and capture results.
+
+    Args:
+        model (YOLO): Loaded YOLO model instance.
+        train_kwargs (dict): Training arguments for model.train().
+        effective_project_path (str): Project directory path for saving runs.
+        name_to_use (str): Name of the training run.
+        project_root (Path): Project root directory path.
+    Returns:
+        tuple[Path | None, bool]: Final output directory (if available) and training success flag.
+    """
+    logging.info("Starting segmentation training...")
+    final_output_dir = None
+    training_successful = False
+    try:
+        # The train method should work for segmentation task type based on the loaded model
+        model.train(**train_kwargs)
+        logging.info("Segmentation training finished successfully.")
+        training_successful = True
+
+        # Capture the actual save directory after training
+        if hasattr(model, "trainer") and hasattr(model.trainer, "save_dir"):
+            final_output_dir = Path(model.trainer.save_dir)
+            logging.info(f"Results saved to: {final_output_dir}")
+        else:
+            logging.warning("Could not determine final save directory from trainer.")
+            fallback_dir = project_root / effective_project_path / name_to_use
+            logging.info(f"Expected results directory: {fallback_dir}")
+    except Exception as e:
+        logging.error(f"Error during segmentation training: {e}", exc_info=True)
+
+    if not training_successful:
+        logging.error("Segmentation training did not complete successfully.")
+
+    return final_output_dir, training_successful
+
+
 # --- Training Pipeline Steps --- #
 
 
@@ -334,147 +379,44 @@ def load_configurations(args: argparse.Namespace, project_root: Path) -> tuple[d
     return main_config, absolute_data_config_path
 
 
-def determine_project_and_weights_paths(
-    args: argparse.Namespace, main_config: dict, name_to_use: str
-) -> tuple[str, Path | None]:
-    """Determine the effective project path and custom weights directory.
+def setup_project_environment() -> Path:
+    """Setup the project environment and return the project root.
+
+    Returns:
+        Path: Project root directory path.
+    """
+    # Inline get_project_root()
+    project_root = Path(__file__).resolve().parents[4]
+    logging.info(f"Project Root: {project_root}")
+
+    # Inline setup_environment()
+    dotenv_path = project_root / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+        logging.info(f".env loaded from: {dotenv_path}")
+    else:
+        logging.info(".env file not found, proceeding without it.")
+
+    return project_root
+
+
+def load_training_configurations(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
+    """Load training configurations.
 
     Args:
         args (argparse.Namespace): Command-line arguments.
-        main_config (dict): Main training configuration dictionary.
-        name_to_use (str): Name of the training run to use.
-    Returns:
-        tuple[str, Path | None]: Effective project path and custom weights directory if specified.
-    """
-    default_project = "runs/train/segment"  # Default base for segmentation runs
-    # If resuming, the project path should ideally match the original run's project path.
-    # However, Ultralytics might handle this automatically with 'resume=True'.
-    # For simplicity here, we use the same logic as detection: CLI override > config > default.
-    # If the config being used for resume *differs* from the original run's config in 'project',
-    # this could potentially save results to a different base folder than expected,
-    # though the resumed run folder itself (`name_to_use`) will be correct.
-    effective_project_path = (
-        args.project if args.project is not None else main_config.get("project", default_project)
-    )
-    # Handle custom weights directory if provided
-    custom_weights_dir = None
-    if args.weights_dir:
-        weights_dir = Path(args.weights_dir).resolve()
-        if not weights_dir.exists():
-            weights_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Created weights directory: {weights_dir}")
-        else:
-            logging.info(f"Using weights directory: {weights_dir}")
-        # Construct full weights directory as {weights_dir}/{project}/{name_to_use}/weights
-        custom_weights_dir = weights_dir / effective_project_path / name_to_use / "weights"
-        if not custom_weights_dir.exists():
-            custom_weights_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Created full weights directory: {custom_weights_dir}")
-        else:
-            logging.info(f"Using existing full weights directory: {custom_weights_dir}")
-    logging.info(f"Using project directory: {effective_project_path}")
-    return effective_project_path, custom_weights_dir
-
-
-def setup_model_and_callbacks(
-    model_to_load: str, name_to_use: str, custom_weights_dir: Path | None
-) -> YOLO:
-    """Load the YOLO model and register callbacks for custom weights saving.
-
-    Args:
-        model_to_load (str): Path or identifier of the model to load.
-        name_to_use (str): Name of the training run to use in filenames.
-        custom_weights_dir (Path | None): Custom directory for saving weights, if specified.
-    Returns:
-        YOLO: Loaded YOLO model instance with callbacks registered if applicable.
-    Raises:
-        Exception: If there is an error loading the model.
-    """
-    model = _load_model(model_to_load)
-    # Register callback for custom weights directory if provided
-    if custom_weights_dir:
-
-        def on_model_save_callback(trainer):
-            if custom_weights_dir:
-                # Get current epoch for filename
-                epoch = trainer.epoch if hasattr(trainer, "epoch") else 0
-                # Determine if it's a periodic save or standard save (last/best)
-                if hasattr(trainer, "last") and trainer.last:
-                    last_path = custom_weights_dir / "last.pt"
-                    trainer.model.save(last_path)
-                    logging.info(f"Saved last model to: {last_path}")
-                if (
-                    hasattr(trainer, "best")
-                    and trainer.best
-                    and hasattr(trainer, "best_fitness")
-                    and trainer.best_fitness == trainer.fitness
-                ):
-                    best_path = custom_weights_dir / "best.pt"
-                    trainer.model.save(best_path)
-                    logging.info(f"Saved best model to: {best_path}")
-                # Check if it's a periodic save
-                if (
-                    hasattr(trainer, "save_period")
-                    and trainer.save_period > 0
-                    and (epoch % trainer.save_period == 0)
-                ):
-                    periodic_path = custom_weights_dir / f"epoch_{epoch}.pt"
-                    trainer.model.save(periodic_path)
-                    logging.info(f"Saved periodic model for epoch {epoch} to: {periodic_path}")
-
-        model.add_callback("on_model_save", on_model_save_callback)
-        logging.info(
-            f"Registered on_model_save callback for custom weights directory: {custom_weights_dir}"
-        )
-    return model
-
-
-def execute_training(
-    model: YOLO,
-    train_kwargs: dict,
-    effective_project_path: str,
-    name_to_use: str,
-    project_root: Path,
-) -> tuple[Path | None, bool]:
-    """Execute the training process and capture results.
-
-    Args:
-        model (YOLO): Loaded YOLO model instance.
-        train_kwargs (dict): Training arguments for model.train().
-        effective_project_path (str): Project directory path for saving runs.
-        name_to_use (str): Name of the training run.
         project_root (Path): Project root directory path.
     Returns:
-        tuple[Path | None, bool]: Final output directory (if available) and training success flag.
+        tuple[dict, Path]: Main configuration dictionary and absolute path to data config file.
+    Raises:
+        FileNotFoundError: If configuration files are not found.
+        ValueError: If configurations are invalid.
+        yaml.YAMLError: If there is an error parsing YAML files.
     """
-    logging.info("Starting segmentation training...")
-    final_output_dir = None
-    training_successful = False
-    try:
-        # The train method should work for segmentation task type based on the loaded model
-        model.train(**train_kwargs)
-        logging.info("Segmentation training finished successfully.")
-        training_successful = True
-
-        # Capture the actual save directory after training
-        if hasattr(model, "trainer") and hasattr(model.trainer, "save_dir"):
-            final_output_dir = Path(model.trainer.save_dir)
-            logging.info(f"Results saved to: {final_output_dir}")
-            # If custom weights dir was used, log it explicitly
-            custom_weights_dir_value = getattr(args, "weights_dir", None)
-            if custom_weights_dir_value and hasattr(model.trainer, "wdir"):
-                logging.info(f"Weights saved to custom directory: {model.trainer.wdir}")
-        else:
-            logging.warning("Could not determine final save directory from trainer.")
-            fallback_dir = project_root / effective_project_path / name_to_use
-            logging.info(f"Expected results directory: {fallback_dir}")
-    except Exception as e:
-        logging.error(f"Error during segmentation training: {e}", exc_info=True)
-
-    if not training_successful:
-        logging.error("Segmentation training did not complete successfully.")
-
-    return final_output_dir, training_successful
+    config_path_abs = (project_root / args.config).resolve()
+    main_config = load_config(config_path_abs)
+    absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
+    return main_config, absolute_data_config_path
 
 
 def run_training_pipeline(args: argparse.Namespace):
@@ -483,52 +425,48 @@ def run_training_pipeline(args: argparse.Namespace):
     Args:
         args (argparse.Namespace): Command-line arguments.
     """
-    project_root = get_project_root()
-    logging.info(f"Project Root: {project_root}")
+    # Step 1: Validate arguments
+    if not args.resume_with and not args.name:
+        raise ValueError("--name is required when not using --resume-with")
 
-    # Step 1: Setup environment
-    setup_environment(project_root)
+    # Step 2: Setup project environment
+    project_root = setup_project_environment()
 
-    # Step 2: Load configurations
+    # Step 3: Load configurations
     try:
-        main_config, absolute_data_config_path = load_configurations(args, project_root)
+        main_config, absolute_data_config_path = load_training_configurations(args, project_root)
     except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
         logging.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    # Step 3: Determine run parameters (includes auto WandB ID lookup)
+    # Step 4: Determine run parameters (includes auto WandB ID lookup)
     try:
-        model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(
-            args, main_config, project_root
-        )
+        model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(args, main_config, project_root)
     except (FileNotFoundError, ValueError) as e:
         logging.error(f"Failed to determine run parameters: {e}")
         sys.exit(1)
 
-    # Step 4: Determine project and weights paths
-    effective_project_path, custom_weights_dir = determine_project_and_weights_paths(
-        args, main_config, name_to_use
-    )
+    # Step 5: Determine project path (Fail if not specified)
+    effective_project_path = args.project if args.project is not None else main_config.get("project")
+    if not effective_project_path:
+        raise ValueError("Project path must be specified either via --project argument or in the config file.")
+    logging.info(f"Using project directory: {effective_project_path}")
 
-    # Step 5: Setup WandB
+    # Step 6: Setup WandB
     _setup_wandb(wandb_id_to_use, resume_flag)
 
-    # Step 6: Setup model and callbacks
+    # Step 7: Setup model (Directly call _load_model)
     try:
-        model = setup_model_and_callbacks(model_to_load, name_to_use, custom_weights_dir)
+        model = _load_model(model_to_load)
     except Exception:
         # Error already logged in _load_model
         sys.exit(1)
 
-    # Step 7: Prepare training arguments
-    train_kwargs = prepare_train_kwargs(
-        main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path
-    )
+    # Step 8: Prepare training arguments
+    train_kwargs = prepare_train_kwargs(main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path)
 
-    # Step 8: Execute training
-    final_output_dir, training_successful = execute_training(
-        model, train_kwargs, effective_project_path, name_to_use, project_root
-    )
+    # Step 9: Execute training
+    execute_training(model, train_kwargs, effective_project_path, name_to_use, project_root)
 
     logging.info("Script finished.")
 
@@ -563,10 +501,10 @@ def main():
         required=False,
         default=None,
         help="Base name for the training run. A timestamp will be appended for new runs. "
-        "Required if not using --resume_with.",
+        "Required if not using --resume-with.",
     )
     parser.add_argument(
-        "--resume_with",  # Changed from --resume
+        "--resume-with",
         type=str,
         default=None,
         help=(
@@ -576,30 +514,25 @@ def main():
         ),
     )
     parser.add_argument(
-        "--wandb-dir",  # Changed from --wandb-id
+        "--wandb-dir",
         type=str,
-        default="wandb",  # Default WandB directory
+        default="wandb",
         help=(
             "Path to the root WandB directory (e.g., 'wandb'). Used to automatically find "
             "the run ID when resuming."
         ),
     )
     parser.add_argument(
-        "--weights-dir",
+        "--model",
         type=str,
         default=None,
         help=(
-            "Directory for saving model weights, useful for saving to NFS mounts on spot "
-            "instances. If set, weights are saved to {weights_dir}/{project}/{name}/weights."
+            "Path to a model file (e.g., last.pt) to use for a new training job. "
+            "Overrides the 'model' key in the configuration file."
         ),
     )
 
     args = parser.parse_args()
-
-    # --- Argument Validation --- # Added validation block
-    if not args.resume_with and not args.name:
-        parser.error("--name is required when not using --resume_with")
-    # --- End Argument Validation ---
 
     run_training_pipeline(args)
 
@@ -613,7 +546,7 @@ if __name__ == "__main__":
     # Example Usage (Resuming):
     # python src/models/ext/yolov11/train_segment.py \
     #     --config configs/yolov11/finetune_segment_voc.yaml \
-    #     --resume_with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
+    #     --resume-with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
     #     --name voc11_seg_finetune_run1
     #
     # Example Usage (With Custom Weights Directory):
