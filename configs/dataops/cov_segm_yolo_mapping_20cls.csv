@@ -9,3 +9,13 @@ yolo_class_id,yolo_class_name,hf_phrase,sampling_ratio
 7,cylinder_object,object with a cylindrical shape,1.0
 8,wallflower,wallflower refill single,1.0
 9,open_package,object that has the packaging open,1.0
+10,flat_object,object with a flat shape,1.0
+11,human,human,1.0
+12,barcode,detached barcode,1.0
+13,pallet,pallet,1.0
+14,wallflower_held,wallflower refill single held by a robot,1.0
+15,detached_cap,detached cap,1.0
+16,wallflower_heater,wallflower heater,1.0
+17,compartment_wall,compartment wall,1.0
+18,detached_tag,detached tag,1.0
+19,spherical_object,object with a spherical shape,1.0

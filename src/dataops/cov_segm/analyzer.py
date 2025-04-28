@@ -171,7 +171,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
         help="Dataset split to process (e.g., 'train', 'validation').",
     )
     parser.add_argument(
-        "--sample_slice",
+        "--sample-slice",
         type=str,
         default="[:100]",
         help=(
@@ -193,7 +193,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
     )
     # --- Calculation Arguments ---
     parser.add_argument(
-        "--skip_zero",
+        "--skip-zero",
         action="store_true",
         help=(
             "If set, phrases with zero metadata mask counts in a sample are ignored for that sample."
