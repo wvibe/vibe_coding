@@ -108,6 +108,6 @@ EOF
             --project yolo_ultralytics \
             --device 0,1,2,3,4,5,6,7 \
             --cache disk \
-            --batch 768 \
+            --batch 640 \
             --epochs 40 \
-            --lr0 0.05
+            --lr0 0.04

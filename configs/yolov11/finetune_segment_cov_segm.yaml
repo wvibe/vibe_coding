@@ -1,4 +1,4 @@
-# Training configuration optimized for 8x A10G GPUs fine-tuning YOLOv11 SEGMENTATION
+# Training configuration optimized for 4x A10G GPUs fine-tuning YOLOv11 SEGMENTATION
 # on FULL COV_SEGM dataset, with strong regularization to combat overfitting.
 
 # --- Base Model & Dataset ---
@@ -9,7 +9,7 @@ data: configs/yolov11/cov_segm_segment_visible.yaml # Path to the dataset defini
 # --- Training Hyperparameters ---
 epochs: 30            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
 imgsz: 640            # Training image size.
-batch: 96             # Batch size for 8x A10G (24GB VRAM). 192 = 24 images/GPU.
+batch: 96             # Batch size for 4x A10G (24GB VRAM). 96/4 = 16 images/GPU.
                       # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
 workers: 32           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
 optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
