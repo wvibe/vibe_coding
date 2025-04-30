@@ -1,0 +1,21 @@
+# Dataset root directory (contains images/, labels_segment/, etc.)
+path: /home/ubuntu/vibe/hub/datasets/COV_SEGM/full
+
+# Image directories relative to 'path'
+train: images/train
+val: images/val
+test: images/test # test set is a super set of val
+
+# Classes (Standard VOC 20 classes)
+# Ensure this matches the class indices used during label generation
+names:
+  0: bin
+  1: object
+  2: robot
+  3: wrapped_object
+  4: complex_object
+  5: boxy_object
+  6: object_held
+  7: cylinder_object
+  8: wallflower
+  9: open_package

@@ -27,3 +27,5 @@ dist/
 wandb
 ref
 weights
+logs
+yolo_ultralytics
