@@ -1,0 +1,46 @@
+num_nodes: 1
+
+resources:
+    cloud: aws
+    disk_size: 2048
+    accelerators: {A10g:8}
+    any_of:
+        # AWS region selections default
+        # - region: us-east-1
+        # - region: us-east-2
+        # - region: us-west-1
+        # - region: us-west-2
+    job_recovery:
+        max_restarts_on_errors: 10
+    use_spot: True
+
+file_mounts:
+    /usr/bin/copy_secrets.sh: ~/lab42_vr/scripts/sky/copy_secrets.sh
+    /nfs:
+        source: s3://covariant-sky-nfs
+        mode: MOUNT
+    ~/.cache/huggingface/token: ~/.cache/huggingface/token
+    # Mount the specific SSH private key
+    ~/.ssh/id_ed25519: ~/.ssh/id_ed25519_sky # Mount to standard name
+    # Mount the specific SSH config file
+    ~/.ssh/config: ~/.ssh/config_sky       # Mount to standard name
+    ~/.bash_aliases: ~/.bash_aliases     # Mount to Bash name
+    # Mount gitconfig
+    ~/.gitconfig: ~/.gitconfig
+    ~/.gitconfig-vibe: ~/.gitconfig-vibe
+
+envs: {}
+
+setup: |
+    set -e
+    # Ensure .ssh directory exists and has correct permissions
+    mkdir -p ~/.ssh
+    chmod 700 ~/.ssh
+
+    # Run secrets script AFTER potentially creating ~/.aws
+    bash /usr/bin/copy_secrets.sh
+
+    echo "AWS configured, NFS mounted, HF token, and SSH key/config available. Instance is ready."
+
+run: |
+    # sleep infinity

@@ -240,7 +240,9 @@ def prepare_train_kwargs(
     # Define the set of valid training arguments recognized by the Ultralytics trainer
     # Sorted alphabetically for readability.
     valid_train_args = {
+        "augment",
         "batch",
+        "cache",
         "close_mosaic",
         "copy_paste",
         "cos_lr",
