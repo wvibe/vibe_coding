@@ -276,3 +276,64 @@ def mask_to_yolo_polygons(
 
     # 3. Normalize and flatten results
     return _normalize_and_flatten_polygons(final_polygons_pixels, img_shape)
+
+
+def polygon_to_mask(
+    polygon_coords: List[Tuple[int, int]], height: int, width: int
+) -> np.ndarray:
+    """Convert a polygon (list of pixel coordinates) to a binary mask.
+
+    Args:
+        polygon_coords: List of (x, y) pixel coordinates for the polygon vertices.
+        height: Height of the target mask.
+        width: Width of the target mask.
+
+    Returns:
+        A boolean numpy array of shape (height, width) where True indicates
+        pixels inside the polygon.
+    """
+    if not polygon_coords or len(polygon_coords) < 3:
+        logger.warning("Cannot create mask from empty or degenerate polygon.")
+        return np.zeros((height, width), dtype=bool)
+
+    mask = np.zeros((height, width), dtype=np.uint8)  # Start with uint8 for fillPoly
+    # Reshape points for cv2.fillPoly: needs array of shape (N, 1, 2)
+    pts_np = np.array(polygon_coords, dtype=np.int32).reshape((-1, 1, 2))
+
+    try:
+        cv2.fillPoly(mask, [pts_np], color=1)  # Fill with 1
+    except Exception as e:
+        logger.error(f"Error during cv2.fillPoly: {e}", exc_info=True)
+        # Return empty mask on error
+        return np.zeros((height, width), dtype=bool)
+
+    return mask.astype(bool)  # Convert to boolean
+
+
+def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
+    """Calculates the Intersection over Union (IoU) between two binary masks.
+
+    Args:
+        mask1: The first boolean mask (np.ndarray, dtype=bool).
+        mask2: The second boolean mask (np.ndarray, dtype=bool).
+
+    Returns:
+        The IoU value (float) between 0.0 and 1.0.
+    """
+    if mask1.shape != mask2.shape:
+        raise ValueError(
+            f"Mask shapes must match. Got {mask1.shape} and {mask2.shape}"
+        )
+    if mask1.dtype != bool or mask2.dtype != bool:
+        raise ValueError("Masks must be boolean arrays.")
+
+    intersection = np.logical_and(mask1, mask2).sum()
+    union = np.logical_or(mask1, mask2).sum()
+
+    if union == 0:
+        # If both masks are empty, IoU is 1 if intersection is also 0 (which it must be)
+        # If union is 0 but intersection somehow isn't (shouldn't happen), return 0.
+        return 1.0 if intersection == 0 else 0.0
+
+    iou = intersection / union
+    return float(np.clip(iou, 0.0, 1.0))
