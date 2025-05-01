@@ -26,7 +26,7 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
         *   Distinguishes instances with different colors (`tab10` colormap).
     *   **CLI:** Added command-line interface with arguments for sample selection (`start_index`, `sample_count`), prompt, mask type, output directory (`output_dir`), and debugging (`--debug`).
     *   **Output Handling:** Saves images to `output_dir` with filenames based on sample ID, prompt, and mask type. Suppresses interactive display when saving, unless `--show` is used.
-    *   **[X] Added CLI usage examples to `docs/dataops/COV_SEGM_DESIGN.md`.**
+    *   **[X] Added CLI usage examples to `docs/dataops/cov_segm/DESIGN.md`.**
 *   **[X] Update Exploration Notebook:**
     *   Updated `notebooks/dataset/lab42_segm_explorer.ipynb` with:
         *   Proper imports for `datasets`, `PIL`, `matplotlib`.
@@ -99,7 +99,7 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
 
 ## Refactoring: `cov_segm` OOP Data Model
 
-**Goal:** Refactor `cov_segm` data handling (`loader`, `datamodel`, `visualizer`, `analyzer`, `converter`) to use a more robust Object-Oriented structure, replacing the previous `TypedDict`-based approach (see `COV_SEGM_DESIGN.md`). This enhances encapsulation (parsing logic within `SegmMask`), clarifies data flow, and improves maintainability.
+**Goal:** Refactor `cov_segm` data handling (`loader`, `datamodel`, `visualizer`, `analyzer`, `converter`) to use a more robust Object-Oriented structure, replacing the previous `TypedDict`-based approach (see `DESIGN.md`). This enhances encapsulation (parsing logic within `SegmMask`), clarifies data flow, and improves maintainability.
 **Note:** This refactoring must maintain compatibility with parallel processing via Hugging Face `datasets.map(num_proc=N)` by ensuring `load_sample` and the returned object graph (`SegmSample` -> `ClsSegment` -> `SegmMask`) are pickleable.
 
 *   **[X] Phase 1: Refactor `datamodel.py`**

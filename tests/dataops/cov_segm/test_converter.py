@@ -7,11 +7,11 @@ from typing import Any, Dict
 import pytest
 
 # Import the converter module for proper global state access
-from src.dataops.cov_segm import converter as converter_module
-from src.dataops.cov_segm.converter import _get_sampled_mapping_info, load_mapping_config
+from vibelab.dataops.cov_segm import converter as converter_module
+from vibelab.dataops.cov_segm.converter import _get_sampled_mapping_info, load_mapping_config
 
 # Import the data models
-from src.dataops.cov_segm.datamodel import ClsSegment, Phrase
+from vibelab.dataops.cov_segm.datamodel import ClsSegment, Phrase
 
 
 @pytest.fixture

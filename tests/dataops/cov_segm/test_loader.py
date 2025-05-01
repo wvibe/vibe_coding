@@ -10,10 +10,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from src.dataops.cov_segm import loader
+from vibelab.dataops.cov_segm import loader
 
 # Import necessary components from datamodel
-from src.dataops.cov_segm.datamodel import (
+from vibelab.dataops.cov_segm.datamodel import (
     ClsSegment,
     ConversationItem,
     ImageURI,
@@ -249,8 +249,8 @@ def test_resolve_reference_path_invalid_path_format(simple_hf_row_fixture):
 # == Tests for _process_mask_list (New) ==
 
 
-@patch("src.dataops.cov_segm.loader._resolve_reference_path")
-@patch("src.dataops.cov_segm.loader.SegmMask")
+@patch("vibelab.dataops.cov_segm.loader._resolve_reference_path")
+@patch("vibelab.dataops.cov_segm.loader.SegmMask")
 def test_process_mask_list_success(
     mock_segmmask_class,
     mock_resolve,
@@ -296,8 +296,8 @@ def test_process_mask_list_empty_or_none_input(simple_hf_row_fixture):
     assert result_empty == []
 
 
-@patch("src.dataops.cov_segm.loader._resolve_reference_path")
-@patch("src.dataops.cov_segm.loader.SegmMask")
+@patch("vibelab.dataops.cov_segm.loader._resolve_reference_path")
+@patch("vibelab.dataops.cov_segm.loader.SegmMask")
 def test_process_mask_list_resolve_fails(
     mock_segmmask_class,
     mock_resolve,
@@ -321,8 +321,8 @@ def test_process_mask_list_resolve_fails(
     mock_segmmask_class.assert_called_once()  # Only called for the successful resolve
 
 
-@patch("src.dataops.cov_segm.loader._resolve_reference_path")
-@patch("src.dataops.cov_segm.loader.SegmMask")
+@patch("vibelab.dataops.cov_segm.loader._resolve_reference_path")
+@patch("vibelab.dataops.cov_segm.loader.SegmMask")
 def test_process_mask_list_invalid_data_type(
     mock_segmmask_class,
     mock_resolve,
@@ -346,8 +346,8 @@ def test_process_mask_list_invalid_data_type(
     mock_segmmask_class.assert_called_once()
 
 
-@patch("src.dataops.cov_segm.loader._resolve_reference_path")
-@patch("src.dataops.cov_segm.loader.SegmMask")
+@patch("vibelab.dataops.cov_segm.loader._resolve_reference_path")
+@patch("vibelab.dataops.cov_segm.loader.SegmMask")
 def test_process_mask_list_segmmask_invalid(
     mock_segmmask_class,
     mock_resolve,
@@ -368,8 +368,8 @@ def test_process_mask_list_segmmask_invalid(
     assert mock_segmmask_class.call_count == 2  # Constructor called twice
 
 
-@patch("src.dataops.cov_segm.loader._resolve_reference_path")
-@patch("src.dataops.cov_segm.loader.SegmMask")
+@patch("vibelab.dataops.cov_segm.loader._resolve_reference_path")
+@patch("vibelab.dataops.cov_segm.loader.SegmMask")
 def test_process_mask_list_segmmask_exception(
     mock_segmmask_class, mock_resolve, simple_instance_mask_list, simple_hf_row_fixture
 ):
@@ -403,8 +403,8 @@ def mock_image_bytes():
     return img_byte_arr.getvalue()
 
 
-@patch("src.dataops.cov_segm.loader.is_s3_uri")
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.is_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.fetch_s3_uri")
 def test_load_image_from_uri_success(mock_fetch, mock_is_s3, mock_image_bytes):
     mock_is_s3.return_value = True
     mock_fetch.return_value = mock_image_bytes
@@ -416,7 +416,7 @@ def test_load_image_from_uri_success(mock_fetch, mock_is_s3, mock_image_bytes):
     assert result.size == (10, 10)
 
 
-@patch("src.dataops.cov_segm.loader.is_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.is_s3_uri")
 def test_load_image_from_uri_invalid_uri(mock_is_s3):
     mock_is_s3.return_value = False
     uri = "http://not/s3/uri.jpg"
@@ -425,8 +425,8 @@ def test_load_image_from_uri_invalid_uri(mock_is_s3):
     assert result is None
 
 
-@patch("src.dataops.cov_segm.loader.is_s3_uri")
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.is_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.fetch_s3_uri")
 def test_load_image_from_uri_fetch_fails(mock_fetch, mock_is_s3):
     mock_is_s3.return_value = True
     mock_fetch.return_value = None
@@ -437,8 +437,8 @@ def test_load_image_from_uri_fetch_fails(mock_fetch, mock_is_s3):
     assert result is None
 
 
-@patch("src.dataops.cov_segm.loader.is_s3_uri")
-@patch("src.dataops.cov_segm.loader.fetch_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.is_s3_uri")
+@patch("vibelab.dataops.cov_segm.loader.fetch_s3_uri")
 @patch("PIL.Image.open")
 def test_load_image_from_uri_pil_error(mock_pil_open, mock_fetch, mock_is_s3, mock_image_bytes):
     mock_is_s3.return_value = True
@@ -455,9 +455,9 @@ def test_load_image_from_uri_pil_error(mock_pil_open, mock_fetch, mock_is_s3, mo
 # == Tests for load_sample (Refactored) ==
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
-@patch("src.dataops.cov_segm.loader._load_image_from_uri")
-@patch("src.dataops.cov_segm.loader._process_mask_list")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader._load_image_from_uri")
+@patch("vibelab.dataops.cov_segm.loader._process_mask_list")
 def test_load_sample_success(
     mock_process_list,
     mock_load_image,
@@ -505,9 +505,9 @@ def test_load_sample_success(
     )
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
-@patch("src.dataops.cov_segm.loader._load_image_from_uri")
-@patch("src.dataops.cov_segm.loader._process_mask_list")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader._load_image_from_uri")
+@patch("vibelab.dataops.cov_segm.loader._process_mask_list")
 def test_load_sample_no_masks_processed(
     mock_process_list,
     mock_load_image,
@@ -531,7 +531,7 @@ def test_load_sample_no_masks_processed(
     assert mock_process_list.call_count == 2
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
 def test_load_sample_parse_fails(mock_parse_conv, full_hf_row_fixture):
     """Test behavior when conversations JSON parsing fails."""
     mock_parse_conv.side_effect = ValueError("Simulated parse error")
@@ -540,8 +540,8 @@ def test_load_sample_parse_fails(mock_parse_conv, full_hf_row_fixture):
     mock_parse_conv.assert_called_once_with(full_hf_row_fixture["conversations"])
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
-@patch("src.dataops.cov_segm.loader._load_image_from_uri")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader._load_image_from_uri")
 def test_load_sample_image_load_fails(
     mock_load_image, mock_parse_conv, full_hf_row_fixture, basic_conv_item_fixture
 ):
@@ -553,8 +553,8 @@ def test_load_sample_image_load_fails(
     mock_load_image.assert_called_once_with(basic_conv_item_fixture.image_uri.jpg)
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
-@patch("src.dataops.cov_segm.loader._load_image_from_uri")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader._load_image_from_uri")
 def test_load_sample_mismatched_uris(
     mock_load_image, mock_parse_conv, full_hf_row_fixture, mock_pil_image_fixture
 ):
@@ -578,9 +578,9 @@ def test_load_sample_mismatched_uris(
     mock_load_image.assert_called_once_with(item1.image_uri.jpg)  # Only called for the first item
 
 
-@patch("src.dataops.cov_segm.loader.parse_conversations")
-@patch("src.dataops.cov_segm.loader._load_image_from_uri")
-@patch("src.dataops.cov_segm.loader._process_mask_list")
+@patch("vibelab.dataops.cov_segm.loader.parse_conversations")
+@patch("vibelab.dataops.cov_segm.loader._load_image_from_uri")
+@patch("vibelab.dataops.cov_segm.loader._process_mask_list")
 def test_load_sample_no_valid_segments(
     mock_process_list, mock_load_image, mock_parse_conv, mock_pil_image_fixture
 ):
