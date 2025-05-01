@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.utils.common.bbox import (
+from vibelab.utils.common.bbox import (
     calculate_iou,
     denormalize_boxes,
     normalize_boxes,

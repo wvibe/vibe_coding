@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 HERE = Path(__file__).parent
 
 setup(
-    name="vibe_coding",
+    name="vibelab",
     version="0.1.0",
     description="VIBE ML project",
     author="w.vibe",
@@ -12,7 +12,7 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.12",
     install_requires=[
-        # ---- runtime dependencies (别人 pip install vibe_coding 时需要) ----
+        # ---- runtime dependencies (别人 pip install vibelab 时需要) ----
         "torch>=2.0.0",
         "torchvision>=0.15.0",
         "numpy>=1.24.0",

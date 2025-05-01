@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
-from src.utils.common.geometry import mask_to_yolo_polygons
+from vibelab.utils.common.geometry import mask_to_yolo_polygons
 
 # --- Helper Functions for Test Masks ---
 

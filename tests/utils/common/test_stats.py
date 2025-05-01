@@ -2,11 +2,12 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pytest
+import torch
 
-from src.utils.common.stats import (
+from vibelab.utils.common.stats import (
     DEFAULT_NA_VALUE,
     calculate_numeric_summary,
-    format_statistics_table,
+    format_statistics_table
 )
 
 

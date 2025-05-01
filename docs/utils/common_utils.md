@@ -1,6 +1,6 @@
 # Common Utilities Design Notes
 
-This document outlines the design choices and rationale behind the functions in the `src/utils/common/` directory, which contain general-purpose utilities used across different parts of the project.
+This document outlines the design choices and rationale behind the functions in the `vibelab.utils.common/` directory, which contain general-purpose utilities used across different parts of the project.
 
 ---
 

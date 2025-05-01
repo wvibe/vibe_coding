@@ -28,7 +28,26 @@ touch src/vibelab/__init__.py
 
 The empty `__init__.py` makes `vibelab` a valid package immediately.
 
-### 2.2 Conventional commit sequence
+### 2.2 Module Migration Checklist
+
+| Module | Status | PR | Notes |
+|--------|--------|----|----|
+| ✅ `utils.common` | Completed | - | Migrated to `vibelab.utils.common` |
+| ✅ `utils.logging` | Completed | - | Migrated to `vibelab.utils.logging` |
+| `utils.data_converter` | Pending | - | |
+| `utils.data_loaders` | Pending | - | |
+| `utils.metrics` | Pending | - | |
+| `utils.visualization` | Pending | - | |
+| `dataops.common` | Pending | - | |
+| `dataops.cov_segm` | Pending | - | |
+| `models.ext.yolo_ul` | Pending | - | |
+| `models.ext.yolov11` | Pending | - | |
+| `models.ext.yolov8` | Pending | - | |
+| `models.py.transformer` | Pending | - | |
+| `models.py.yolov3` | Pending | - | |
+| `vibelab.utils` | Pending | - | Some direct modules in `vibelab` |
+
+### 2.3 Conventional commit sequence
 
 | Commit | Contents |
 |--------|----------|
@@ -37,7 +56,7 @@ The empty `__init__.py` makes `vibelab` a valid package immediately.
 | **C…N**| For each logical unit (e.g. `utils.geometry`, `models.yolo`):<br>1. **Move file/dir** to `src/vibelab/…`.<br>2. Fix all imports in code, tests, scripts.<br>3. Run `pytest` and `ruff` locally.<br>4. Push PR – small, reviewable, easy to revert. |
 | **Z**  | Delete `src/__init__.py` and any remaining loose modules; run `grep -R "from src\."` to ensure zero matches. |
 
-### 2.3 Finding remaining legacy imports
+### 2.4 Finding remaining legacy imports
 
 ```bash
 grep -R "from src\." src tests scripts | cut -c1-120
@@ -51,8 +70,8 @@ CI pipeline will fail if this list is non‑empty once we reach commit **Z** (ad
 
 ### 3.1 IDE assisted rename
 
-* **VS Code**: F2 rename symbol → choose "Move to new file" if offered.
-* **PyCharm**: Refactor → Move… keeps imports in sync across project.
+* **VS Code**: F2 rename symbol → choose "Move to new file" if offered.
+* **PyCharm**: Refactor → Move… keeps imports in sync across project.
 
 ### 3.2 Keep imports sorted
 
@@ -84,9 +103,26 @@ after each batch move.
 ## 5. Done checklist
 
 - [ ] No `grep -R "from src\."` matches (except this doc).
+- [ ] All modules in the migration checklist completed.
+- [ ] Old modules in src have been removed (`src/utils/common`, `src/utils/logging`, etc.).
 - [ ] `pytest` passes in clean virtual env created from `requirements.txt`.
 - [ ] `pip wheel .` builds a wheel; installing that wheel into a fresh env runs CLI entry-points successfully.
 - [ ] Old tags / tutorials updated or marked deprecated.
+
+### 5.1 Final cleanup tasks
+
+After all modules have been migrated and all tests pass with the new imports:
+
+1. Remove the old module directories from `src/`:
+   ```bash
+   rm -rf src/utils/common
+   rm -rf src/utils/logging
+   # ... and so on for all migrated modules
+   ```
+
+2. Update any remaining documentation or references.
+
+3. Commit the final cleanup as the last migration step.
 
 When all checkboxes are ticked, announce in `CHANGELOG.md`:
 

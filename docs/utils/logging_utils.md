@@ -1,6 +1,6 @@
 # Logging Utilities Design Notes
 
-This document outlines the design choices and rationale behind the functions in the `src/utils/logging/` directory, which contain utilities for logging, tracking, and monitoring experiments.
+This document outlines the design choices and rationale behind the functions in the `vibelab.utils.logging/` directory, which contain utilities for logging, tracking, and monitoring experiments.
 
 ---
 
@@ -47,7 +47,7 @@ This module provides functionality for finding and matching experiment run IDs b
 The module includes a command-line interface for direct use as a script:
 
 ```bash
-python -m src.utils.logging.log_finder path/to/ultralytics/run [path/to/wandb/dir] [-v]
+python -m vibelab.utils.logging.log_finder path/to/ultralytics/run [path/to/wandb/dir] [-v]
 ```
 
 - **Arguments:**
