@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from ultralytics import YOLO
+import torch
 
 # --- Vibe Imports --- #
 # Assuming src is in PYTHONPATH or handled by execution environment
@@ -37,13 +38,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def get_project_root() -> Path:
-    """Find the project root directory relative to this script."""
-    # Assumes script is in project_root/src/models/ext/yolov11
+    """Find the project root directory relative to this script.
+
+    Assumes the script is located in project_root/src/models/ext/yolov11.
+    Returns:
+        Path: The absolute path to the project root directory.
+    """
     return Path(__file__).resolve().parents[4]
 
 
 def load_config(config_path: Path) -> dict:
-    """Load training configuration from a YAML file."""
+    """Load training configuration from a YAML file.
+
+    Args:
+        config_path (Path): Path to the YAML configuration file.
+    Returns:
+        dict: Configuration dictionary loaded from the YAML file.
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+        ValueError: If the configuration file is empty or invalid.
+        yaml.YAMLError: If there is an error parsing the YAML file.
+    """
     logging.info(f"Loading configuration from: {config_path}")
     if not config_path.is_file():
         logging.error(f"Configuration file not found: {config_path}")
@@ -64,7 +79,17 @@ def load_config(config_path: Path) -> dict:
 
 
 def _validate_and_get_data_config_path(main_config: dict, project_root: Path) -> Path:
-    """Validates and resolves the data config path from the main config."""
+    """Validate and resolve the data config path from the main config.
+
+    Args:
+        main_config (dict): Main training configuration dictionary.
+        project_root (Path): Project root directory path.
+    Returns:
+        Path: Absolute path to the data configuration YAML file.
+    Raises:
+        ValueError: If the 'data' key is missing in the main configuration.
+        FileNotFoundError: If the data config file does not exist.
+    """
     relative_data_config_path = main_config.get("data")
     if not relative_data_config_path:
         raise ValueError("Missing 'data' key in the main training configuration.")
@@ -78,7 +103,18 @@ def _validate_and_get_data_config_path(main_config: dict, project_root: Path) ->
 
 
 def _determine_run_params(args: argparse.Namespace, main_config: dict, project_root: Path) -> tuple:
-    """Determines model path, run name, resume flag, and attempts to find wandb ID on resume."""
+    """Determine model path, run name, resume flag, and attempt to find WandB ID on resume.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+        main_config (dict): Main training configuration dictionary.
+        project_root (Path): Project root directory path.
+    Returns:
+        tuple: (model_to_load, name_to_use, resume_flag, wandb_id_to_use)
+    Raises:
+        FileNotFoundError: If resume directory or checkpoint file is not found.
+        ValueError: If 'model' key is missing in configuration for a new run.
+    """
     model_to_load = None
     name_to_use = args.name  # Base name, might be modified
     resume_flag = False
@@ -134,18 +170,23 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
         # New run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name_to_use = f"{args.name}_{timestamp}"
-        model_to_load = main_config.get("model")
+        model_to_load = args.model if args.model else main_config.get("model")
         resume_flag = False  # Explicitly false
         wandb_id_to_use = None  # New runs don't automatically reuse IDs
         logging.info(f"Starting new run with name: {name_to_use}")
         if not model_to_load:
-            raise ValueError("Missing 'model' key in configuration for new run.")
+            raise ValueError("Missing 'model' key in configuration for new run or not provided via --model.")
 
     return model_to_load, name_to_use, resume_flag, wandb_id_to_use
 
 
 def _setup_wandb(wandb_id: str | None, resume_flag: bool):
-    """Sets environment variables for WandB based on provided ID."""
+    """Set environment variables for WandB based on provided ID.
+
+    Args:
+        wandb_id (str | None): WandB run ID to resume, if available.
+        resume_flag (bool): Flag indicating if training is being resumed.
+    """
     if wandb_id:
         if resume_flag:
             logging.info(f"Setting up WandB to resume run ID: {wandb_id}")
@@ -158,7 +199,15 @@ def _setup_wandb(wandb_id: str | None, resume_flag: bool):
 
 
 def _load_model(model_path: str) -> YOLO:
-    """Loads the YOLO model."""
+    """Load the YOLO model from the specified path.
+
+    Args:
+        model_path (str): Path to the model file or identifier.
+    Returns:
+        YOLO: Loaded YOLO model instance.
+    Raises:
+        Exception: If there is an error loading the model.
+    """
     try:
         # YOLO class should automatically handle segmentation models based on name/architecture
         model = YOLO(model_path)
@@ -174,45 +223,63 @@ def prepare_train_kwargs(
     name: str,
     resume: bool,
     effective_project_path: str,
-    absolute_data_config_path: Path,
+    absolute_data_config_path: Path
 ) -> dict:
-    """Prepares the keyword arguments for the model.train() call."""
+    """Prepare the keyword arguments for the model.train() call.
+
+    Args:
+        main_config (dict): Main training configuration dictionary.
+        name (str): Name of the training run.
+        resume (bool): Flag indicating if training is being resumed.
+        effective_project_path (str): Project directory path for saving runs.
+        absolute_data_config_path (Path): Absolute path to the data configuration file.
+    Returns:
+        dict: Dictionary of training arguments for model.train().
+    """
     # Filter main_config to only include valid YOLO train() arguments
+    # Define the set of valid training arguments recognized by the Ultralytics trainer
+    # Sorted alphabetically for readability.
     valid_train_args = {
-        "epochs",
-        "imgsz",
+        "augment",
         "batch",
-        "workers",
-        "optimizer",
-        "lr0",
-        "lrf",
+        "cache",
         "close_mosaic",
+        "copy_paste",
+        "cos_lr",
+        "degrees",
+        "deterministic",
         "device",
-        "pretrained",
-        "save_period",
-        "weight_decay",
-        "momentum",
-        "warmup_epochs",
+        "dropout",
+        "epochs",
+        "exist_ok",
+        "fliplr",
+        "flipud",
+        "fraction",
         "hsv_h",
         "hsv_s",
         "hsv_v",
-        "degrees",
-        "translate",
-        "scale",
-        "shear",
-        "perspective",
-        "flipud",
-        "fliplr",
-        "cos_lr",
-        "patience",
-        "seed",
-        "deterministic",
-        "exist_ok",
-        # Segmentation specific args (though YOLO often auto-detects task type)
-        "overlap_mask",
+        "imgsz",
+        "lr0",
+        "lrf",
         "mask_ratio",
-        "fraction",  # Added to allow subsampling of large datasets for faster training
+        "mixup",
+        "momentum",
+        "optimizer",
+        "overlap_mask",
+        "patience",
+        "perspective",
+        "pretrained",
+        "save_period",
+        "scale",
+        "seed",
+        "shear",
+        "translate",
+        "warmup_epochs",
+        "weight_decay",
+        "workers",
     }
+
+    # The filtering logic remains the same
     train_kwargs = {k: v for k, v in main_config.items() if k in valid_train_args}
 
     # Add/override arguments from orchestration logic
@@ -234,66 +301,24 @@ def prepare_train_kwargs(
     return train_kwargs
 
 
-def run_training_pipeline(args: argparse.Namespace):
-    """Orchestrates the steps for loading config and running training."""
-    project_root = get_project_root()
-    logging.info(f"Project Root: {project_root}")
+def execute_training(
+    model: YOLO,
+    train_kwargs: dict,
+    effective_project_path: str,
+    name_to_use: str,
+    project_root: Path,
+) -> tuple[Path | None, bool]:
+    """Execute the training process and capture results.
 
-    # --- Load .env --- #
-    dotenv_path = project_root / ".env"
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path=dotenv_path)
-        logging.info(f".env loaded from: {dotenv_path}")
-    else:
-        logging.info(".env file not found, proceeding without it.")
-
-    # --- Load and Validate Configurations --- #
-    try:
-        config_path_abs = (project_root / args.config).resolve()
-        main_config = load_config(config_path_abs)
-        absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
-    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
-        logging.error(f"Configuration error: {e}")
-        sys.exit(1)
-
-    # --- Determine Run Parameters (includes auto WandB ID lookup) --- #
-    try:
-        model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(
-            args, main_config, project_root
-        )
-    except (FileNotFoundError, ValueError) as e:
-        logging.error(f"Failed to determine run parameters: {e}")
-        sys.exit(1)
-
-    # --- Determine Effective Project Path --- #
-    default_project = "runs/train/segment"  # Default base for segmentation runs
-    # If resuming, the project path should ideally match the original run's project path.
-    # However, Ultralytics might handle this automatically with 'resume=True'.
-    # For simplicity here, we use the same logic as detection: CLI override > config > default.
-    # If the config being used for resume *differs* from the original run's config in 'project',
-    # this could potentially save results to a different base folder than expected,
-    # though the resumed run folder itself (`name_to_use`) will be correct.
-    effective_project_path = (
-        args.project if args.project is not None else main_config.get("project", default_project)
-    )
-    logging.info(f"Using project directory: {effective_project_path}")
-
-    # --- Setup WandB --- #
-    _setup_wandb(wandb_id_to_use, resume_flag)
-
-    # --- Load Model --- #
-    try:
-        model = _load_model(model_to_load)
-    except Exception:
-        # Error already logged in _load_model
-        sys.exit(1)
-
-    # --- Prepare Training Arguments --- #
-    train_kwargs = prepare_train_kwargs(
-        main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path
-    )
-
-    # --- Run Training --- #
+    Args:
+        model (YOLO): Loaded YOLO model instance.
+        train_kwargs (dict): Training arguments for model.train().
+        effective_project_path (str): Project directory path for saving runs.
+        name_to_use (str): Name of the training run.
+        project_root (Path): Project root directory path.
+    Returns:
+        tuple[Path | None, bool]: Final output directory (if available) and training success flag.
+    """
     logging.info("Starting segmentation training...")
     final_output_dir = None
     training_successful = False
@@ -311,17 +336,145 @@ def run_training_pipeline(args: argparse.Namespace):
             logging.warning("Could not determine final save directory from trainer.")
             fallback_dir = project_root / effective_project_path / name_to_use
             logging.info(f"Expected results directory: {fallback_dir}")
-
     except Exception as e:
         logging.error(f"Error during segmentation training: {e}", exc_info=True)
 
     if not training_successful:
         logging.error("Segmentation training did not complete successfully.")
 
+    return final_output_dir, training_successful
+
+
+# --- Training Pipeline Steps --- #
+
+
+def setup_environment(project_root: Path) -> None:
+    """Load environment variables from .env file if available.
+
+    Args:
+        project_root (Path): Project root directory path.
+    """
+    dotenv_path = project_root / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+        logging.info(f".env loaded from: {dotenv_path}")
+    else:
+        logging.info(".env file not found, proceeding without it.")
+
+
+def load_configurations(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
+    """Load main and data configurations for training.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+        project_root (Path): Project root directory path.
+    Returns:
+        tuple[dict, Path]: Main configuration dictionary and absolute path to data config file.
+    Raises:
+        FileNotFoundError: If configuration files are not found.
+        ValueError: If configurations are invalid.
+        yaml.YAMLError: If there is an error parsing YAML files.
+    """
+    config_path_abs = (project_root / args.config).resolve()
+    main_config = load_config(config_path_abs)
+    absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
+    return main_config, absolute_data_config_path
+
+
+def setup_project_environment() -> Path:
+    """Setup the project environment and return the project root.
+
+    Returns:
+        Path: Project root directory path.
+    """
+    # Inline get_project_root()
+    project_root = Path(__file__).resolve().parents[4]
+    logging.info(f"Project Root: {project_root}")
+
+    # Inline setup_environment()
+    dotenv_path = project_root / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+        logging.info(f".env loaded from: {dotenv_path}")
+    else:
+        logging.info(".env file not found, proceeding without it.")
+
+    return project_root
+
+
+def load_training_configurations(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
+    """Load training configurations.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+        project_root (Path): Project root directory path.
+    Returns:
+        tuple[dict, Path]: Main configuration dictionary and absolute path to data config file.
+    Raises:
+        FileNotFoundError: If configuration files are not found.
+        ValueError: If configurations are invalid.
+        yaml.YAMLError: If there is an error parsing YAML files.
+    """
+    config_path_abs = (project_root / args.config).resolve()
+    main_config = load_config(config_path_abs)
+    absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
+    return main_config, absolute_data_config_path
+
+
+def run_training_pipeline(args: argparse.Namespace):
+    """Orchestrate the steps for loading config and running training.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+    """
+    # Step 1: Validate arguments
+    if not args.resume_with and not args.name:
+        raise ValueError("--name is required when not using --resume-with")
+
+    # Step 2: Setup project environment
+    project_root = setup_project_environment()
+
+    # Step 3: Load configurations
+    try:
+        main_config, absolute_data_config_path = load_training_configurations(args, project_root)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
+        logging.error(f"Configuration error: {e}")
+        sys.exit(1)
+
+    # Step 4: Determine run parameters (includes auto WandB ID lookup)
+    try:
+        model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(args, main_config, project_root)
+    except (FileNotFoundError, ValueError) as e:
+        logging.error(f"Failed to determine run parameters: {e}")
+        sys.exit(1)
+
+    # Step 5: Determine project path (Fail if not specified)
+    effective_project_path = args.project if args.project is not None else main_config.get("project")
+    if not effective_project_path:
+        raise ValueError("Project path must be specified either via --project argument or in the config file.")
+    logging.info(f"Using project directory: {effective_project_path}")
+
+    # Step 6: Setup WandB
+    _setup_wandb(wandb_id_to_use, resume_flag)
+
+    # Step 7: Setup model (Directly call _load_model)
+    try:
+        model = _load_model(model_to_load)
+    except Exception:
+        # Error already logged in _load_model
+        sys.exit(1)
+
+    # Step 8: Prepare training arguments
+    train_kwargs = prepare_train_kwargs(main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path)
+
+    # Step 9: Execute training
+    execute_training(model, train_kwargs, effective_project_path, name_to_use, project_root)
+
     logging.info("Script finished.")
 
 
 def main():
+    """Parse command-line arguments and initiate the training pipeline."""
     parser = argparse.ArgumentParser(
         description="Train YOLOv11 segmentation models using configuration files."
     )
@@ -341,7 +494,7 @@ def main():
         default=None,
         help=(
             "Override the base directory to save runs. If None, uses 'project' from config "
-            "or default ('runs/train/segment')."  # Updated default help text
+            "or default ('runs/train/segment')."
         ),
     )
     parser.add_argument(
@@ -349,34 +502,39 @@ def main():
         type=str,
         required=False,
         default=None,
-        help="Base name for the training run. A timestamp will be appended for new runs. Required if not using --resume_with.",
+        help="Base name for the training run. A timestamp will be appended for new runs. "
+        "Required if not using --resume-with.",
     )
     parser.add_argument(
-        "--resume_with",  # Changed from --resume
+        "--resume-with",
         type=str,
         default=None,
         help=(
             "Path to the exact training run directory "
             "(e.g., runs/train/segment/run_YYMMDD_HHMMSS) to resume from. "
-            "Overrides --name logic for naming and loads last.pt."  # Updated help text
+            "Overrides --name logic for naming and loads last.pt."
         ),
     )
     parser.add_argument(
-        "--wandb-dir",  # Changed from --wandb-id
+        "--wandb-dir",
         type=str,
-        default="wandb",  # Default WandB directory
+        default="wandb",
         help=(
             "Path to the root WandB directory (e.g., 'wandb'). Used to automatically find "
             "the run ID when resuming."
         ),
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help=(
+            "Path to a model file (e.g., last.pt) to use for a new training job. "
+            "Overrides the 'model' key in the configuration file."
+        ),
+    )
 
     args = parser.parse_args()
-
-    # --- Argument Validation --- # Added validation block
-    if not args.resume_with and not args.name:
-        parser.error("--name is required when not using --resume_with")
-    # --- End Argument Validation ---
 
     run_training_pipeline(args)
 
@@ -390,7 +548,13 @@ if __name__ == "__main__":
     # Example Usage (Resuming):
     # python src/models/ext/yolov11/train_segment.py \
     #     --config configs/yolov11/finetune_segment_voc.yaml \
-    #     --resume_with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
+    #     --resume-with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
     #     --name voc11_seg_finetune_run1
+    #
+    # Example Usage (With Custom Weights Directory):
+    # python src/models/ext/yolov11/train_segment.py \
+    #     --config configs/yolov11/finetune_segment_cov_segm.yaml \
+    #     --name cov_segm_ft_yolo11l_260k \
+    #     --weights-dir /path/to/nfs/mount
 
     main()
