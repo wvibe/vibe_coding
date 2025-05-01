@@ -32,7 +32,7 @@ The project uses a modern src-layout and is organized as follows:
 vibe_coding/                # Git Repository Root ($HOME//vibe/vibe_coding)
 ├── configs/                # Configuration files (datasets, training, models)
 ├── docs/                   # Project documentation (guides, designs)
-├── ext/                    # External git libraries/submodules (READ-ONLY)
+├── ext/                    # External git libraries/submodules
 ├── notebooks/              # Jupyter notebooks for experiments and analysis
 ├── ref/                    # External reference code snippets/examples (READ-ONLY)
 ├── scripts/                # Standalone utility scripts (not part of the src package)

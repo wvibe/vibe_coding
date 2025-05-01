@@ -1,9 +1,3 @@
-[submodule "ext/ultralytics/yolov3"]
-	path = ext/ultralytics/yolov3
-	url = git@github.com:ultralytics/yolov3.git
-[submodule "ext/ultralytics/ultralytics"]
-	path = ext/ultralytics/ultralytics
-	url = git@github.com:ultralytics/ultralytics.git
-[submodule "ext/ultralytics/yolov5"]
-	path = ext/ultralytics/yolov5
-	url = git@github.com:ultralytics/yolov5.git
+[submodule "ext/ultralytics"]
+	path = ext/ultralytics
+	url = git@gh-vibe:wvibe/ext-ultralytics.git

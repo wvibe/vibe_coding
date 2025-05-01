@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
 # Coding Preferences & Guidelines
@@ -26,7 +26,7 @@ alwaysApply: true
 - **External Docs:** Update design/user documents after major feature changes.
 
 ## Handling Specific Code Types
-- **External Code (`/ext`, `/ref`):** Treat these directories as **READ-ONLY**. Do not modify contents.
+- **External Code (`/ref`):** Treat these directories as **READ-ONLY**. Do not modify contents.
 - **Notebooks (`.ipynb`):** To edit, generate a temporary `.py` file, modify it, then convert back using `jupytext --to notebook`.
 
 ## Python Script Execution
