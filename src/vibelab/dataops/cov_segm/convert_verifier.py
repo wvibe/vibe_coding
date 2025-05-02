@@ -4,16 +4,16 @@ import logging
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
-from scipy.optimize import linear_sum_assignment
 
 # Local imports
 from vibelab.dataops.cov_segm.datamodel import ClsSegment, SegmSample
-from vibelab.utils.common.bbox import calculate_iou as compute_bbox_iou
-from vibelab.utils.common.geometry import compute_mask_iou, polygon_to_mask
+from vibelab.utils.common.bbox import calculate_iou as calculate_bbox_iou
+from vibelab.utils.common.label_match import match_instances
+from vibelab.utils.common.mask import calculate_mask_iou, polygon_to_mask
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,6 @@ class VerificationResult:
     matched_pairs: List[Dict[str, Any]] = field(default_factory=list)
     lost_instances: List[OriginalInstanceRecord] = field(default_factory=list)
     extra_instances: List[YoloInstanceRecord] = field(default_factory=list)
-    bbox_iou_failures: List[Dict[str, Any]] = field(default_factory=list)
     processing_error: Optional[str] = None
 
 
@@ -96,15 +95,19 @@ def _get_sampled_mapping_info(
 
         # Use the *same* random logic as converter: skip if random() > ratio
         if random.random() > effective_ratio:
-            logger.debug(
-                f"Segment for phrase '{matched_phrase}' skipped due to sampling (ratio={effective_ratio:.3f})."
+            log_msg = (
+                f"Segment for phrase '{matched_phrase}' skipped due to sampling "
+                f"(ratio={effective_ratio:.3f})."
             )
+            logger.debug(log_msg)
             # stats_counters["skipped_segments_sampling"] += 1 # Removed stats
             return None
         else:
-            logger.debug(
-                f"Segment for phrase '{matched_phrase}' kept after sampling (ratio={effective_ratio:.3f})."
+            log_msg = (
+                f"Segment for phrase '{matched_phrase}' kept after sampling "
+                f"(ratio={effective_ratio:.3f})."
             )
+            logger.debug(log_msg)
 
     # If no sampling or sampling passed, return the info
     return mapping_info, matched_phrase
@@ -159,10 +162,11 @@ def _load_yolo_instances(
 
         parts = line.split()
         if len(parts) < 7 or len(parts) % 2 != 1:
-            return (
-                [],
-                f"Invalid format in {yolo_label_path}, line {i + 1}: Expected class_id followed by pairs of coords.",
+            error_msg = (
+                f"Invalid format in {yolo_label_path}, line {i + 1}: "
+                f"Expected class_id followed by pairs of coords."
             )
+            return ([], error_msg)
 
         try:
             class_id = int(parts[0])
@@ -182,25 +186,31 @@ def _load_yolo_instances(
             poly_abs.append((abs_x, abs_y))
 
         if len(poly_abs) < 3:
-            logger.warning(
-                f"Sample {sample_id}, Line {i + 1}: Degenerate polygon after conversion (< 3 points), skipping instance."
+            log_msg = (
+                f"Sample {sample_id}, Line {i + 1}: Degenerate polygon after "
+                f"conversion (< 3 points), skipping instance."
             )
+            logger.warning(log_msg)
             continue
 
         # Generate mask from absolute polygon
         derived_mask = polygon_to_mask(poly_abs, height, width)
         if derived_mask.sum() == 0:
-            logger.warning(
-                f"Sample {sample_id}, Line {i + 1}: Polygon resulted in empty mask, skipping instance."
+            log_msg = (
+                f"Sample {sample_id}, Line {i + 1}: Polygon resulted in empty "
+                f"mask, skipping instance."
             )
+            logger.warning(log_msg)
             continue
 
         # Calculate bounding box from the derived mask
         bbox = _calculate_bbox_from_mask(derived_mask)
         if bbox is None:
-            logger.warning(
-                f"Sample {sample_id}, Line {i + 1}: Could not calculate bbox from derived mask, skipping instance."
+            log_msg = (
+                f"Sample {sample_id}, Line {i + 1}: Could not calculate bbox from "
+                f"derived mask, skipping instance."
             )
+            logger.warning(log_msg)
             continue
 
         yolo_instances.append(
@@ -251,242 +261,34 @@ def _process_original_sample(
                     )
                 )
             elif not mask.is_valid:
-                logger.debug(
-                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Skipping invalid original mask."
+                log_msg = (
+                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: "
+                    f"Skipping invalid original mask."
                 )
+                logger.debug(log_msg)
             elif mask.bbox is None:
-                logger.warning(
-                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Original mask is valid but has no bbox? Skipping."
+                log_msg = (
+                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: "
+                    f"Original mask is valid but has no bbox? Skipping."
                 )
+                logger.warning(log_msg)
 
     return expected_instances
 
 
-def _group_instances_by_class(
-    original_instances: List[OriginalInstanceRecord], yolo_instances: List[YoloInstanceRecord]
-) -> Tuple[Dict[int, List[int]], Dict[int, List[int]], Set[int]]:
-    """Group original and YOLO instances by class ID.
-
-    Args:
-        original_instances: List of expected instances from the original sample.
-        yolo_instances: List of instances parsed from the YOLO label.
-
-    Returns:
-        A tuple containing:
-        - orig_by_class: Dictionary mapping class IDs to lists of indices in original_instances
-        - yolo_by_class: Dictionary mapping class IDs to lists of indices in yolo_instances
-        - all_class_ids: Set of all unique class IDs from both original and YOLO instances
-    """
-    orig_by_class: Dict[int, List[int]] = {}
-    yolo_by_class: Dict[int, List[int]] = {}
-
-    for i, inst in enumerate(original_instances):
-        orig_by_class.setdefault(inst.class_id, []).append(i)
-
-    for i, inst in enumerate(yolo_instances):
-        yolo_by_class.setdefault(inst.class_id, []).append(i)
-
-    all_class_ids = set(orig_by_class.keys()) | set(yolo_by_class.keys())
-
-    return orig_by_class, yolo_by_class, all_class_ids
-
-
-def _build_cost_matrix(
-    original_instances: List[OriginalInstanceRecord],
-    yolo_instances: List[YoloInstanceRecord],
-    orig_indices: List[int],
-    yolo_indices: List[int],
-    mask_min_iou: float,
-    class_id: int,
-) -> np.ndarray:
-    """Build the cost matrix for matching instances of a given class.
-
-    Args:
-        original_instances: List of expected instances from the original sample.
-        yolo_instances: List of instances parsed from the YOLO label.
-        orig_indices: Indices in original_instances for instances of this class.
-        yolo_indices: Indices in yolo_instances for instances of this class.
-        mask_min_iou: The minimum mask IoU threshold for a match.
-        class_id: The class ID being processed (for logging).
-
-    Returns:
-        A cost matrix where cost_matrix[i, j] contains -IoU or a large negative value
-        (negative IoU used for minimization algorithm).
-    """
-    num_orig = len(orig_indices)
-    num_yolo = len(yolo_indices)
-
-    # Use a large negative finite value instead of -inf to avoid numerical issues
-    # with linear_sum_assignment while still heavily penalizing non-matches
-    VERY_LARGE_COST = -1e9  # Large negative value instead of -inf
-
-    # Initialize with large negative value (will be excluded from matching)
-    cost_matrix = np.full((num_orig, num_yolo), VERY_LARGE_COST)
-
-    for r_idx, orig_idx in enumerate(orig_indices):
-        for c_idx, yolo_idx in enumerate(yolo_indices):
-            try:
-                iou = compute_mask_iou(
-                    original_instances[orig_idx].original_mask,
-                    yolo_instances[yolo_idx].derived_mask,
-                )
-                if iou >= mask_min_iou:
-                    # Store negative IoU because linear_sum_assignment finds minimum cost
-                    cost_matrix[r_idx, c_idx] = -iou
-                # If iou < threshold, cost remains VERY_LARGE_COST (preventing match)
-            except ValueError as e:
-                logger.warning(
-                    f"Error computing mask IoU for class {class_id} between "
-                    f"orig[{orig_idx}] and yolo[{yolo_idx}]: {e}. Skipping pair."
-                )
-
-    return cost_matrix
-
-
-def _match_class_instances(
-    original_instances: List[OriginalInstanceRecord],
-    yolo_instances: List[YoloInstanceRecord],
-    mask_min_iou: float,
-    class_id: int,
-    orig_indices: List[int],
-    yolo_indices: List[int],
-    orig_matched_mask: np.ndarray,
-    yolo_matched_mask: np.ndarray,
-) -> List[Tuple[int, int]]:
-    """Match instances of a specific class using the Hungarian algorithm.
-
-    Args:
-        original_instances: List of expected instances from the original sample.
-        yolo_instances: List of instances parsed from the YOLO label.
-        mask_min_iou: The minimum mask IoU threshold for a match.
-        class_id: The class ID being processed.
-        orig_indices: Indices in original_instances for instances of this class.
-        yolo_indices: Indices in yolo_instances for instances of this class.
-        orig_matched_mask: Boolean mask of already matched original instances.
-        yolo_matched_mask: Boolean mask of already matched YOLO instances.
-
-    Returns:
-        List of tuples (orig_idx, yolo_idx) of matched instances.
-    """
-    if not orig_indices or not yolo_indices:
-        return []  # No instances of this class in one of the lists
-
-    cost_matrix = _build_cost_matrix(
-        original_instances, yolo_instances, orig_indices, yolo_indices, mask_min_iou, class_id
-    )
-
-    # Define the threshold for considering a value as essentially -inf
-    VERY_LARGE_COST_THRESHOLD = -1e8
-
-    # If cost_matrix contains only very large negative values, assignment will be meaningless
-    if np.all(cost_matrix < VERY_LARGE_COST_THRESHOLD):
-        logger.debug(f"No pairs met IoU threshold for class {class_id}. Skipping assignment.")
-        return []
-
-    # Handle cost matrix with valid costs
-    matched_pairs = []
+def _compute_mask_iou_for_match(
+    record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
+) -> float:
+    """Helper function to compute mask IoU for the match_instances call."""
     try:
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-
-        # Process matches from assignment
-        for r, c in zip(row_ind, col_ind):
-            # Check if the assigned cost is valid (not extremely negative, meaning IoU >= threshold)
-            if cost_matrix[r, c] > VERY_LARGE_COST_THRESHOLD:
-                orig_actual_idx = orig_indices[r]
-                yolo_actual_idx = yolo_indices[c]
-                matched_pairs.append((orig_actual_idx, yolo_actual_idx))
-                orig_matched_mask[orig_actual_idx] = True
-                yolo_matched_mask[yolo_actual_idx] = True
-
+        return calculate_mask_iou(record_a.original_mask, record_b.derived_mask)
     except ValueError as e:
-        # This should no longer happen with finite values, but keep as a safeguard
-        logger.error(
-            f"linear_sum_assignment failed for class {class_id} despite using finite values: {e}. "
-            f"Cost matrix shape: {cost_matrix.shape}"
+        logger.warning(
+            f"Error computing mask IoU for matching between orig "
+            f"(sample {record_a.sample_id}, seg {record_a.segment_idx}, mask {record_a.mask_idx}) "
+            f"and yolo (sample {record_b.sample_id}): {e}. Returning 0.0 IoU."
         )
-        # Fallback to greedy matching
-        logger.info(f"Falling back to greedy matching for class {class_id}.")
-
-        # Create flattened list of (row, col, cost) tuples
-        valid_costs = []
-        for r, orig_idx in enumerate(orig_indices):
-            for c, yolo_idx in enumerate(yolo_indices):
-                cost = cost_matrix[r, c]
-                if cost > VERY_LARGE_COST_THRESHOLD:
-                    valid_costs.append((r, c, cost))
-
-        # Sort by cost (ascending, since we have negative IoUs)
-        valid_costs.sort(key=lambda x: x[2])
-
-        # Greedily assign matches
-        matched_r = set()
-        matched_c = set()
-
-        for r, c, _ in valid_costs:
-            if r not in matched_r and c not in matched_c:
-                orig_actual_idx = orig_indices[r]
-                yolo_actual_idx = yolo_indices[c]
-                matched_pairs.append((orig_actual_idx, yolo_actual_idx))
-                orig_matched_mask[orig_actual_idx] = True
-                yolo_matched_mask[yolo_actual_idx] = True
-                matched_r.add(r)
-                matched_c.add(c)
-
-    return matched_pairs
-
-
-def _match_instances(
-    original_instances: List[OriginalInstanceRecord],
-    yolo_instances: List[YoloInstanceRecord],
-    mask_min_iou: float,
-) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
-    """Matches original and YOLO instances based on class ID and mask IoU.
-
-    Uses the Hungarian algorithm for optimal assignment within each class.
-
-    Args:
-        original_instances: List of expected instances from the original sample.
-        yolo_instances: List of instances parsed from the YOLO label.
-        mask_min_iou: The minimum mask IoU threshold for a match.
-
-    Returns:
-        A tuple containing:
-        - matched_indices: List of tuples (orig_idx, yolo_idx) of matched instances.
-        - lost_indices: List of indices into original_instances that were not matched.
-        - extra_indices: List of indices into yolo_instances that were not matched.
-    """
-    matched_indices: List[Tuple[int, int]] = []
-    orig_matched_mask = np.zeros(len(original_instances), dtype=bool)
-    yolo_matched_mask = np.zeros(len(yolo_instances), dtype=bool)
-
-    # Group instances by class ID
-    orig_by_class, yolo_by_class, all_class_ids = _group_instances_by_class(
-        original_instances, yolo_instances
-    )
-
-    # Match within each class
-    for class_id in all_class_ids:
-        orig_indices = orig_by_class.get(class_id, [])
-        yolo_indices = yolo_by_class.get(class_id, [])
-
-        class_matches = _match_class_instances(
-            original_instances,
-            yolo_instances,
-            mask_min_iou,
-            class_id,
-            orig_indices,
-            yolo_indices,
-            orig_matched_mask,
-            yolo_matched_mask,
-        )
-
-        matched_indices.extend(class_matches)
-
-    # Identify unmatched instances
-    lost_indices = [i for i, matched in enumerate(orig_matched_mask) if not matched]
-    extra_indices = [i for i, matched in enumerate(yolo_matched_mask) if not matched]
-
-    return matched_indices, lost_indices, extra_indices
+        return 0.0
 
 
 def verify_sample_conversion(
@@ -496,15 +298,14 @@ def verify_sample_conversion(
     original_sample: Optional[SegmSample],
     phrase_map: Dict[str, Dict[str, Any]],
     mask_type: str,
-    mask_min_iou: float,
-    bbox_min_iou: float,
-    global_sample_ratio: float = 1.0,  # Add this if reusing _get_sampled_mapping_info
+    iou_cutoff: float,
+    iou_top: float,
+    global_sample_ratio: float = 1.0,
 ) -> VerificationResult:
     """Verifies the conversion for a single sample ID."""
 
     result = VerificationResult(sample_id=sample_id)
 
-    # --- TODO: Implement core logic --- #
     # 1. Load and parse YOLO data
     yolo_instances, yolo_load_error = _load_yolo_instances(
         sample_id, yolo_label_path, yolo_image_path
@@ -527,36 +328,53 @@ def verify_sample_conversion(
         original_sample, phrase_map, mask_type, global_sample_ratio
     )
 
-    # 4. Match instances
-    matched_indices, lost_indices, extra_indices = _match_instances(
-        original_instances_expected, yolo_instances, mask_min_iou
+    # 4. Match instances using generic matcher
+    # Note: We match based on mask IoU >= iou_cutoff
+    matched_indices, lost_indices, extra_indices = match_instances(
+        dataset_a=original_instances_expected,
+        dataset_b=yolo_instances,
+        compute_iou_fn=_compute_mask_iou_for_match,
+        iou_cutoff=iou_cutoff,
+        use_hungarian=True,
     )
 
-    # 5. Process matches and check bbox IoU
+    # 5. Process matches and calculate quality metrics
     for orig_idx, yolo_idx in matched_indices:
         orig_inst = original_instances_expected[orig_idx]
         yolo_inst = yolo_instances[yolo_idx]
 
-        # Re-calculate mask IoU for reporting (linear_sum_assignment gives cost)
-        mask_iou = compute_mask_iou(orig_inst.original_mask, yolo_inst.derived_mask)
+        # Calculate mask IoU (might be slightly different from match helper due to error handling)
+        try:
+            mask_iou = calculate_mask_iou(orig_inst.original_mask, yolo_inst.derived_mask)
+        except ValueError:
+            mask_iou = 0.0
 
         # Calculate bbox IoU
-        bbox_iou = compute_bbox_iou(np.array(orig_inst.bbox), np.array(yolo_inst.bbox))
+        try:
+            bbox_iou = calculate_bbox_iou(np.array(orig_inst.bbox), np.array(yolo_inst.bbox))
+        except Exception as e:
+            log_msg = (
+                f"Error calculating bbox IoU for sample {sample_id}, "
+                f"orig_idx {orig_idx}, yolo_idx {yolo_idx}: {e}"
+            )
+            logger.warning(log_msg)
+            bbox_iou = 0.0
+
+        # Check against the high IoU threshold (iou_top)
+        mask_threshold_passed = mask_iou >= iou_top
+        bbox_threshold_passed = bbox_iou >= iou_top
 
         match_info = {
             "original_segment_idx": orig_inst.segment_idx,
             "original_mask_idx": orig_inst.mask_idx,
-            "yolo_instance_index": yolo_idx,  # Index within the parsed yolo list
+            "yolo_instance_index": yolo_idx,
             "class_id": orig_inst.class_id,
             "mask_iou": mask_iou,
             "bbox_iou": bbox_iou,
-            "bbox_threshold_passed": bbox_iou >= bbox_min_iou,
+            "mask_threshold_passed": mask_threshold_passed,
+            "bbox_threshold_passed": bbox_threshold_passed,
         }
         result.matched_pairs.append(match_info)
-
-        # Record bbox IoU failures separately
-        if not match_info["bbox_threshold_passed"]:
-            result.bbox_iou_failures.append(match_info)
 
     # 6. Populate lost and extra instances
     result.lost_instances = [original_instances_expected[i] for i in lost_indices]
@@ -567,8 +385,7 @@ def verify_sample_conversion(
 
     logger.debug(
         f"Verification completed for {sample_id}: {len(result.matched_pairs)} matches, "
-        f"{len(result.lost_instances)} lost, {len(result.extra_instances)} extra, "
-        f"{len(result.bbox_iou_failures)} bbox fails."
+        f"{len(result.lost_instances)} lost, {len(result.extra_instances)} extra."
     )
 
     return result

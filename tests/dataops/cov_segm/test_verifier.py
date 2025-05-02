@@ -1,16 +1,14 @@
 """Unit tests for the conversion verifier implementation."""
 
-import pytest
 import numpy as np
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 from vibelab.dataops.cov_segm.convert_verifier import (
-    _match_instances,
-    _calculate_bbox_from_mask,
     OriginalInstanceRecord,
     YoloInstanceRecord,
+    _calculate_bbox_from_mask,
 )
+from vibelab.utils.common.label_match import match_instances
+from vibelab.utils.common.mask import calculate_mask_iou
 
 
 def test_calculate_bbox_from_mask():
@@ -78,7 +76,12 @@ def test_match_instances_exact_match():
     ]
 
     # Match with 100% minimum IoU (exact match required)
-    matched, lost, extra = _match_instances(original_instances, yolo_instances, mask_min_iou=1.0)
+    matched, lost, extra = match_instances(
+        original_instances,
+        yolo_instances,
+        compute_iou_fn=_mask_iou_wrapper,
+        iou_cutoff=1.0,
+    )
 
     # We expect both instances to match correctly
     assert len(matched) == 2, f"Expected 2 matches, got {len(matched)}"
@@ -90,7 +93,9 @@ def test_match_instances_exact_match():
     expected_matches = {(0, 1), (1, 0)}  # Set of (orig_idx, yolo_idx) tuples
     actual_matches = set(matched)
 
-    assert actual_matches == expected_matches, f"Expected matches {expected_matches}, got {actual_matches}"
+    assert actual_matches == expected_matches, (
+        f"Expected matches {expected_matches}, got {actual_matches}"
+    )
 
 
 def test_match_instances_partial_overlap():
@@ -130,7 +135,12 @@ def test_match_instances_partial_overlap():
     ]
 
     # Test with IoU threshold just below the expected IoU
-    matched, lost, extra = _match_instances(original_instances, yolo_instances, mask_min_iou=0.17)
+    matched, lost, extra = match_instances(
+        original_instances,
+        yolo_instances,
+        compute_iou_fn=_mask_iou_wrapper,
+        iou_cutoff=0.17,
+    )
 
     # We expect a match
     assert len(matched) == 1, f"Expected 1 match, got {len(matched)}"
@@ -138,7 +148,12 @@ def test_match_instances_partial_overlap():
     assert len(extra) == 0, f"Expected 0 extra instances, got {len(extra)}"
 
     # Test with IoU threshold just above the expected IoU
-    matched, lost, extra = _match_instances(original_instances, yolo_instances, mask_min_iou=0.18)
+    matched, lost, extra = match_instances(
+        original_instances,
+        yolo_instances,
+        compute_iou_fn=_mask_iou_wrapper,
+        iou_cutoff=0.18,
+    )
 
     # We expect no matches
     assert len(matched) == 0, f"Expected 0 matches, got {len(matched)}"
@@ -164,20 +179,36 @@ def test_match_instances_multiple_classes():
     # Create original instances
     original_instances = [
         OriginalInstanceRecord(
-            sample_id="sample1", segment_idx=0, mask_idx=0, class_id=1,
-            original_mask=mask_class1a, bbox=(0, 0, 2, 2),
+            sample_id="sample1",
+            segment_idx=0,
+            mask_idx=0,
+            class_id=1,
+            original_mask=mask_class1a,
+            bbox=(0, 0, 2, 2),
         ),
         OriginalInstanceRecord(
-            sample_id="sample1", segment_idx=1, mask_idx=0, class_id=1,
-            original_mask=mask_class1b, bbox=(3, 0, 5, 2),
+            sample_id="sample1",
+            segment_idx=1,
+            mask_idx=0,
+            class_id=1,
+            original_mask=mask_class1b,
+            bbox=(3, 0, 5, 2),
         ),
         OriginalInstanceRecord(
-            sample_id="sample1", segment_idx=2, mask_idx=0, class_id=2,
-            original_mask=mask_class2, bbox=(0, 3, 2, 5),
+            sample_id="sample1",
+            segment_idx=2,
+            mask_idx=0,
+            class_id=2,
+            original_mask=mask_class2,
+            bbox=(0, 3, 2, 5),
         ),
         OriginalInstanceRecord(
-            sample_id="sample1", segment_idx=3, mask_idx=0, class_id=3,
-            original_mask=mask_class3, bbox=(6, 6, 8, 8),
+            sample_id="sample1",
+            segment_idx=3,
+            mask_idx=0,
+            class_id=3,
+            original_mask=mask_class3,
+            bbox=(6, 6, 8, 8),
         ),
     ]
 
@@ -185,25 +216,36 @@ def test_match_instances_multiple_classes():
     # to ensure the class 1 matching works properly
     yolo_instances = [
         YoloInstanceRecord(
-            sample_id="sample1", class_id=1,
+            sample_id="sample1",
+            class_id=1,
             polygon_abs=[(0, 0), (2, 0), (2, 2), (0, 2)],
-            derived_mask=mask_class1a, bbox=(0, 0, 2, 2),
+            derived_mask=mask_class1a,
+            bbox=(0, 0, 2, 2),
         ),
         YoloInstanceRecord(
-            sample_id="sample1", class_id=1,
+            sample_id="sample1",
+            class_id=1,
             polygon_abs=[(0, 3), (2, 3), (6, 5), (3, 6)],
-            derived_mask=mask_class1b, bbox=(3, 0, 5, 2),
+            derived_mask=mask_class1b,
+            bbox=(3, 0, 5, 2),
         ),
         YoloInstanceRecord(
-            sample_id="sample1", class_id=2,
+            sample_id="sample1",
+            class_id=2,
             polygon_abs=[(0, 3), (2, 3), (2, 5), (0, 5)],
-            derived_mask=mask_class2, bbox=(0, 3, 2, 5),
+            derived_mask=mask_class2,
+            bbox=(0, 3, 2, 5),
         ),
         # Class 3 is missing from YOLO
     ]
 
     # Match with perfect IoU required
-    matched, lost, extra = _match_instances(original_instances, yolo_instances, mask_min_iou=1.0)
+    matched, lost, extra = match_instances(
+        original_instances,
+        yolo_instances,
+        compute_iou_fn=_mask_iou_wrapper,
+        iou_cutoff=1.0,
+    )
 
     # We expect 3 matches (class 1a, class 1b, and class 2), 1 lost (class 3)
     assert len(matched) == 3, f"Expected 3 matches, got {len(matched)}"
@@ -218,3 +260,12 @@ def test_match_instances_multiple_classes():
 
     # Check which instance was lost
     assert set(lost) == {3}, f"Expected lost instance [3], got {lost}"  # Original class 3
+
+
+# Helper function for match_instances
+def _mask_iou_wrapper(a: OriginalInstanceRecord, b: YoloInstanceRecord) -> float:  # type: ignore
+    """Compute IoU between the stored masks in two instance records."""
+    return calculate_mask_iou(a.original_mask, b.derived_mask)
+
+
+DEFAULT_IOU_CUTOFF = 0.5  # generic cutoff for matching

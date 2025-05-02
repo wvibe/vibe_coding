@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import random
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -82,16 +83,22 @@ def _setup_argparse() -> argparse.ArgumentParser:
 
     # Optional arguments - Verification Parameters
     parser.add_argument(
-        "--bbox-min-iou",
+        "--iou-cutoff",
         type=float,
-        default=0.95,
-        help="Minimum IoU threshold for bounding box matching.",
+        default=0.5,
+        help=(
+            "Minimum mask IoU threshold required to consider an original and YOLO "
+            "instance as a potential match."
+        ),
     )
     parser.add_argument(
-        "--mask-min-iou",
+        "--iou-top",
         type=float,
         default=0.95,
-        help="Minimum IoU threshold for mask matching.",
+        help=(
+            "High IoU threshold used for quality assessment. Matched pairs below this "
+            "(for mask or bbox) are flagged."
+        ),
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed for sample selection.")
 
@@ -152,9 +159,11 @@ def sample_yolo_ids(yolo_label_dir: Path, args: argparse.Namespace) -> List[str]
     # Random sampling mode
     if args.sample_count >= len(all_sample_ids):
         sampled_ids = all_sample_ids
-        logger.info(
-            f"Sample count ({args.sample_count}) >= total samples. Verifying all {len(sampled_ids)} samples."
+        log_msg = (
+            f"Sample count ({args.sample_count}) >= total samples. "
+            f"Verifying all {len(sampled_ids)} samples."
         )
+        logger.info(log_msg)
     else:
         sampled_ids = random.sample(all_sample_ids, args.sample_count)
         logger.info(f"Randomly selected {len(sampled_ids)} samples for verification.")
@@ -200,9 +209,11 @@ def load_hf_data(
     try:
         hf_dataset = datasets.load_dataset(hf_dataset_path, split=train_split)
         # Filter the dataset *before* loading samples
-        logger.info(
-            f"Filtering HF dataset for {len(sampled_ids_set)} selected sample IDs using {num_proc} processes..."
+        log_msg = (
+            f"Filtering HF dataset for {len(sampled_ids_set)} selected sample IDs "
+            f"using {num_proc} processes..."
         )
+        logger.info(log_msg)
         filtered_hf_dataset = hf_dataset.filter(
             lambda example: example["id"] in sampled_ids_set, num_proc=num_proc
         )
@@ -248,8 +259,8 @@ def verify_samples(
     original_samples_dict: Dict[str, Optional[SegmSample]],
     phrase_map: Dict[str, Dict[str, Any]],
     mask_type: str,
-    mask_min_iou: float,
-    bbox_min_iou: float,
+    iou_cutoff: float,
+    iou_top: float,
 ) -> List[VerificationResult]:
     """Verify each sample against the original data."""
     verification_results: List[VerificationResult] = []
@@ -267,8 +278,8 @@ def verify_samples(
             original_sample=original_sample,
             phrase_map=phrase_map,
             mask_type=mask_type,
-            mask_min_iou=mask_min_iou,
-            bbox_min_iou=bbox_min_iou,
+            iou_cutoff=iou_cutoff,
+            iou_top=iou_top,
             global_sample_ratio=1.0,
         )
         verification_results.append(result)
@@ -278,21 +289,28 @@ def verify_samples(
 
 def aggregate_results(
     verification_results: List[VerificationResult],
-) -> Tuple[Dict[str, int], Dict[str, List[float]]]:
-    """Aggregate verification results into statistics."""
+) -> Tuple[Dict[str, int], Dict[str, List[float]], Dict[int, int], Dict[int, int], Dict[int, int]]:
+    """Aggregate verification results into statistics, including per-class counts."""
     stats = {
         "total_samples_verified": 0,
         "total_processing_errors": 0,
         "total_matched": 0,
         "total_lost": 0,
         "total_extra": 0,
-        "total_bbox_fails": 0,
+        "total_mask_top_iou_fails": 0,
+        "total_bbox_top_iou_fails": 0,
     }
 
     iou_data = {
         "mask_ious": [],
         "bbox_ious": [],
     }
+
+    # Per-class counters
+    expected_by_class = defaultdict(int)
+    matched_by_class = defaultdict(int)
+    lost_by_class = defaultdict(int)
+    extra_by_class = defaultdict(int)
 
     for res in verification_results:
         if res.processing_error:
@@ -302,13 +320,29 @@ def aggregate_results(
             stats["total_matched"] += len(res.matched_pairs)
             stats["total_lost"] += len(res.lost_instances)
             stats["total_extra"] += len(res.extra_instances)
-            stats["total_bbox_fails"] += len(res.bbox_iou_failures)
 
             for pair in res.matched_pairs:
+                class_id = pair["class_id"]
                 iou_data["mask_ious"].append(pair["mask_iou"])
                 iou_data["bbox_ious"].append(pair["bbox_iou"])
+                matched_by_class[class_id] += 1
+                expected_by_class[class_id] += 1
 
-    return stats, iou_data
+                if not pair["mask_threshold_passed"]:
+                    stats["total_mask_top_iou_fails"] += 1
+                if not pair["bbox_threshold_passed"]:
+                    stats["total_bbox_top_iou_fails"] += 1
+
+            for inst in res.lost_instances:
+                class_id = inst.class_id
+                lost_by_class[class_id] += 1
+                expected_by_class[class_id] += 1
+
+            for inst in res.extra_instances:
+                class_id = inst.class_id
+                extra_by_class[class_id] += 1
+
+    return stats, iou_data, dict(expected_by_class), dict(lost_by_class), dict(extra_by_class)
 
 
 def report_results(
@@ -316,22 +350,36 @@ def report_results(
     iou_data: Dict[str, List[float]],
     args: argparse.Namespace,
     all_sample_count: int,
+    class_names: Dict[int, str],
+    expected_by_class: Dict[int, int],
+    lost_by_class: Dict[int, int],
+    extra_by_class: Dict[int, int],
 ) -> int:
-    """Report verification results and return exit code."""
+    """Report verification results, including per-class stats, and return exit code."""
     logger.info("--- Verification Summary ---")
-    logger.info(f"Samples Requested: {args.sample_count}")
+    if args.sample_id:
+        logger.info(f"Verified Specific Sample ID: {args.sample_id}")
+    else:
+        logger.info(f"Samples Requested: {args.sample_count}")
     logger.info(f"Samples Found in YOLO: {all_sample_count}")
     logger.info(
-        f"Samples Selected for Verification: {stats['total_samples_verified'] + stats['total_processing_errors']}"
+        f"Samples Selected for Verification: "
+        f"{stats['total_samples_verified'] + stats['total_processing_errors']}"
     )
     logger.info(f"Samples Successfully Verified: {stats['total_samples_verified']}")
     logger.info(f"Samples with Processing Errors: {stats['total_processing_errors']}")
-    logger.info("--- Instance Matching --- >")
+    logger.info(f"--- Instance Matching (Mask IoU >= {args.iou_cutoff}) --- >")
     logger.info(f"Matched Instances: {stats['total_matched']}")
-    logger.info(f"Lost Instances (Expected but not found in YOLO): {stats['total_lost']}")
-    logger.info(f"Extra Instances (Found in YOLO but not expected): {stats['total_extra']}")
+    logger.info(f"Lost Instances (Expected but not matched): {stats['total_lost']}")
+    logger.info(f"Extra Instances (Found in YOLO but not matched): {stats['total_extra']}")
+    logger.info(f"--- Matched Instance Quality (Threshold = {args.iou_top}) --- >")
     logger.info(
-        f"Matched Instances Failing BBox IoU (>= {args.bbox_min_iou}): {stats['total_bbox_fails']}"
+        f"Matched Instances Failing Mask IoU (>= {args.iou_top}): "
+        f"{stats['total_mask_top_iou_fails']}"
+    )
+    logger.info(
+        f"Matched Instances Failing BBox IoU (>= {args.iou_top}): "
+        f"{stats['total_bbox_top_iou_fails']}"
     )
 
     # Use stats table for IoU distributions if matches exist
@@ -342,19 +390,56 @@ def report_results(
         }
         # Example format string - adjust columns/width as needed
         format_string = "{key:<12} {count:>6d} {mean:>7.3f} {min:>7.3f} {p50:>7.3f} {max:>7.3f}"
-        logger.info("--- IoU Statistics for Matched Instances --- >")
+        logger.info(
+            "--- IoU Statistics for Matched Instances (Pairs with Mask IoU >= {}) --- >".format(
+                args.iou_cutoff
+            )
+        )
         table_lines = format_statistics_table(iou_stats_data, format_string)
         for line in table_lines:
             logger.info(line)
     else:
         logger.info("No matched instances to report IoU statistics for.")
 
+    # Report Per-Class Statistics
+    logger.info("--- Per-Class Instance Statistics --- >")
+    all_class_ids = (
+        set(expected_by_class.keys()) | set(lost_by_class.keys()) | set(extra_by_class.keys())
+    )
+    if not all_class_ids:
+        logger.info("  No instances found across any class.")
+    else:
+        # Header with corrected alignment
+        header1 = (
+            f"  {'Class':<20} {'Expected':>8} {'Matched':>8} {'Lost':>8} "
+            f"{'Lost (%)':>9} {'Extra':>8}"
+        )
+        header2 = (
+            f"  {'--------------------':<20} {'--------':>8} {'--------':>8} "
+            f"{'--------':>8} {'---------':>9} {'--------':>8}"
+        )
+        logger.info(header1)
+        logger.info(header2)
+        for cid in sorted(list(all_class_ids)):
+            class_name = class_names.get(cid, f"Unknown ({cid})")
+            expected = expected_by_class.get(cid, 0)
+            lost = lost_by_class.get(cid, 0)
+            extra = extra_by_class.get(cid, 0)
+            matched = expected_by_class.get(cid, 0) - lost_by_class.get(cid, 0)
+            lost_percentage = (lost / expected * 100) if expected > 0 else 0.0
+            log_line = (
+                f"  {f'{cid} ({class_name})':<20} {expected:>8} {matched:>8} "
+                f"{lost:>8} ({lost_percentage:>5.1f}%) {extra:>8}"
+            )
+            logger.info(log_line)
+
     # Determine Overall Success and Exit Code
     is_success = (
         stats["total_processing_errors"] == 0
         and stats["total_lost"] == 0
         and stats["total_extra"] == 0
-        and stats["total_bbox_fails"] == 0
+        and stats["total_mask_top_iou_fails"] == 0
+        and stats["total_bbox_top_iou_fails"] == 0
     )
 
     if is_success:
@@ -365,7 +450,7 @@ def report_results(
         return 1
 
 
-def print_single_sample_verification(result: VerificationResult) -> None:
+def print_single_sample_verification(result: VerificationResult, iou_top: float) -> None:
     """Print detailed verification result for a single sample."""
     sample_id = result.sample_id
     logger.info(f"===== Verification Result for Sample ID: {sample_id} =====")
@@ -380,14 +465,22 @@ def print_single_sample_verification(result: VerificationResult) -> None:
         for i, match in enumerate(result.matched_pairs):
             logger.info(f"  Match {i + 1}:")
             logger.info(f"    Class ID: {match['class_id']}")
-            logger.info(
-                f"    Original segment/mask: {match['original_segment_idx']}/{match['original_mask_idx']}"
+            log_line = (
+                f"    Original segment/mask: {match['original_segment_idx']}/"
+                f"{match['original_mask_idx']}"
             )
+            logger.info(log_line)
             logger.info(f"    YOLO instance: {match['yolo_instance_index']}")
-            logger.info(f"    Mask IoU: {match['mask_iou']:.4f}")
-            logger.info(
-                f"    BBox IoU: {match['bbox_iou']:.4f} (Threshold: {match['bbox_threshold_passed']})"
+            log_line = (
+                f"    Mask IoU: {match['mask_iou']:.4f} (Threshold Passed: "
+                f"{match['mask_threshold_passed']})"
             )
+            logger.info(log_line)
+            log_line = (
+                f"    BBox IoU: {match['bbox_iou']:.4f} (Threshold Passed: "
+                f"{match['bbox_threshold_passed']})"
+            )
+            logger.info(log_line)
 
     # Print lost instances
     logger.info(f"LOST INSTANCES (expected but not found in YOLO): {len(result.lost_instances)}")
@@ -406,24 +499,16 @@ def print_single_sample_verification(result: VerificationResult) -> None:
             logger.info(f"    Class ID: {inst.class_id}")
             logger.info(f"    BBox: {inst.bbox}")
 
-    # Print bbox failures
-    logger.info(f"BBOX IoU FAILURES: {len(result.bbox_iou_failures)}")
-    if result.bbox_iou_failures:
-        for i, fail in enumerate(result.bbox_iou_failures):
-            logger.info(f"  Failure {i + 1}:")
-            logger.info(f"    Class ID: {fail['class_id']}")
-            logger.info(
-                f"    Original segment/mask: {fail['original_segment_idx']}/{fail['original_mask_idx']}"
-            )
-            logger.info(f"    YOLO instance: {fail['yolo_instance_index']}")
-            logger.info(f"    BBox IoU: {fail['bbox_iou']:.4f}")
-
     # Summary
+    mask_fails = sum(1 for m in result.matched_pairs if not m["mask_threshold_passed"])
+    bbox_fails = sum(1 for m in result.matched_pairs if not m["bbox_threshold_passed"])
     is_success = (
         len(result.lost_instances) == 0
         and len(result.extra_instances) == 0
-        and len(result.bbox_iou_failures) == 0
+        and mask_fails == 0
+        and bbox_fails == 0
     )
+    logger.info(f"High Threshold ({iou_top:.2f}) Failures: Mask={mask_fails}, BBox={bbox_fails}")
     logger.info(f"VERIFICATION RESULT: {'SUCCESS' if is_success else 'FAILURE'}")
 
 
@@ -456,6 +541,8 @@ def main():
     else:
         logger.info(f"Sample Count: {args.sample_count}")
     logger.info(f"Using {args.num_proc} processes for dataset operations")
+    logger.info(f"IoU Cutoff for Matching: {args.iou_cutoff}")
+    logger.info(f"IoU Top Threshold for Quality: {args.iou_top}")
 
     # 1. Validate paths and Load Mapping Config
     target_root_path = Path(args.target_root)
@@ -488,24 +575,45 @@ def main():
         original_samples_dict,
         phrase_map,
         args.mask_type,
-        args.mask_min_iou,
-        args.bbox_min_iou,
+        args.iou_cutoff,
+        args.iou_top,
     )
 
     # 5. Handle results
     # For single sample mode, provide detailed output
     if args.sample_id:
         if verification_results:
-            print_single_sample_verification(verification_results[0])
-            exit_code = 0 if not verification_results[0].processing_error else 1
+            print_single_sample_verification(verification_results[0], args.iou_top)
+            res = verification_results[0]
+            mask_fails = sum(1 for m in res.matched_pairs if not m["mask_threshold_passed"])
+            bbox_fails = sum(1 for m in res.matched_pairs if not m["bbox_threshold_passed"])
+            is_success = (
+                not res.processing_error
+                and len(res.lost_instances) == 0
+                and len(res.extra_instances) == 0
+                and mask_fails == 0
+                and bbox_fails == 0
+            )
+            exit_code = 0 if is_success else 1
         else:
             logger.error(f"No verification result generated for sample ID: {args.sample_id}")
             exit_code = 1
     else:
         # For multi-sample mode, aggregate results
-        stats, iou_data = aggregate_results(verification_results)
+        stats, iou_data, expected_by_class, lost_by_class, extra_by_class = aggregate_results(
+            verification_results
+        )
         # 6. Print Summary Report and determine exit code
-        exit_code = report_results(stats, iou_data, args, all_sample_count)
+        exit_code = report_results(
+            stats,
+            iou_data,
+            args,
+            all_sample_count,
+            class_names,
+            expected_by_class,
+            lost_by_class,
+            extra_by_class,
+        )
 
     logger.info("Verification process finished.")
     exit(exit_code)
