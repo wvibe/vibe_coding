@@ -103,16 +103,16 @@ This module provides tools for drawing annotations like bounding boxes, polygons
 
 ---
 
-## `geometry.py` - Geometric Calculation Utilities
+## `mask.py` - Mask Operations and Utilities
 
-This module provides utility functions for geometric calculations, especially for working with polygons, contours, and masks. It's particularly useful for converting binary masks to polygon representations suitable for YOLO format data.
+This module provides utility functions for mask operations, especially for working with polygons, contours, and binary masks. It's particularly useful for converting binary masks to polygon representations suitable for YOLO format data and calculating IoU between masks.
 
 ### Key Constants
 
 - `DEFAULT_MIN_CONTOUR_AREA`: Minimum area (in pixels) for a contour to be considered valid (default: 1.0).
 - `DEFAULT_POLYGON_APPROX_TOLERANCE`: Default epsilon value for polygon approximation relative to arc length (default: 0.005).
 
-### Main Public Function
+### Main Public Functions
 
 #### `mask_to_yolo_polygons(binary_mask, img_shape, connect_parts=False, min_contour_area=DEFAULT_MIN_CONTOUR_AREA, polygon_approx_tolerance=DEFAULT_POLYGON_APPROX_TOLERANCE)`
 
@@ -128,6 +128,22 @@ This module provides utility functions for geometric calculations, especially fo
   2. If `connect_parts` is True, attempts to stitch multiple contours into a single polygon
   3. Normalizes pixel coordinates to [0,1] range and flattens to YOLO format
 - **Output:** List of polygons in YOLO format (`[x1, y1, x2, y2, ...]`), each polygon normalized to [0,1] range.
+
+#### `polygon_to_mask(polygon_coords, height, width)`
+
+- **Purpose:** Convert a polygon (list of pixel coordinates) to a binary mask.
+- **Input:**
+  - `polygon_coords`: List of (x, y) pixel coordinates for polygon vertices
+  - `height`, `width`: Dimensions of the target mask
+- **Logic:** Uses OpenCV's `fillPoly` to create a binary mask from the polygon points
+- **Output:** Boolean numpy array where True indicates pixels inside the polygon
+
+#### `calculate_mask_iou(mask1, mask2)`
+
+- **Purpose:** Calculate the IoU (Intersection over Union) between two binary masks.
+- **Input:** Two boolean numpy arrays of the same shape
+- **Logic:** Computes logical AND for intersection and logical OR for union, then calculates the ratio
+- **Output:** IoU value between 0.0 and 1.0
 
 ### Helper Functions
 
@@ -156,6 +172,61 @@ This module provides utility functions for geometric calculations, especially fo
   3. Flattens coordinates to YOLO format `[x1, y1, x2, y2, ...]`
   4. Performs validity checks (at least 3 points after processing)
 - **Output:** List of polygon coordinates in flattened YOLO format, normalized to [0,1] range.
+
+---
+
+## `label_match.py` - Instance Matching Utilities
+
+This module provides algorithms for matching instances between datasets based on IoU (Intersection over Union) metrics. It implements both an optimal matching algorithm using the Hungarian method and a greedy matching approach.
+
+### Constants
+
+- `_INVALID_IOU_PLACEHOLDER`: A large negative value (-1e6) used to mark invalid/below-threshold pairs in the IoU matrix.
+
+### Main Public Function
+
+#### `match_instances(dataset_a, dataset_b, compute_iou_fn, iou_cutoff=0.5, use_hungarian=True)`
+
+- **Purpose:** Match instances between two datasets using either Hungarian (optimal) or Greedy algorithm.
+- **Input:**
+  - `dataset_a`, `dataset_b`: Lists of objects to match (e.g., bounding boxes, masks)
+  - `compute_iou_fn`: Function that computes IoU between two objects (returns float in range [0, 1])
+  - `iou_cutoff`: Minimum IoU value to consider a valid match (default: 0.5)
+  - `use_hungarian`: If True, use Hungarian algorithm (optimal), otherwise use Greedy (default: True)
+- **Logic:**
+  1. Builds an IoU matrix between all pairs from dataset_a and dataset_b
+  2. Applies the selected matching algorithm (Hungarian or Greedy)
+  3. Returns matched pairs and unmatched indices
+- **Output:** Tuple containing:
+  - List of matched pairs as (index_a, index_b) tuples
+  - List of unmatched indices from dataset_a
+  - List of unmatched indices from dataset_b
+
+### Helper Functions
+
+#### `_build_iou_matrix(dataset_a, dataset_b, compute_iou_fn, iou_cutoff)`
+
+- **Purpose:** Constructs an IoU matrix between all pairs of objects from the two datasets.
+- **Logic:** Computes IoU for each pair, keeping values that meet the cutoff and replacing others with `_INVALID_IOU_PLACEHOLDER`.
+- **Output:** NumPy array of shape (len(dataset_a), len(dataset_b)) containing IoU values.
+
+#### `_match_instances_hungarian(iou_matrix, iou_cutoff)`
+
+- **Purpose:** Finds optimal matching using the Hungarian algorithm.
+- **Logic:**
+  1. Pads the matrix with dummy rows/columns to handle non-square matrices
+  2. Uses SciPy's `linear_sum_assignment` with `maximize=True` to find optimal assignment
+  3. Filters out matches involving dummy rows/columns and pairs below the IoU cutoff
+- **Output:** Tuple containing matched pairs, mask for matched rows, and mask for matched columns.
+
+#### `_match_instances_greedy(iou_matrix, iou_cutoff)`
+
+- **Purpose:** Performs greedy matching based on highest IoU value first.
+- **Logic:**
+  1. Creates a flattened list of valid (row, column, iou) triples
+  2. Sorts in descending order of IoU
+  3. Greedily assigns matches, skipping already matched rows and columns
+- **Output:** Tuple containing matched pairs, mask for matched rows, and mask for matched columns.
 
 ---
 

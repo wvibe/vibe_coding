@@ -234,7 +234,7 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
 
 ## Code Quality and Refactoring
 
-*   **[ ] Refactor Mask Utilities and Matching Logic:**
+*   **[X] Refactor Mask Utilities and Matching Logic:**
     *   **Goal:** Improve code organization and reusability of mask utilities and instance matching algorithms.
     *   **Tasks:**
         *   Rename `geometry.py` to `mask.py` to better reflect its focus on mask-related operations.
