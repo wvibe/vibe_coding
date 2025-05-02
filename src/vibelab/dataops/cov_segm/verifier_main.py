@@ -4,21 +4,21 @@ import argparse
 import logging
 import os
 import random
-import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import datasets
 from tqdm import tqdm
+
+from vibelab.dataops.cov_segm.convert_verifier import (
+    VerificationResult,
+    verify_sample_conversion,
+)
 
 # Local imports
 from vibelab.dataops.cov_segm.converter import load_mapping_config
 from vibelab.dataops.cov_segm.datamodel import SegmSample
 from vibelab.dataops.cov_segm.loader import load_sample
-from vibelab.dataops.cov_segm.convert_verifier import (
-    VerificationResult,
-    verify_sample_conversion,
-)
 from vibelab.utils.common.stats import format_statistics_table
 
 logger = logging.getLogger(__name__)
@@ -46,11 +46,18 @@ def _setup_argparse() -> argparse.ArgumentParser:
         choices=["visible", "full"],
         help="Mask type used during conversion (must match YOLO folder name).",
     )
-    parser.add_argument(
+
+    # Sample selection mutually exclusive group
+    sample_group = parser.add_mutually_exclusive_group(required=True)
+    sample_group.add_argument(
         "--sample-count",
         type=int,
-        required=True,
         help="Number of samples to randomly select and verify.",
+    )
+    sample_group.add_argument(
+        "--sample-id",
+        type=str,
+        help="Specific sample ID to verify (for debugging).",
     )
 
     # Optional arguments - Paths and Configs
@@ -86,9 +93,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
         default=0.95,
         help="Minimum IoU threshold for mask matching.",
     )
-    parser.add_argument(
-        "--seed", type=int, default=None, help="Random seed for sample selection."
-    )
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for sample selection.")
 
     # Optional arguments - Output and Debugging
     parser.add_argument(
@@ -101,7 +106,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
     parser.add_argument(
         "--num-proc",
         type=int,
-        default=8,
+        default=1,
         help="Number of processes to use for parallel dataset operations.",
     )
 
@@ -123,8 +128,8 @@ def validate_paths(target_root_path: Path, mask_type: str, train_split: str) -> 
     return yolo_label_dir, yolo_image_dir
 
 
-def sample_yolo_ids(yolo_label_dir: Path, sample_count: int) -> List[str]:
-    """Sample YOLO IDs for verification."""
+def sample_yolo_ids(yolo_label_dir: Path, args: argparse.Namespace) -> List[str]:
+    """Sample YOLO IDs for verification or find specific ID."""
     logger.info(f"Scanning YOLO label directory: {yolo_label_dir}")
     all_label_files = list(yolo_label_dir.glob("*.txt"))
     all_sample_ids = [f.stem for f in all_label_files]
@@ -134,52 +139,100 @@ def sample_yolo_ids(yolo_label_dir: Path, sample_count: int) -> List[str]:
         logger.error(f"No label files found in {yolo_label_dir}. Cannot verify.")
         exit(1)
 
-    if sample_count >= len(all_sample_ids):
+    # Check for specific sample ID mode
+    if args.sample_id:
+        # Check if the requested sample ID exists
+        if args.sample_id in all_sample_ids:
+            logger.info(f"Found specified sample ID '{args.sample_id}' in YOLO dataset.")
+            return [args.sample_id]
+        else:
+            logger.error(f"Specified sample ID '{args.sample_id}' not found in YOLO dataset.")
+            exit(1)
+
+    # Random sampling mode
+    if args.sample_count >= len(all_sample_ids):
         sampled_ids = all_sample_ids
-        logger.info(f"Sample count ({sample_count}) >= total samples. Verifying all {len(sampled_ids)} samples.")
+        logger.info(
+            f"Sample count ({args.sample_count}) >= total samples. Verifying all {len(sampled_ids)} samples."
+        )
     else:
-        sampled_ids = random.sample(all_sample_ids, sample_count)
+        sampled_ids = random.sample(all_sample_ids, args.sample_count)
         logger.info(f"Randomly selected {len(sampled_ids)} samples for verification.")
 
     return sampled_ids
 
 
-def load_hf_data(hf_dataset_path: str, train_split: str, sampled_ids_set: Set[str], num_proc: int = 1) -> Dict[str, Optional[SegmSample]]:
+def process_single_sample(sample_row):
+    """Process a single sample row and return a serialized dictionary.
+
+    This function is used with datasets.map() for parallel processing.
+    It loads a sample using the loader and then serializes it for PyArrow compatibility.
+
+    Args:
+        sample_row: A raw dataset row.
+
+    Returns:
+        Dictionary containing the serialized sample, or {"error": True} if loading failed.
+    """
+    try:
+        sample = load_sample(sample_row)
+        if sample is None:
+            return {"error": True, "reason": "load_sample returned None"}
+
+        # Convert the SegmSample object to a serializable dict
+        serialized = sample.to_dict()
+        # Add a flag to indicate success
+        serialized["error"] = False
+        return serialized
+
+    except Exception as e:
+        # Log the error but keep processing
+        logging.warning(f"Sample loading error: {e}")
+        # Return an error flag that can be checked later
+        return {"error": True, "reason": str(e)}
+
+
+def load_hf_data(
+    hf_dataset_path: str, train_split: str, sampled_ids_set: Set[str], num_proc: int = 1
+) -> Dict[str, Optional[SegmSample]]:
     """Load corresponding data from HuggingFace dataset."""
     logger.info(f"Loading Hugging Face dataset '{hf_dataset_path}' split '{train_split}'...")
     try:
         hf_dataset = datasets.load_dataset(hf_dataset_path, split=train_split)
         # Filter the dataset *before* loading samples
-        logger.info(f"Filtering HF dataset for {len(sampled_ids_set)} selected sample IDs using {num_proc} processes...")
+        logger.info(
+            f"Filtering HF dataset for {len(sampled_ids_set)} selected sample IDs using {num_proc} processes..."
+        )
         filtered_hf_dataset = hf_dataset.filter(
-            lambda example: example['id'] in sampled_ids_set,
-            num_proc=num_proc
+            lambda example: example["id"] in sampled_ids_set, num_proc=num_proc
         )
         logger.info(f"Loading {len(filtered_hf_dataset)} corresponding samples from HF dataset...")
 
         # Store results in a dictionary keyed by sample_id for easy lookup
         original_samples_dict: Dict[str, Optional[SegmSample]] = {}
-        processed_samples = filtered_hf_dataset.map(
-            load_sample,
-            num_proc=num_proc
-        )
+        processed_samples = filtered_hf_dataset.map(process_single_sample, num_proc=num_proc)
 
         for sample_data in tqdm(processed_samples, desc="Processing HF samples"):
             # Check if load_sample returned a dict (success) or None (error)
-            if sample_data:
-                try:
-                    # Process sample data based on its type
-                    if isinstance(sample_data, SegmSample):
-                        original_samples_dict[sample_data.id] = sample_data
-                    elif isinstance(sample_data, dict) and "id" in sample_data:
-                        sample_obj = SegmSample.from_dict(sample_data)
-                        original_samples_dict[sample_obj.id] = sample_obj
-                    else:
-                        logger.warning(f"Unexpected data type from map: {type(sample_data)}. Skipping.")
-                except Exception as e:
-                    sample_id_from_data = sample_data.get("id", "unknown") if isinstance(sample_data, dict) else "unknown"
-                    logger.error(f"Error processing loaded sample {sample_id_from_data}: {e}", exc_info=True)
-                    original_samples_dict[sample_id_from_data] = None
+            if sample_data.get("error", True):
+                continue
+            try:
+                # Process sample data based on its type
+                if isinstance(sample_data, SegmSample):
+                    original_samples_dict[sample_data.id] = sample_data
+                elif isinstance(sample_data, dict) and "id" in sample_data:
+                    sample_obj = SegmSample.from_dict(sample_data)
+                    original_samples_dict[sample_obj.id] = sample_obj
+                else:
+                    logger.warning(f"Unexpected data type from map: {type(sample_data)}. Skipping.")
+            except Exception as e:
+                sample_id_from_data = (
+                    sample_data.get("id", "unknown") if isinstance(sample_data, dict) else "unknown"
+                )
+                logger.error(
+                    f"Error processing loaded sample {sample_id_from_data}: {e}", exc_info=True
+                )
+                original_samples_dict[sample_id_from_data] = None
 
         return original_samples_dict
 
@@ -196,7 +249,7 @@ def verify_samples(
     phrase_map: Dict[str, Dict[str, Any]],
     mask_type: str,
     mask_min_iou: float,
-    bbox_min_iou: float
+    bbox_min_iou: float,
 ) -> List[VerificationResult]:
     """Verify each sample against the original data."""
     verification_results: List[VerificationResult] = []
@@ -216,14 +269,16 @@ def verify_samples(
             mask_type=mask_type,
             mask_min_iou=mask_min_iou,
             bbox_min_iou=bbox_min_iou,
-            global_sample_ratio=1.0
+            global_sample_ratio=1.0,
         )
         verification_results.append(result)
 
     return verification_results
 
 
-def aggregate_results(verification_results: List[VerificationResult]) -> Tuple[Dict[str, int], Dict[str, List[float]]]:
+def aggregate_results(
+    verification_results: List[VerificationResult],
+) -> Tuple[Dict[str, int], Dict[str, List[float]]]:
     """Aggregate verification results into statistics."""
     stats = {
         "total_samples_verified": 0,
@@ -260,20 +315,24 @@ def report_results(
     stats: Dict[str, int],
     iou_data: Dict[str, List[float]],
     args: argparse.Namespace,
-    all_sample_count: int
+    all_sample_count: int,
 ) -> int:
     """Report verification results and return exit code."""
     logger.info("--- Verification Summary ---")
     logger.info(f"Samples Requested: {args.sample_count}")
     logger.info(f"Samples Found in YOLO: {all_sample_count}")
-    logger.info(f"Samples Selected for Verification: {stats['total_samples_verified'] + stats['total_processing_errors']}")
+    logger.info(
+        f"Samples Selected for Verification: {stats['total_samples_verified'] + stats['total_processing_errors']}"
+    )
     logger.info(f"Samples Successfully Verified: {stats['total_samples_verified']}")
     logger.info(f"Samples with Processing Errors: {stats['total_processing_errors']}")
     logger.info("--- Instance Matching --- >")
     logger.info(f"Matched Instances: {stats['total_matched']}")
     logger.info(f"Lost Instances (Expected but not found in YOLO): {stats['total_lost']}")
     logger.info(f"Extra Instances (Found in YOLO but not expected): {stats['total_extra']}")
-    logger.info(f"Matched Instances Failing BBox IoU (>= {args.bbox_min_iou}): {stats['total_bbox_fails']}")
+    logger.info(
+        f"Matched Instances Failing BBox IoU (>= {args.bbox_min_iou}): {stats['total_bbox_fails']}"
+    )
 
     # Use stats table for IoU distributions if matches exist
     if stats["total_matched"] > 0:
@@ -292,10 +351,10 @@ def report_results(
 
     # Determine Overall Success and Exit Code
     is_success = (
-        stats["total_processing_errors"] == 0 and
-        stats["total_lost"] == 0 and
-        stats["total_extra"] == 0 and
-        stats["total_bbox_fails"] == 0
+        stats["total_processing_errors"] == 0
+        and stats["total_lost"] == 0
+        and stats["total_extra"] == 0
+        and stats["total_bbox_fails"] == 0
     )
 
     if is_success:
@@ -306,6 +365,68 @@ def report_results(
         return 1
 
 
+def print_single_sample_verification(result: VerificationResult) -> None:
+    """Print detailed verification result for a single sample."""
+    sample_id = result.sample_id
+    logger.info(f"===== Verification Result for Sample ID: {sample_id} =====")
+
+    if result.processing_error:
+        logger.error(f"PROCESSING ERROR: {result.processing_error}")
+        return
+
+    # Print matched pairs
+    logger.info(f"MATCHED INSTANCES: {len(result.matched_pairs)}")
+    if result.matched_pairs:
+        for i, match in enumerate(result.matched_pairs):
+            logger.info(f"  Match {i + 1}:")
+            logger.info(f"    Class ID: {match['class_id']}")
+            logger.info(
+                f"    Original segment/mask: {match['original_segment_idx']}/{match['original_mask_idx']}"
+            )
+            logger.info(f"    YOLO instance: {match['yolo_instance_index']}")
+            logger.info(f"    Mask IoU: {match['mask_iou']:.4f}")
+            logger.info(
+                f"    BBox IoU: {match['bbox_iou']:.4f} (Threshold: {match['bbox_threshold_passed']})"
+            )
+
+    # Print lost instances
+    logger.info(f"LOST INSTANCES (expected but not found in YOLO): {len(result.lost_instances)}")
+    if result.lost_instances:
+        for i, inst in enumerate(result.lost_instances):
+            logger.info(f"  Lost {i + 1}:")
+            logger.info(f"    Class ID: {inst.class_id}")
+            logger.info(f"    Original segment/mask: {inst.segment_idx}/{inst.mask_idx}")
+            logger.info(f"    BBox: {inst.bbox}")
+
+    # Print extra instances
+    logger.info(f"EXTRA INSTANCES (found in YOLO but not expected): {len(result.extra_instances)}")
+    if result.extra_instances:
+        for i, inst in enumerate(result.extra_instances):
+            logger.info(f"  Extra {i + 1}:")
+            logger.info(f"    Class ID: {inst.class_id}")
+            logger.info(f"    BBox: {inst.bbox}")
+
+    # Print bbox failures
+    logger.info(f"BBOX IoU FAILURES: {len(result.bbox_iou_failures)}")
+    if result.bbox_iou_failures:
+        for i, fail in enumerate(result.bbox_iou_failures):
+            logger.info(f"  Failure {i + 1}:")
+            logger.info(f"    Class ID: {fail['class_id']}")
+            logger.info(
+                f"    Original segment/mask: {fail['original_segment_idx']}/{fail['original_mask_idx']}"
+            )
+            logger.info(f"    YOLO instance: {fail['yolo_instance_index']}")
+            logger.info(f"    BBox IoU: {fail['bbox_iou']:.4f}")
+
+    # Summary
+    is_success = (
+        len(result.lost_instances) == 0
+        and len(result.extra_instances) == 0
+        and len(result.bbox_iou_failures) == 0
+    )
+    logger.info(f"VERIFICATION RESULT: {'SUCCESS' if is_success else 'FAILURE'}")
+
+
 def main():
     """Main execution function for the verification CLI."""
     parser = _setup_argparse()
@@ -313,9 +434,7 @@ def main():
 
     # Configure logging
     log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
     logger.setLevel(log_level)
 
     if not args.target_root:
@@ -332,7 +451,10 @@ def main():
     logger.info("Starting YOLO dataset conversion verification...")
     logger.info(f"Split: {args.train_split}, Mask Type: {args.mask_type}")
     logger.info(f"Target Root: {args.target_root}")
-    logger.info(f"Sample Count: {args.sample_count}")
+    if args.sample_id:
+        logger.info(f"Verifying specific sample ID: {args.sample_id}")
+    else:
+        logger.info(f"Sample Count: {args.sample_count}")
     logger.info(f"Using {args.num_proc} processes for dataset operations")
 
     # 1. Validate paths and Load Mapping Config
@@ -348,8 +470,8 @@ def main():
         logger.error(f"Failed to load mapping config: {e}")
         exit(1)
 
-    # 2. Sample YOLO IDs
-    sampled_ids = sample_yolo_ids(yolo_label_dir, args.sample_count)
+    # 2. Sample YOLO IDs or find specific ID
+    sampled_ids = sample_yolo_ids(yolo_label_dir, args)
     sampled_ids_set = set(sampled_ids)
     all_sample_count = len(sampled_ids)
 
@@ -367,14 +489,23 @@ def main():
         phrase_map,
         args.mask_type,
         args.mask_min_iou,
-        args.bbox_min_iou
+        args.bbox_min_iou,
     )
 
-    # 5. Aggregate Results
-    stats, iou_data = aggregate_results(verification_results)
-
-    # 6. Print Summary Report and determine exit code
-    exit_code = report_results(stats, iou_data, args, all_sample_count)
+    # 5. Handle results
+    # For single sample mode, provide detailed output
+    if args.sample_id:
+        if verification_results:
+            print_single_sample_verification(verification_results[0])
+            exit_code = 0 if not verification_results[0].processing_error else 1
+        else:
+            logger.error(f"No verification result generated for sample ID: {args.sample_id}")
+            exit_code = 1
+    else:
+        # For multi-sample mode, aggregate results
+        stats, iou_data = aggregate_results(verification_results)
+        # 6. Print Summary Report and determine exit code
+        exit_code = report_results(stats, iou_data, args, all_sample_count)
 
     logger.info("Verification process finished.")
     exit(exit_code)

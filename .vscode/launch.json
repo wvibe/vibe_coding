@@ -39,8 +39,12 @@
                 "validation",
                 "--mask-type",
                 "visible",
-                "--sample-count",
-                "10",
+                "--sample-id",
+                "abb-abb_belgium_trade_show_demo-P10-20210908105511-965060",
+                // "--sample-count",
+                // "10",
+                "--num-proc",
+                "6", // for 32GB RAM
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

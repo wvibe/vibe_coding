@@ -1,13 +1,13 @@
-# tests/utils/common/test_geometry.py
+"""Test for mask.py module."""
 
 import cv2
 import numpy as np
 import pytest
 
-from vibelab.utils.common.geometry import mask_to_yolo_polygons, compute_mask_iou, polygon_to_mask
+from vibelab.utils.common.mask import mask_to_yolo_polygons, calculate_mask_iou, polygon_to_mask
+
 
 # --- Helper Functions for Test Masks ---
-
 
 def create_rect_mask(shape, top_left, bottom_right, dtype=np.uint8, value=255):
     """Creates a binary mask with a single rectangle."""
@@ -310,19 +310,19 @@ def test_polygon_to_mask_out_of_bounds():
     assert mask[4, 4] == False
 
 
-def test_compute_mask_iou_identical():
-    """Test compute_mask_iou with identical masks."""
+def test_calculate_mask_iou_identical():
+    """Test calculate_mask_iou with identical masks."""
     # Create a simple 5x5 mask with a 3x3 square in the middle
     mask = np.zeros((5, 5), dtype=bool)
     mask[1:4, 1:4] = True  # 3x3 square
 
     # IoU with itself should be 1.0
-    iou = compute_mask_iou(mask, mask)
+    iou = calculate_mask_iou(mask, mask)
     assert iou == 1.0
 
 
-def test_compute_mask_iou_disjoint():
-    """Test compute_mask_iou with completely disjoint masks."""
+def test_calculate_mask_iou_disjoint():
+    """Test calculate_mask_iou with completely disjoint masks."""
     # First mask: top-left corner
     mask1 = np.zeros((5, 5), dtype=bool)
     mask1[0:2, 0:2] = True
@@ -332,12 +332,12 @@ def test_compute_mask_iou_disjoint():
     mask2[3:5, 3:5] = True
 
     # IoU should be 0.0 as there's no overlap
-    iou = compute_mask_iou(mask1, mask2)
+    iou = calculate_mask_iou(mask1, mask2)
     assert iou == 0.0
 
 
-def test_compute_mask_iou_partial_overlap():
-    """Test compute_mask_iou with partially overlapping masks."""
+def test_calculate_mask_iou_partial_overlap():
+    """Test calculate_mask_iou with partially overlapping masks."""
     # First mask: 3x3 square in top-left
     mask1 = np.zeros((5, 5), dtype=bool)
     mask1[0:3, 0:3] = True  # 9 pixels
@@ -351,37 +351,37 @@ def test_compute_mask_iou_partial_overlap():
     # IoU = 4/14 ≈ 0.2857
     expected_iou = 4 / 14
 
-    iou = compute_mask_iou(mask1, mask2)
+    iou = calculate_mask_iou(mask1, mask2)
     assert abs(iou - expected_iou) < 1e-6
 
 
-def test_compute_mask_iou_edge_cases():
-    """Test compute_mask_iou with edge cases."""
+def test_calculate_mask_iou_edge_cases():
+    """Test calculate_mask_iou with edge cases."""
     # Empty masks
     empty_mask = np.zeros((5, 5), dtype=bool)
 
     # When both masks are empty, IoU should be 1.0
-    iou = compute_mask_iou(empty_mask, empty_mask)
+    iou = calculate_mask_iou(empty_mask, empty_mask)
     assert iou == 1.0
 
     # One empty mask, one non-empty mask
     non_empty_mask = np.zeros((5, 5), dtype=bool)
     non_empty_mask[1:3, 1:3] = True
 
-    iou = compute_mask_iou(empty_mask, non_empty_mask)
+    iou = calculate_mask_iou(empty_mask, non_empty_mask)
     assert iou == 0.0
 
 
-def test_compute_mask_iou_error_cases():
-    """Test compute_mask_iou error handling."""
+def test_calculate_mask_iou_error_cases():
+    """Test calculate_mask_iou error handling."""
     mask1 = np.zeros((5, 5), dtype=bool)
 
     # Mismatched shapes
     mask2 = np.zeros((6, 6), dtype=bool)
     with pytest.raises(ValueError):
-        compute_mask_iou(mask1, mask2)
+        calculate_mask_iou(mask1, mask2)
 
     # Non-boolean mask
     mask3 = np.zeros((5, 5), dtype=int)
     with pytest.raises(ValueError):
-        compute_mask_iou(mask1, mask3)
+        calculate_mask_iou(mask1, mask3)

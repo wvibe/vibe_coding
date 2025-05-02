@@ -16,7 +16,7 @@ from vibelab.dataops.cov_segm.datamodel import ClsSegment, SegmMask, SegmSample
 
 # Import loader using full path
 from vibelab.dataops.cov_segm.loader import load_sample
-from vibelab.utils.common.geometry import mask_to_yolo_polygons
+from vibelab.utils.common.mask import mask_to_yolo_polygons
 
 # Import statistics formatting utility
 from vibelab.utils.common.stats import format_statistics_table

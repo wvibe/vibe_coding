@@ -4,14 +4,14 @@ import logging
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from PIL import Image
 from scipy.optimize import linear_sum_assignment
 
 # Local imports
-from vibelab.dataops.cov_segm.datamodel import SegmSample, ClsSegment
+from vibelab.dataops.cov_segm.datamodel import ClsSegment, SegmSample
 from vibelab.utils.common.bbox import calculate_iou as compute_bbox_iou
 from vibelab.utils.common.geometry import compute_mask_iou, polygon_to_mask
 
@@ -35,7 +35,7 @@ class OriginalInstanceRecord:
 
     sample_id: str
     segment_idx: int  # Index of the source segment within the SegmSample
-    mask_idx: int     # Index of the specific mask within the segment's list
+    mask_idx: int  # Index of the specific mask within the segment's list
     class_id: int
     original_mask: np.ndarray = field(repr=False)  # Original binary mask
     bbox: Tuple[int, int, int, int]  # Original bbox (xmin, ymin, xmax, ymax)
@@ -75,7 +75,7 @@ def _get_sampled_mapping_info(
     for phrase in segment.phrases:
         phrase_text = phrase.text.strip()
         if not phrase_text:
-            logger.debug("Skipping empty phrase in segment.") # Use debug
+            logger.debug("Skipping empty phrase in segment.")  # Use debug
             continue
 
         current_mapping = phrase_map.get(phrase_text)
@@ -96,11 +96,15 @@ def _get_sampled_mapping_info(
 
         # Use the *same* random logic as converter: skip if random() > ratio
         if random.random() > effective_ratio:
-            logger.debug(f"Segment for phrase '{matched_phrase}' skipped due to sampling (ratio={effective_ratio:.3f}).")
+            logger.debug(
+                f"Segment for phrase '{matched_phrase}' skipped due to sampling (ratio={effective_ratio:.3f})."
+            )
             # stats_counters["skipped_segments_sampling"] += 1 # Removed stats
             return None
         else:
-             logger.debug(f"Segment for phrase '{matched_phrase}' kept after sampling (ratio={effective_ratio:.3f}).")
+            logger.debug(
+                f"Segment for phrase '{matched_phrase}' kept after sampling (ratio={effective_ratio:.3f})."
+            )
 
     # If no sampling or sampling passed, return the info
     return mapping_info, matched_phrase
@@ -114,6 +118,7 @@ def _calculate_bbox_from_mask(binary_mask: np.ndarray) -> Optional[Tuple[int, in
     x_min, y_min = int(cols.min()), int(rows.min())
     x_max, y_max = int(cols.max()), int(rows.max())
     return x_min, y_min, x_max, y_max
+
 
 def _load_yolo_instances(
     sample_id: str, yolo_label_path: Path, yolo_image_path: Path
@@ -154,46 +159,49 @@ def _load_yolo_instances(
 
         parts = line.split()
         if len(parts) < 7 or len(parts) % 2 != 1:
-            return [], f"Invalid format in {yolo_label_path}, line {i+1}: Expected class_id followed by pairs of coords."
+            return (
+                [],
+                f"Invalid format in {yolo_label_path}, line {i + 1}: Expected class_id followed by pairs of coords.",
+            )
 
         try:
             class_id = int(parts[0])
             norm_coords = [float(p) for p in parts[1:]]
         except ValueError:
-            return [], f"Invalid numeric value in {yolo_label_path}, line {i+1}."
+            return [], f"Invalid numeric value in {yolo_label_path}, line {i + 1}."
 
         # Convert normalized polygon to absolute pixel coordinates
         poly_abs: List[Tuple[int, int]] = []
         for j in range(0, len(norm_coords), 2):
-            norm_x, norm_y = norm_coords[j], norm_coords[j+1]
+            norm_x, norm_y = norm_coords[j], norm_coords[j + 1]
             abs_x = int(round(norm_x * width))
             abs_y = int(round(norm_y * height))
-             # Clip to ensure coords are within image bounds for mask generation
+            # Clip to ensure coords are within image bounds for mask generation
             abs_x = max(0, min(width - 1, abs_x))
             abs_y = max(0, min(height - 1, abs_y))
             poly_abs.append((abs_x, abs_y))
 
         if len(poly_abs) < 3:
-             logger.warning(
-                 f"Sample {sample_id}, Line {i+1}: Degenerate polygon after conversion (< 3 points), skipping instance."
-             )
-             continue
+            logger.warning(
+                f"Sample {sample_id}, Line {i + 1}: Degenerate polygon after conversion (< 3 points), skipping instance."
+            )
+            continue
 
         # Generate mask from absolute polygon
         derived_mask = polygon_to_mask(poly_abs, height, width)
         if derived_mask.sum() == 0:
             logger.warning(
-                f"Sample {sample_id}, Line {i+1}: Polygon resulted in empty mask, skipping instance."
+                f"Sample {sample_id}, Line {i + 1}: Polygon resulted in empty mask, skipping instance."
             )
             continue
 
         # Calculate bounding box from the derived mask
         bbox = _calculate_bbox_from_mask(derived_mask)
         if bbox is None:
-             logger.warning(
-                 f"Sample {sample_id}, Line {i+1}: Could not calculate bbox from derived mask, skipping instance."
-             )
-             continue
+            logger.warning(
+                f"Sample {sample_id}, Line {i + 1}: Could not calculate bbox from derived mask, skipping instance."
+            )
+            continue
 
         yolo_instances.append(
             YoloInstanceRecord(
@@ -207,6 +215,7 @@ def _load_yolo_instances(
 
     return yolo_instances, None
 
+
 def _process_original_sample(
     original_sample: SegmSample,
     phrase_map: Dict[str, Dict[str, Any]],
@@ -218,9 +227,7 @@ def _process_original_sample(
 
     for seg_idx, segment in enumerate(original_sample.segments):
         # Check if this segment corresponds to a class we care about and passes sampling
-        mapping_result = _get_sampled_mapping_info(
-            segment, phrase_map, global_sample_ratio
-        )
+        mapping_result = _get_sampled_mapping_info(segment, phrase_map, global_sample_ratio)
 
         if mapping_result is None:
             continue  # Skip segment (not mapped or sampled out)
@@ -229,32 +236,34 @@ def _process_original_sample(
         class_id = mapping_info["class_id"]
 
         # Select the correct mask list (visible or full)
-        masks_to_process = (
-            segment.visible_masks if mask_type == "visible" else segment.full_masks
-        )
+        masks_to_process = segment.visible_masks if mask_type == "visible" else segment.full_masks
 
         for mask_idx, mask in enumerate(masks_to_process):
-            if mask.is_valid and mask.bbox is not None: # Need bbox for record
+            if mask.is_valid and mask.bbox is not None:  # Need bbox for record
                 expected_instances.append(
                     OriginalInstanceRecord(
                         sample_id=original_sample.id,
                         segment_idx=seg_idx,
                         mask_idx=mask_idx,
                         class_id=class_id,
-                        original_mask=mask.binary_mask, # Store the actual mask
-                        bbox=mask.bbox, # Store the original bbox
+                        original_mask=mask.binary_mask,  # Store the actual mask
+                        bbox=mask.bbox,  # Store the original bbox
                     )
                 )
             elif not mask.is_valid:
-                 logger.debug(f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Skipping invalid original mask.")
+                logger.debug(
+                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Skipping invalid original mask."
+                )
             elif mask.bbox is None:
-                 logger.warning(f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Original mask is valid but has no bbox? Skipping.")
+                logger.warning(
+                    f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: Original mask is valid but has no bbox? Skipping."
+                )
 
     return expected_instances
 
+
 def _group_instances_by_class(
-    original_instances: List[OriginalInstanceRecord],
-    yolo_instances: List[YoloInstanceRecord]
+    original_instances: List[OriginalInstanceRecord], yolo_instances: List[YoloInstanceRecord]
 ) -> Tuple[Dict[int, List[int]], Dict[int, List[int]], Set[int]]:
     """Group original and YOLO instances by class ID.
 
@@ -288,7 +297,7 @@ def _build_cost_matrix(
     orig_indices: List[int],
     yolo_indices: List[int],
     mask_min_iou: float,
-    class_id: int
+    class_id: int,
 ) -> np.ndarray:
     """Build the cost matrix for matching instances of a given class.
 
@@ -301,14 +310,18 @@ def _build_cost_matrix(
         class_id: The class ID being processed (for logging).
 
     Returns:
-        A cost matrix where cost_matrix[i, j] contains -IoU or -inf
+        A cost matrix where cost_matrix[i, j] contains -IoU or a large negative value
         (negative IoU used for minimization algorithm).
     """
     num_orig = len(orig_indices)
     num_yolo = len(yolo_indices)
 
-    # Initialize with -inf (will be excluded from matching)
-    cost_matrix = np.full((num_orig, num_yolo), -np.inf)
+    # Use a large negative finite value instead of -inf to avoid numerical issues
+    # with linear_sum_assignment while still heavily penalizing non-matches
+    VERY_LARGE_COST = -1e9  # Large negative value instead of -inf
+
+    # Initialize with large negative value (will be excluded from matching)
+    cost_matrix = np.full((num_orig, num_yolo), VERY_LARGE_COST)
 
     for r_idx, orig_idx in enumerate(orig_indices):
         for c_idx, yolo_idx in enumerate(yolo_indices):
@@ -320,7 +333,7 @@ def _build_cost_matrix(
                 if iou >= mask_min_iou:
                     # Store negative IoU because linear_sum_assignment finds minimum cost
                     cost_matrix[r_idx, c_idx] = -iou
-                # If iou < threshold, cost remains -inf (preventing match)
+                # If iou < threshold, cost remains VERY_LARGE_COST (preventing match)
             except ValueError as e:
                 logger.warning(
                     f"Error computing mask IoU for class {class_id} between "
@@ -338,7 +351,7 @@ def _match_class_instances(
     orig_indices: List[int],
     yolo_indices: List[int],
     orig_matched_mask: np.ndarray,
-    yolo_matched_mask: np.ndarray
+    yolo_matched_mask: np.ndarray,
 ) -> List[Tuple[int, int]]:
     """Match instances of a specific class using the Hungarian algorithm.
 
@@ -362,32 +375,34 @@ def _match_class_instances(
         original_instances, yolo_instances, orig_indices, yolo_indices, mask_min_iou, class_id
     )
 
-    # If cost_matrix contains only -inf, assignment will fail or be meaningless
-    if np.all(np.isneginf(cost_matrix)):
+    # Define the threshold for considering a value as essentially -inf
+    VERY_LARGE_COST_THRESHOLD = -1e8
+
+    # If cost_matrix contains only very large negative values, assignment will be meaningless
+    if np.all(cost_matrix < VERY_LARGE_COST_THRESHOLD):
         logger.debug(f"No pairs met IoU threshold for class {class_id}. Skipping assignment.")
         return []
 
-    # Handle cost matrix that contains both valid values and -inf values
-    # We'll use a greedy approach when linear_sum_assignment fails
+    # Handle cost matrix with valid costs
     matched_pairs = []
     try:
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
         # Process matches from assignment
         for r, c in zip(row_ind, col_ind):
-            # Check if the assigned cost is valid (not -inf, meaning IoU >= threshold)
-            if not np.isneginf(cost_matrix[r, c]):
+            # Check if the assigned cost is valid (not extremely negative, meaning IoU >= threshold)
+            if cost_matrix[r, c] > VERY_LARGE_COST_THRESHOLD:
                 orig_actual_idx = orig_indices[r]
                 yolo_actual_idx = yolo_indices[c]
                 matched_pairs.append((orig_actual_idx, yolo_actual_idx))
                 orig_matched_mask[orig_actual_idx] = True
                 yolo_matched_mask[yolo_actual_idx] = True
 
-    except ValueError:
-        # This can happen if cost matrix is invalid (e.g., -inf values mixed with valid values)
+    except ValueError as e:
+        # This should no longer happen with finite values, but keep as a safeguard
         logger.error(
-            f"linear_sum_assignment failed for class {class_id}. "
-            f"Cost matrix:\n{cost_matrix}", exc_info=True
+            f"linear_sum_assignment failed for class {class_id} despite using finite values: {e}. "
+            f"Cost matrix shape: {cost_matrix.shape}"
         )
         # Fallback to greedy matching
         logger.info(f"Falling back to greedy matching for class {class_id}.")
@@ -397,7 +412,7 @@ def _match_class_instances(
         for r, orig_idx in enumerate(orig_indices):
             for c, yolo_idx in enumerate(yolo_indices):
                 cost = cost_matrix[r, c]
-                if not np.isneginf(cost):
+                if cost > VERY_LARGE_COST_THRESHOLD:
                     valid_costs.append((r, c, cost))
 
         # Sort by cost (ascending, since we have negative IoUs)
@@ -462,7 +477,7 @@ def _match_instances(
             orig_indices,
             yolo_indices,
             orig_matched_mask,
-            yolo_matched_mask
+            yolo_matched_mask,
         )
 
         matched_indices.extend(class_matches)
@@ -473,6 +488,7 @@ def _match_instances(
 
     return matched_indices, lost_indices, extra_indices
 
+
 def verify_sample_conversion(
     sample_id: str,
     yolo_label_path: Path,
@@ -482,7 +498,7 @@ def verify_sample_conversion(
     mask_type: str,
     mask_min_iou: float,
     bbox_min_iou: float,
-    global_sample_ratio: float = 1.0, # Add this if reusing _get_sampled_mapping_info
+    global_sample_ratio: float = 1.0,  # Add this if reusing _get_sampled_mapping_info
 ) -> VerificationResult:
     """Verifies the conversion for a single sample ID."""
 
@@ -530,7 +546,7 @@ def verify_sample_conversion(
         match_info = {
             "original_segment_idx": orig_inst.segment_idx,
             "original_mask_idx": orig_inst.mask_idx,
-            "yolo_instance_index": yolo_idx, # Index within the parsed yolo list
+            "yolo_instance_index": yolo_idx,  # Index within the parsed yolo list
             "class_id": orig_inst.class_id,
             "mask_iou": mask_iou,
             "bbox_iou": bbox_iou,
@@ -549,8 +565,10 @@ def verify_sample_conversion(
     # Mark as completed (no error)
     result.processing_error = None
 
-    logger.debug(f"Verification completed for {sample_id}: {len(result.matched_pairs)} matches, "
-                 f"{len(result.lost_instances)} lost, {len(result.extra_instances)} extra, "
-                 f"{len(result.bbox_iou_failures)} bbox fails.")
+    logger.debug(
+        f"Verification completed for {sample_id}: {len(result.matched_pairs)} matches, "
+        f"{len(result.lost_instances)} lost, {len(result.extra_instances)} extra, "
+        f"{len(result.bbox_iou_failures)} bbox fails."
+    )
 
     return result

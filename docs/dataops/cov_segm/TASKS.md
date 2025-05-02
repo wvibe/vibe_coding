@@ -231,3 +231,21 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
             *   **Accumulate Stats:** Update global counters.
         5.  **(Report)** Aggregate stats. Print summary table using `format_statistics_table` (from `stats.py`). Save detailed JSON report if `--report-path` given. Exit 0 if all checks pass, 1 otherwise.
     *   **Failure Mode:** Continue processing all samples and report aggregate errors.
+
+## Code Quality and Refactoring
+
+*   **[ ] Refactor Mask Utilities and Matching Logic:**
+    *   **Goal:** Improve code organization and reusability of mask utilities and instance matching algorithms.
+    *   **Tasks:**
+        *   Rename `geometry.py` to `mask.py` to better reflect its focus on mask-related operations.
+        *   Rename `compute_mask_iou` to `calculate_mask_iou` for consistency with `bbox.py`.
+        *   Create generic `label_match.py` module with a Hungarian algorithm-based matching system.
+        *   Update imports in relevant files (converter.py, etc).
+        *   Update test files to match the new structure.
+        *   Add comprehensive unit tests for the new generic matching algorithm.
+    *   **Benefits:**
+        *   Better code organization and discoverability by function purpose.
+        *   Consistent naming conventions across related utilities.
+        *   Reduced code duplication by centralizing the matching algorithm.
+        *   Easier maintainability and extensibility of the verification system.
+    *   **Implementation Note:** Use `git mv` for renaming files to preserve file history.

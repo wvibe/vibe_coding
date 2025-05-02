@@ -1,8 +1,7 @@
-# src/utils/common/geometry.py
-
-"""Geometric utility functions."""
+"""Geometric utility functions for mask operations."""
 
 import logging
+import warnings
 from typing import List, Optional, Tuple
 
 import cv2
@@ -278,9 +277,7 @@ def mask_to_yolo_polygons(
     return _normalize_and_flatten_polygons(final_polygons_pixels, img_shape)
 
 
-def polygon_to_mask(
-    polygon_coords: List[Tuple[int, int]], height: int, width: int
-) -> np.ndarray:
+def polygon_to_mask(polygon_coords: List[Tuple[int, int]], height: int, width: int) -> np.ndarray:
     """Convert a polygon (list of pixel coordinates) to a binary mask.
 
     Args:
@@ -310,7 +307,7 @@ def polygon_to_mask(
     return mask.astype(bool)  # Convert to boolean
 
 
-def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
+def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
     """Calculates the Intersection over Union (IoU) between two binary masks.
 
     Args:
@@ -321,9 +318,7 @@ def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
         The IoU value (float) between 0.0 and 1.0.
     """
     if mask1.shape != mask2.shape:
-        raise ValueError(
-            f"Mask shapes must match. Got {mask1.shape} and {mask2.shape}"
-        )
+        raise ValueError(f"Mask shapes must match. Got {mask1.shape} and {mask2.shape}")
     if mask1.dtype != bool or mask2.dtype != bool:
         raise ValueError("Masks must be boolean arrays.")
 
@@ -337,3 +332,16 @@ def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
 
     iou = intersection / union
     return float(np.clip(iou, 0.0, 1.0))
+
+
+def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
+    """DEPRECATED: Use calculate_mask_iou instead.
+
+    This function is kept for backward compatibility and will be removed in a future version.
+    """
+    warnings.warn(
+        "compute_mask_iou is deprecated; use calculate_mask_iou instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return calculate_mask_iou(mask1, mask2)
