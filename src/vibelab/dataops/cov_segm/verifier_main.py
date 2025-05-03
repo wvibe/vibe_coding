@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import datasets
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 from vibelab.dataops.cov_segm.convert_verifier import (
     VerificationResult,
@@ -23,6 +24,8 @@ from vibelab.dataops.cov_segm.loader import load_sample
 from vibelab.utils.common.stats import format_statistics_table
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 
 def _setup_argparse() -> argparse.ArgumentParser:
