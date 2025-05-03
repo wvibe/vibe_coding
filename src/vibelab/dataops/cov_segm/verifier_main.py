@@ -280,7 +280,6 @@ def verify_samples(
             mask_type=mask_type,
             iou_cutoff=iou_cutoff,
             iou_top=iou_top,
-            global_sample_ratio=1.0,
         )
         verification_results.append(result)
 
@@ -289,16 +288,25 @@ def verify_samples(
 
 def aggregate_results(
     verification_results: List[VerificationResult],
-) -> Tuple[Dict[str, int], Dict[str, List[float]], Dict[int, int], Dict[int, int], Dict[int, int]]:
+) -> Tuple[Dict[str, int], Dict[str, List[float]], Dict[int, Dict[str, int]]]:
     """Aggregate verification results into statistics, including per-class counts."""
     stats = {
         "total_samples_verified": 0,
         "total_processing_errors": 0,
-        "total_matched": 0,
-        "total_lost": 0,
-        "total_extra": 0,
-        "total_mask_top_iou_fails": 0,
-        "total_bbox_top_iou_fails": 0,
+        # Mask-based stats
+        "mask_total_matched": 0,
+        "mask_total_lost": 0,
+        "mask_total_extra": 0,
+        "mask_total_top_iou_fails": 0,
+        # Bbox-based stats
+        "bbox_total_matched": 0,
+        "bbox_total_lost": 0,
+        "bbox_total_extra": 0,
+        "bbox_total_top_iou_fails": 0,
+        # Cross-method stats
+        "matched_by_mask_only": 0,
+        "matched_by_bbox_only": 0,
+        "matched_by_both": 0,
     }
 
     iou_data = {
@@ -306,43 +314,92 @@ def aggregate_results(
         "bbox_ious": [],
     }
 
-    # Per-class counters
-    expected_by_class = defaultdict(int)
-    matched_by_class = defaultdict(int)
-    lost_by_class = defaultdict(int)
-    extra_by_class = defaultdict(int)
+    # Per-class counters - structure will be {class_id: {"expected": N, "mask_matched": N, ...}}
+    class_stats = defaultdict(lambda: defaultdict(int))
 
     for res in verification_results:
         if res.processing_error:
             stats["total_processing_errors"] += 1
         else:
             stats["total_samples_verified"] += 1
-            stats["total_matched"] += len(res.matched_pairs)
-            stats["total_lost"] += len(res.lost_instances)
-            stats["total_extra"] += len(res.extra_instances)
 
-            for pair in res.matched_pairs:
+            # Process mask-based matches
+            stats["mask_total_matched"] += len(res.mask_matched_pairs)
+            stats["mask_total_lost"] += len(res.mask_lost_instances)
+            stats["mask_total_extra"] += len(res.mask_extra_instances)
+
+            # Process bbox-based matches
+            stats["bbox_total_matched"] += len(res.bbox_matched_pairs)
+            stats["bbox_total_lost"] += len(res.bbox_lost_instances)
+            stats["bbox_total_extra"] += len(res.bbox_extra_instances)
+
+            # Track mask-matched pairs for cross-method analysis
+            mask_matched_pairs = {
+                (p["original_segment_idx"], p["original_mask_idx"], p["yolo_instance_index"])
+                for p in res.mask_matched_pairs
+            }
+
+            # Track bbox-matched pairs for cross-method analysis
+            bbox_matched_pairs = {
+                (p["original_segment_idx"], p["original_mask_idx"], p["yolo_instance_index"])
+                for p in res.bbox_matched_pairs
+            }
+
+            # Calculate cross-method stats
+            matched_by_both = mask_matched_pairs & bbox_matched_pairs
+            matched_by_mask_only = mask_matched_pairs - bbox_matched_pairs
+            matched_by_bbox_only = bbox_matched_pairs - mask_matched_pairs
+
+            stats["matched_by_both"] += len(matched_by_both)
+            stats["matched_by_mask_only"] += len(matched_by_mask_only)
+            stats["matched_by_bbox_only"] += len(matched_by_bbox_only)
+
+            # Collect IoU data and per-class stats from mask matches
+            for pair in res.mask_matched_pairs:
                 class_id = pair["class_id"]
-                iou_data["mask_ious"].append(pair["mask_iou"])
-                iou_data["bbox_ious"].append(pair["bbox_iou"])
-                matched_by_class[class_id] += 1
-                expected_by_class[class_id] += 1
+                # Store IoU value in the appropriate collection based on match type
+                iou_value = pair["iou"]
+                iou_data["mask_ious"].append(iou_value)
 
-                if not pair["mask_threshold_passed"]:
-                    stats["total_mask_top_iou_fails"] += 1
-                if not pair["bbox_threshold_passed"]:
-                    stats["total_bbox_top_iou_fails"] += 1
+                class_stats[class_id]["mask_matched"] += 1
+                class_stats[class_id]["expected"] += 1
 
-            for inst in res.lost_instances:
+                if not pair["threshold_passed"]:
+                    stats["mask_total_top_iou_fails"] += 1
+
+            # Collect additional bbox match stats
+            for pair in res.bbox_matched_pairs:
+                if pair["match_type"] == "bbox":  # Only count unique bbox matches
+                    class_id = pair["class_id"]
+                    iou_value = pair["iou"]
+                    iou_data["bbox_ious"].append(iou_value)
+                    class_stats[class_id]["bbox_matched"] += 1
+                    # Don't increment expected count as these are already counted
+
+                if not pair["threshold_passed"]:
+                    stats["bbox_total_top_iou_fails"] += 1
+
+            # Add lost instances to class stats
+            for inst in res.mask_lost_instances:
                 class_id = inst.class_id
-                lost_by_class[class_id] += 1
-                expected_by_class[class_id] += 1
+                class_stats[class_id]["mask_lost"] += 1
+                class_stats[class_id]["expected"] += 1
 
-            for inst in res.extra_instances:
+            for inst in res.bbox_lost_instances:
                 class_id = inst.class_id
-                extra_by_class[class_id] += 1
+                class_stats[class_id]["bbox_lost"] += 1
+                # Don't increment expected count to avoid double-counting
 
-    return stats, iou_data, dict(expected_by_class), dict(lost_by_class), dict(extra_by_class)
+            # Add extra instances to class stats
+            for inst in res.mask_extra_instances:
+                class_id = inst.class_id
+                class_stats[class_id]["mask_extra"] += 1
+
+            for inst in res.bbox_extra_instances:
+                class_id = inst.class_id
+                class_stats[class_id]["bbox_extra"] += 1
+
+    return stats, iou_data, dict(class_stats)
 
 
 def report_results(
@@ -351,9 +408,7 @@ def report_results(
     args: argparse.Namespace,
     all_sample_count: int,
     class_names: Dict[int, str],
-    expected_by_class: Dict[int, int],
-    lost_by_class: Dict[int, int],
-    extra_by_class: Dict[int, int],
+    class_stats: Dict[int, Dict[str, int]],
 ) -> int:
     """Report verification results, including per-class stats, and return exit code."""
     logger.info("--- Verification Summary ---")
@@ -368,22 +423,35 @@ def report_results(
     )
     logger.info(f"Samples Successfully Verified: {stats['total_samples_verified']}")
     logger.info(f"Samples with Processing Errors: {stats['total_processing_errors']}")
-    logger.info(f"--- Instance Matching (Mask IoU >= {args.iou_cutoff}) --- >")
-    logger.info(f"Matched Instances: {stats['total_matched']}")
-    logger.info(f"Lost Instances (Expected but not matched): {stats['total_lost']}")
-    logger.info(f"Extra Instances (Found in YOLO but not matched): {stats['total_extra']}")
-    logger.info(f"--- Matched Instance Quality (Threshold = {args.iou_top}) --- >")
+
+    # Report on mask-based matching results
+    logger.info(f"--- Mask-Based Instance Matching (Mask IoU >= {args.iou_cutoff}) --- >")
+    logger.info(f"Matched Instances: {stats['mask_total_matched']}")
+    logger.info(f"Lost Instances (Expected but not matched): {stats['mask_total_lost']}")
+    logger.info(f"Extra Instances (Found in YOLO but not matched): {stats['mask_total_extra']}")
     logger.info(
         f"Matched Instances Failing Mask IoU (>= {args.iou_top}): "
-        f"{stats['total_mask_top_iou_fails']}"
-    )
-    logger.info(
-        f"Matched Instances Failing BBox IoU (>= {args.iou_top}): "
-        f"{stats['total_bbox_top_iou_fails']}"
+        f"{stats['mask_total_top_iou_fails']}"
     )
 
+    # Report on bbox-based matching results
+    logger.info(f"--- Bbox-Based Instance Matching (Bbox IoU >= {args.iou_cutoff}) --- >")
+    logger.info(f"Matched Instances: {stats['bbox_total_matched']}")
+    logger.info(f"Lost Instances (Expected but not matched): {stats['bbox_total_lost']}")
+    logger.info(f"Extra Instances (Found in YOLO but not matched): {stats['bbox_total_extra']}")
+    logger.info(
+        f"Matched Instances Failing Bbox IoU (>= {args.iou_top}): "
+        f"{stats['bbox_total_top_iou_fails']}"
+    )
+
+    # Report on cross-method matching
+    logger.info("--- Cross-Method Matching Analysis --- >")
+    logger.info(f"Instances Matched by Both Methods: {stats['matched_by_both']}")
+    logger.info(f"Instances Matched by Mask IoU Only: {stats['matched_by_mask_only']}")
+    logger.info(f"Instances Matched by Bbox IoU Only: {stats['matched_by_bbox_only']}")
+
     # Use stats table for IoU distributions if matches exist
-    if stats["total_matched"] > 0:
+    if stats["mask_total_matched"] > 0:
         iou_stats_data = {
             "Mask IoU": iou_data["mask_ious"],
             "BBox IoU": iou_data["bbox_ious"],
@@ -403,43 +471,51 @@ def report_results(
 
     # Report Per-Class Statistics
     logger.info("--- Per-Class Instance Statistics --- >")
-    all_class_ids = (
-        set(expected_by_class.keys()) | set(lost_by_class.keys()) | set(extra_by_class.keys())
-    )
+    all_class_ids = set(class_stats.keys())
     if not all_class_ids:
         logger.info("  No instances found across any class.")
     else:
         # Header with corrected alignment
         header1 = (
-            f"  {'Class':<20} {'Expected':>8} {'Matched':>8} {'Lost':>8} "
-            f"{'Lost (%)':>9} {'Extra':>8}"
+            f"  {'Class':<20} {'Expected':>8} {'M-Match':>8} {'M-Lost':>8} "
+            f"{'M-Lost%':>8} {'M-Extra':>8} | {'B-Match':>8} {'B-Lost':>8} {'B-Extra':>8}"
         )
         header2 = (
             f"  {'--------------------':<20} {'--------':>8} {'--------':>8} "
-            f"{'--------':>8} {'---------':>9} {'--------':>8}"
+            f"{'--------':>8} {'--------':>8} {'--------':>8} | {'--------':>8} {'--------':>8} {'--------':>8}"
         )
         logger.info(header1)
         logger.info(header2)
         for cid in sorted(list(all_class_ids)):
             class_name = class_names.get(cid, f"Unknown ({cid})")
-            expected = expected_by_class.get(cid, 0)
-            lost = lost_by_class.get(cid, 0)
-            extra = extra_by_class.get(cid, 0)
-            matched = expected_by_class.get(cid, 0) - lost_by_class.get(cid, 0)
-            lost_percentage = (lost / expected * 100) if expected > 0 else 0.0
+            stats_for_class = class_stats[cid]
+            expected = stats_for_class.get("expected", 0)
+
+            # Mask-based stats
+            mask_matched = stats_for_class.get("mask_matched", 0)
+            mask_lost = stats_for_class.get("mask_lost", 0)
+            mask_extra = stats_for_class.get("mask_extra", 0)
+            mask_lost_percentage = (mask_lost / expected * 100) if expected > 0 else 0.0
+
+            # Bbox-based stats
+            bbox_matched = stats_for_class.get("bbox_matched", 0)
+            bbox_lost = stats_for_class.get("bbox_lost", 0)
+            bbox_extra = stats_for_class.get("bbox_extra", 0)
+
             log_line = (
-                f"  {f'{cid} ({class_name})':<20} {expected:>8} {matched:>8} "
-                f"{lost:>8} ({lost_percentage:>5.1f}%) {extra:>8}"
+                f"  {f'{cid} ({class_name})':<20} {expected:>8} {mask_matched:>8} "
+                f"{mask_lost:>8} {mask_lost_percentage:>7.1f}% {mask_extra:>8} | "
+                f"{bbox_matched:>8} {bbox_lost:>8} {bbox_extra:>8}"
             )
             logger.info(log_line)
 
     # Determine Overall Success and Exit Code
     is_success = (
         stats["total_processing_errors"] == 0
-        and stats["total_lost"] == 0
-        and stats["total_extra"] == 0
-        and stats["total_mask_top_iou_fails"] == 0
-        and stats["total_bbox_top_iou_fails"] == 0
+        and stats["mask_total_lost"] == 0
+        and stats["mask_total_extra"] == 0
+        and stats["mask_total_top_iou_fails"] == 0
+        and stats["bbox_total_top_iou_fails"] == 0
     )
 
     if is_success:
@@ -459,57 +535,130 @@ def print_single_sample_verification(result: VerificationResult, iou_top: float)
         logger.error(f"PROCESSING ERROR: {result.processing_error}")
         return
 
-    # Print matched pairs
-    logger.info(f"MATCHED INSTANCES: {len(result.matched_pairs)}")
-    if result.matched_pairs:
-        for i, match in enumerate(result.matched_pairs):
-            logger.info(f"  Match {i + 1}:")
-            logger.info(f"    Class ID: {match['class_id']}")
+    # Print mask-based matched pairs
+    logger.info("MASK-BASED MATCHING RESULTS:")
+    logger.info(f"  Matched Instances: {len(result.mask_matched_pairs)}")
+    logger.info(f"  Lost Instances: {len(result.mask_lost_instances)}")
+    logger.info(f"  Extra Instances: {len(result.mask_extra_instances)}")
+
+    if result.mask_matched_pairs:
+        logger.info("  MATCHED INSTANCES:")
+        for i, match in enumerate(result.mask_matched_pairs):
+            logger.info(f"    Match {i + 1}:")
+            logger.info(f"      Class ID: {match['class_id']}")
             log_line = (
-                f"    Original segment/mask: {match['original_segment_idx']}/"
+                f"      Original segment/mask: {match['original_segment_idx']}/"
                 f"{match['original_mask_idx']}"
             )
             logger.info(log_line)
-            logger.info(f"    YOLO instance: {match['yolo_instance_index']}")
+            logger.info(f"      YOLO instance: {match['yolo_instance_index']}")
+            logger.info(
+                f"      IoU: {match['iou']:.4f} (Threshold Passed: {match['threshold_passed']})"
+            )
+
+    if result.mask_lost_instances:
+        logger.info("  LOST INSTANCES (expected but not found in YOLO):")
+        for i, lost in enumerate(result.mask_lost_instances):
+            logger.info(f"    Lost {i + 1}:")
+            logger.info(f"      Class ID: {lost.class_id}")
+            logger.info(f"      Original segment/mask: {lost.segment_idx}/{lost.mask_idx}")
+            logger.info(f"      BBox: {lost.bbox}")
+
+    if result.mask_extra_instances:
+        logger.info("  EXTRA INSTANCES (found in YOLO but not expected):")
+        for i, extra in enumerate(result.mask_extra_instances):
+            logger.info(f"    Extra {i + 1}:")
+            logger.info(f"      Class ID: {extra.class_id}")
+            logger.info(f"      BBox: {extra.bbox}")
+
+    # Print bbox-based matched pairs
+    logger.info("\nBBOX-BASED MATCHING RESULTS:")
+    logger.info(f"  Matched Instances: {len(result.bbox_matched_pairs)}")
+    logger.info(f"  Lost Instances: {len(result.bbox_lost_instances)}")
+    logger.info(f"  Extra Instances: {len(result.bbox_extra_instances)}")
+
+    if result.bbox_matched_pairs:
+        logger.info("  MATCHED INSTANCES:")
+        for i, match in enumerate(result.bbox_matched_pairs):
+            logger.info(f"    Match {i + 1}:")
+            logger.info(f"      Class ID: {match['class_id']}")
             log_line = (
-                f"    Mask IoU: {match['mask_iou']:.4f} (Threshold Passed: "
-                f"{match['mask_threshold_passed']})"
+                f"      Original segment/mask: {match['original_segment_idx']}/"
+                f"{match['original_mask_idx']}"
             )
             logger.info(log_line)
-            log_line = (
-                f"    BBox IoU: {match['bbox_iou']:.4f} (Threshold Passed: "
-                f"{match['bbox_threshold_passed']})"
+            logger.info(f"      YOLO instance: {match['yolo_instance_index']}")
+            logger.info(
+                f"      IoU: {match['iou']:.4f} (Threshold Passed: {match['threshold_passed']})"
             )
-            logger.info(log_line)
 
-    # Print lost instances
-    logger.info(f"LOST INSTANCES (expected but not found in YOLO): {len(result.lost_instances)}")
-    if result.lost_instances:
-        for i, inst in enumerate(result.lost_instances):
-            logger.info(f"  Lost {i + 1}:")
-            logger.info(f"    Class ID: {inst.class_id}")
-            logger.info(f"    Original segment/mask: {inst.segment_idx}/{inst.mask_idx}")
-            logger.info(f"    BBox: {inst.bbox}")
+    if result.bbox_lost_instances:
+        logger.info("  LOST INSTANCES (expected but not found in YOLO):")
+        for i, lost in enumerate(result.bbox_lost_instances):
+            logger.info(f"    Lost {i + 1}:")
+            logger.info(f"      Class ID: {lost.class_id}")
+            logger.info(f"      Original segment/mask: {lost.segment_idx}/{lost.mask_idx}")
+            logger.info(f"      BBox: {lost.bbox}")
 
-    # Print extra instances
-    logger.info(f"EXTRA INSTANCES (found in YOLO but not expected): {len(result.extra_instances)}")
-    if result.extra_instances:
-        for i, inst in enumerate(result.extra_instances):
-            logger.info(f"  Extra {i + 1}:")
-            logger.info(f"    Class ID: {inst.class_id}")
-            logger.info(f"    BBox: {inst.bbox}")
+    if result.bbox_extra_instances:
+        logger.info("  EXTRA INSTANCES (found in YOLO but not expected):")
+        for i, extra in enumerate(result.bbox_extra_instances):
+            logger.info(f"    Extra {i + 1}:")
+            logger.info(f"      Class ID: {extra.class_id}")
+            logger.info(f"      BBox: {extra.bbox}")
+
+    # Cross-method analysis
+    # Create sets of matched pairs from both methods for comparison
+    mask_matched_pairs = {
+        (p["original_segment_idx"], p["original_mask_idx"], p["yolo_instance_index"])
+        for p in result.mask_matched_pairs
+    }
+    bbox_matched_pairs = {
+        (p["original_segment_idx"], p["original_mask_idx"], p["yolo_instance_index"])
+        for p in result.bbox_matched_pairs
+    }
+
+    # Calculate intersection and differences
+    matched_by_both = mask_matched_pairs & bbox_matched_pairs
+    matched_by_mask_only = mask_matched_pairs - bbox_matched_pairs
+    matched_by_bbox_only = bbox_matched_pairs - mask_matched_pairs
+
+    logger.info("\nCROSS-METHOD ANALYSIS:")
+    logger.info(f"  Instances Matched by Both Methods: {len(matched_by_both)}")
+    logger.info(f"  Instances Matched by Mask IoU Only: {len(matched_by_mask_only)}")
+    logger.info(f"  Instances Matched by Bbox IoU Only: {len(matched_by_bbox_only)}")
 
     # Summary
-    mask_fails = sum(1 for m in result.matched_pairs if not m["mask_threshold_passed"])
-    bbox_fails = sum(1 for m in result.matched_pairs if not m["bbox_threshold_passed"])
+    mask_fails = sum(1 for m in result.mask_matched_pairs if not m["threshold_passed"])
+    bbox_fails = sum(1 for m in result.bbox_matched_pairs if not m["threshold_passed"])
+
+    logger.info(f"\nHigh Threshold ({iou_top:.2f}) Failures:")
+    logger.info(f"  Mask-matched pairs below threshold: {mask_fails}")
+    logger.info(f"  Bbox-matched pairs below threshold: {bbox_fails}")
+
     is_success = (
-        len(result.lost_instances) == 0
-        and len(result.extra_instances) == 0
+        not result.processing_error
         and mask_fails == 0
         and bbox_fails == 0
+        and len(result.mask_lost_instances) == 0
+        and len(result.mask_extra_instances) == 0
     )
-    logger.info(f"High Threshold ({iou_top:.2f}) Failures: Mask={mask_fails}, BBox={bbox_fails}")
-    logger.info(f"VERIFICATION RESULT: {'SUCCESS' if is_success else 'FAILURE'}")
+
+    if is_success:
+        logger.info("\nOVERALL RESULT: PASS ✓")
+    else:
+        logger.info("\nOVERALL RESULT: FAIL ✗")
+        logger.info("Failure Reasons:")
+        if result.processing_error:
+            logger.info(f"  - Processing error: {result.processing_error}")
+        if len(result.mask_lost_instances) > 0:
+            logger.info(f"  - {len(result.mask_lost_instances)} instances lost (not found in YOLO)")
+        if len(result.mask_extra_instances) > 0:
+            logger.info(f"  - {len(result.mask_extra_instances)} extra instances in YOLO")
+        if mask_fails > 0:
+            logger.info(f"  - {mask_fails} matches failed mask IoU threshold ({iou_top})")
+        if bbox_fails > 0:
+            logger.info(f"  - {bbox_fails} matches failed bbox IoU threshold ({iou_top})")
 
 
 def main():
@@ -585,12 +734,12 @@ def main():
         if verification_results:
             print_single_sample_verification(verification_results[0], args.iou_top)
             res = verification_results[0]
-            mask_fails = sum(1 for m in res.matched_pairs if not m["mask_threshold_passed"])
-            bbox_fails = sum(1 for m in res.matched_pairs if not m["bbox_threshold_passed"])
+            mask_fails = sum(1 for m in res.mask_matched_pairs if not m["threshold_passed"])
+            bbox_fails = sum(1 for m in res.bbox_matched_pairs if not m["threshold_passed"])
             is_success = (
                 not res.processing_error
-                and len(res.lost_instances) == 0
-                and len(res.extra_instances) == 0
+                and len(res.mask_lost_instances) == 0
+                and len(res.mask_extra_instances) == 0
                 and mask_fails == 0
                 and bbox_fails == 0
             )
@@ -600,9 +749,7 @@ def main():
             exit_code = 1
     else:
         # For multi-sample mode, aggregate results
-        stats, iou_data, expected_by_class, lost_by_class, extra_by_class = aggregate_results(
-            verification_results
-        )
+        stats, iou_data, class_stats = aggregate_results(verification_results)
         # 6. Print Summary Report and determine exit code
         exit_code = report_results(
             stats,
@@ -610,9 +757,7 @@ def main():
             args,
             all_sample_count,
             class_names,
-            expected_by_class,
-            lost_by_class,
-            extra_by_class,
+            class_stats,
         )
 
     logger.info("Verification process finished.")

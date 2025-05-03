@@ -58,13 +58,13 @@ def _build_iou_matrix(
 def _match_instances_hungarian(
     iou_matrix: np.ndarray,
     iou_cutoff: float,
-) -> Tuple[List[Tuple[int, int]], np.ndarray, np.ndarray]:
+) -> Tuple[List[Tuple[int, int, float]], np.ndarray, np.ndarray]:
     """
     Perform optimal matching with the Hungarian algorithm (linear_sum_assignment).
 
-    This version pads the IoU matrix with “dummy” rows / columns so that:
+    This version pads the IoU matrix with "dummy" rows / columns so that:
     • Every real row/column can be assigned either to a real partner **or** to a dummy.
-    • Dummy cells have cost = 0 ( < iou_cutoff ) so they’ll never be accepted as a
+    • Dummy cells have cost = 0 ( < iou_cutoff ) so they'll never be accepted as a
       *valid* match, but they stop the algorithm from being forced to pair two invalid
       real elements simply to satisfy the square‑matrix requirement.
 
@@ -78,8 +78,8 @@ def _match_instances_hungarian(
 
     Returns
     -------
-    matched_pairs : List[Tuple[int,int]]
-        List of (row_idx_in_A, col_idx_in_B) for accepted matches (IoU ≥ cutoff).
+    matched_pairs : List[Tuple[int, int, float]]
+        List of (row_idx_in_A, col_idx_in_B, iou_value) for accepted matches (IoU ≥ cutoff).
     a_matched_mask : ndarray[bool]
         True for rows that were matched to a *valid* column.
     b_matched_mask : ndarray[bool]
@@ -98,10 +98,10 @@ def _match_instances_hungarian(
     padded[:, n_cols:] = 0.0  # dummy cols
     # --------------------------------------------------------------------------
 
-    # Hungarian algorithm – SciPy ≥ 1.11 supports `maximize=True`
+    # Hungarian algorithm – SciPy ≥ 1.11 supports `maximize=True`
     row_ind, col_ind = linear_sum_assignment(padded, maximize=True)
 
-    matched_pairs: List[Tuple[int, int]] = []
+    matched_pairs: List[Tuple[int, int, float]] = []
     a_matched_mask = np.zeros(n_rows, dtype=bool)
     b_matched_mask = np.zeros(n_cols, dtype=bool)
 
@@ -111,7 +111,7 @@ def _match_instances_hungarian(
             continue
         # Accept only if IoU meets the cutoff
         if padded[r, c] >= iou_cutoff:
-            matched_pairs.append((r, c))
+            matched_pairs.append((r, c, float(padded[r, c])))  # Include IoU value
             a_matched_mask[r] = True
             b_matched_mask[c] = True
 
@@ -120,13 +120,18 @@ def _match_instances_hungarian(
 
 def _match_instances_greedy(
     iou_matrix: np.ndarray, iou_cutoff: float
-) -> Tuple[List[Tuple[int, int]], np.ndarray, np.ndarray]:
+) -> Tuple[List[Tuple[int, int, float]], np.ndarray, np.ndarray]:
     """Perform greedy matching based on highest IoU first.
 
     Note: Assumes iou_matrix is a valid 2D ndarray.
+
+    Returns:
+        matched_pairs: List of (row_idx, col_idx, iou_value) for accepted matches.
+        a_matched_mask: Boolean mask of matched rows.
+        b_matched_mask: Boolean mask of matched columns.
     """
     n_rows, n_cols = iou_matrix.shape
-    matched_pairs: List[Tuple[int, int]] = []
+    matched_pairs: List[Tuple[int, int, float]] = []
     a_matched_mask = np.zeros(n_rows, dtype=bool)
     b_matched_mask = np.zeros(n_cols, dtype=bool)
 
@@ -137,7 +142,7 @@ def _match_instances_greedy(
             iou = iou_matrix[r, c]
             # Check against cutoff
             if iou >= iou_cutoff:
-                valid_ious.append((r, c, iou))
+                valid_ious.append((r, c, float(iou)))
 
     # Sort by IoU (descending for greedy best match)
     valid_ious.sort(key=lambda x: x[2], reverse=True)
@@ -146,9 +151,9 @@ def _match_instances_greedy(
     matched_r = set()
     matched_c = set()
 
-    for r, c, _ in valid_ious:
+    for r, c, iou in valid_ious:
         if r not in matched_r and c not in matched_c:
-            matched_pairs.append((r, c))
+            matched_pairs.append((r, c, iou))  # Include IoU value
             a_matched_mask[r] = True
             b_matched_mask[c] = True
             matched_r.add(r)
@@ -163,7 +168,7 @@ def match_instances(
     compute_iou_fn: Callable[[Any, Any], float],
     iou_cutoff: float = 0.5,
     use_hungarian: bool = True,
-) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+) -> Tuple[List[Tuple[int, int, float]], List[int], List[int]]:
     """Match instances between two datasets using Hungarian or Greedy algorithm.
 
     Builds an IoU matrix and then uses the specified algorithm to find matches.
@@ -177,6 +182,7 @@ def match_instances(
 
     Returns:
         Tuple: (matched_pairs, unmatched_a_indices, unmatched_b_indices).
+        matched_pairs contains (idx_a, idx_b, iou_value) tuples.
     """
     # Handle empty datasets early
     if len(dataset_a) == 0 or len(dataset_b) == 0:

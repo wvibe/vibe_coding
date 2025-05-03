@@ -1,7 +1,6 @@
 """Core logic for verifying YOLO dataset conversion against original HF dataset."""
 
 import logging
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -46,26 +45,48 @@ class VerificationResult:
     """Holds the results of verifying a single sample."""
 
     sample_id: str
-    matched_pairs: List[Dict[str, Any]] = field(default_factory=list)
-    lost_instances: List[OriginalInstanceRecord] = field(default_factory=list)
-    extra_instances: List[YoloInstanceRecord] = field(default_factory=list)
+    # Common results
     processing_error: Optional[str] = None
 
+    # Mask-based matching results
+    mask_matched_pairs: List[Dict[str, Any]] = field(default_factory=list)
+    mask_lost_instances: List[OriginalInstanceRecord] = field(default_factory=list)
+    mask_extra_instances: List[YoloInstanceRecord] = field(default_factory=list)
 
-def _get_sampled_mapping_info(
+    # Bbox-based matching results
+    bbox_matched_pairs: List[Dict[str, Any]] = field(default_factory=list)
+    bbox_lost_instances: List[OriginalInstanceRecord] = field(default_factory=list)
+    bbox_extra_instances: List[YoloInstanceRecord] = field(default_factory=list)
+
+    # Legacy fields for backward compatibility - will be populated from mask-based results
+    @property
+    def matched_pairs(self) -> List[Dict[str, Any]]:
+        """For backward compatibility."""
+        return self.mask_matched_pairs
+
+    @property
+    def lost_instances(self) -> List[OriginalInstanceRecord]:
+        """For backward compatibility."""
+        return self.mask_lost_instances
+
+    @property
+    def extra_instances(self) -> List[YoloInstanceRecord]:
+        """For backward compatibility."""
+        return self.mask_extra_instances
+
+
+def _get_mapping_info(
     segment: ClsSegment,
     phrase_map: Dict[str, Dict[str, Any]],
-    global_sample_ratio: float,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
-    """Checks segment phrases against the map and applies sampling.
+    """Checks segment phrases against the map.
 
     Args:
         segment: The segment containing phrases to check against the mapping.
         phrase_map: Mapping of phrases to class information.
-        global_sample_ratio: Global sampling ratio (0.0-1.0) to apply.
 
     Returns:
-        Tuple[Dict, str] (mapping_info, matched_phrase) if a sampled match is found,
+        Tuple[Dict, str] (mapping_info, matched_phrase) if a match is found,
         otherwise None.
     """
     matched_phrase = None
@@ -85,31 +106,9 @@ def _get_sampled_mapping_info(
 
     if mapping_info is None or matched_phrase is None:
         logger.debug(f"Segment phrases {[p.text for p in segment.phrases]} not found in mapping.")
-        # stats_counters["skipped_segments_no_mapping"] += 1 # Removed stats
         return None
 
-    # Only apply sampling if a ratio > 0 is specified
-    if global_sample_ratio > 0.0:
-        local_sampling_ratio = mapping_info.get("sampling_ratio", 1.0)
-        effective_ratio = global_sample_ratio * local_sampling_ratio
-
-        # Use the *same* random logic as converter: skip if random() > ratio
-        if random.random() > effective_ratio:
-            log_msg = (
-                f"Segment for phrase '{matched_phrase}' skipped due to sampling "
-                f"(ratio={effective_ratio:.3f})."
-            )
-            logger.debug(log_msg)
-            # stats_counters["skipped_segments_sampling"] += 1 # Removed stats
-            return None
-        else:
-            log_msg = (
-                f"Segment for phrase '{matched_phrase}' kept after sampling "
-                f"(ratio={effective_ratio:.3f})."
-            )
-            logger.debug(log_msg)
-
-    # If no sampling or sampling passed, return the info
+    # Return the mapping info without any sampling
     return mapping_info, matched_phrase
 
 
@@ -147,10 +146,7 @@ def _load_yolo_instances(
         with open(yolo_label_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
     except FileNotFoundError:
-        # If the label file doesn't exist, it means no annotations were generated.
-        # This is a valid case (e.g., skipped sample), not necessarily an error here.
-        logger.debug(f"YOLO label file not found (no annotations generated?): {yolo_label_path}")
-        return [], None
+        return [], f"YOLO label file not found: {yolo_label_path}"
     except Exception as e:
         return [], f"Error reading YOLO label file {yolo_label_path}: {e}"
 
@@ -176,6 +172,11 @@ def _load_yolo_instances(
 
         # Convert normalized polygon to absolute pixel coordinates
         poly_abs: List[Tuple[int, int]] = []
+
+        # Initialize min/max x,y values for direct bounding box calculation
+        x_min, y_min = width, height  # Initialize to max possible values
+        x_max, y_max = 0, 0  # Initialize to min possible values
+
         for j in range(0, len(norm_coords), 2):
             norm_x, norm_y = norm_coords[j], norm_coords[j + 1]
             abs_x = int(round(norm_x * width))
@@ -185,33 +186,45 @@ def _load_yolo_instances(
             abs_y = max(0, min(height - 1, abs_y))
             poly_abs.append((abs_x, abs_y))
 
+            # Update bbox coordinates directly from polygon points
+            x_min = min(x_min, abs_x)
+            y_min = min(y_min, abs_y)
+            x_max = max(x_max, abs_x)
+            y_max = max(y_max, abs_y)
+
         if len(poly_abs) < 3:
             log_msg = (
                 f"Sample {sample_id}, Line {i + 1}: Degenerate polygon after "
                 f"conversion (< 3 points), skipping instance."
             )
-            logger.warning(log_msg)
-            continue
+            return [], log_msg
 
-        # Generate mask from absolute polygon
+        # Generate mask from absolute polygon (still needed for IoU calculations)
         derived_mask = polygon_to_mask(poly_abs, height, width)
-        if derived_mask.sum() == 0:
+        derived_bbox = _calculate_bbox_from_mask(derived_mask)
+        if derived_mask.sum() == 0 or derived_bbox is None:
             log_msg = (
                 f"Sample {sample_id}, Line {i + 1}: Polygon resulted in empty "
-                f"mask, skipping instance."
+                f"mask or bbox, skipping instance."
             )
-            logger.warning(log_msg)
-            continue
+            return [], log_msg
 
-        # Calculate bounding box from the derived mask
-        bbox = _calculate_bbox_from_mask(derived_mask)
-        if bbox is None:
+        # Use directly calculated bbox
+        direct_bbox = (x_min, y_min, x_max, y_max)
+
+        # Check if differences exceed margin
+        bbox_margin = 2
+        if (
+            abs(direct_bbox[0] - derived_bbox[0]) > bbox_margin
+            or abs(direct_bbox[1] - derived_bbox[1]) > bbox_margin
+            or abs(direct_bbox[2] - derived_bbox[2]) > bbox_margin
+            or abs(direct_bbox[3] - derived_bbox[3]) > bbox_margin
+        ):
             log_msg = (
-                f"Sample {sample_id}, Line {i + 1}: Could not calculate bbox from "
-                f"derived mask, skipping instance."
+                f"Sample {sample_id}, Line {i + 1}: Significant difference between "
+                f"direct bbox {direct_bbox} and mask-derived bbox {derived_bbox}."
             )
-            logger.warning(log_msg)
-            continue
+            return [], log_msg
 
         yolo_instances.append(
             YoloInstanceRecord(
@@ -219,7 +232,7 @@ def _load_yolo_instances(
                 class_id=class_id,
                 polygon_abs=poly_abs,
                 derived_mask=derived_mask,
-                bbox=bbox,
+                bbox=direct_bbox,  # Use the direct calculation
             )
         )
 
@@ -230,17 +243,16 @@ def _process_original_sample(
     original_sample: SegmSample,
     phrase_map: Dict[str, Dict[str, Any]],
     mask_type: str,
-    global_sample_ratio: float,
-) -> List[OriginalInstanceRecord]:
+) -> Tuple[List[OriginalInstanceRecord], Optional[str]]:
     """Process the original SegmSample to extract expected instances."""
     expected_instances: List[OriginalInstanceRecord] = []
 
     for seg_idx, segment in enumerate(original_sample.segments):
-        # Check if this segment corresponds to a class we care about and passes sampling
-        mapping_result = _get_sampled_mapping_info(segment, phrase_map, global_sample_ratio)
+        # Check if this segment corresponds to a class we care about
+        mapping_result = _get_mapping_info(segment, phrase_map)
 
         if mapping_result is None:
-            continue  # Skip segment (not mapped or sampled out)
+            continue  # Skip segment (not mapped)
 
         mapping_info, _ = mapping_result
         class_id = mapping_info["class_id"]
@@ -265,30 +277,198 @@ def _process_original_sample(
                     f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: "
                     f"Skipping invalid original mask."
                 )
-                logger.debug(log_msg)
+                return [], log_msg
             elif mask.bbox is None:
                 log_msg = (
                     f"Sample {original_sample.id}, Seg {seg_idx}, Mask {mask_idx}: "
                     f"Original mask is valid but has no bbox? Skipping."
                 )
-                logger.warning(log_msg)
+                return [], log_msg
 
-    return expected_instances
+    return expected_instances, None
 
 
-def _compute_mask_iou_for_match(
-    record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
-) -> float:
-    """Helper function to compute mask IoU for the match_instances call."""
-    try:
+def _group_instances_by_class(instances: List[Any]) -> Dict[int, List[Any]]:
+    """Groups instances by their class_id.
+
+    Args:
+        instances: List of instances (either OriginalInstanceRecord or YoloInstanceRecord)
+
+    Returns:
+        Dict mapping class_id to lists of instances of that class
+    """
+    instances_by_class: Dict[int, List[Any]] = {}
+
+    for instance in instances:
+        class_id = instance.class_id
+        if class_id not in instances_by_class:
+            instances_by_class[class_id] = []
+        instances_by_class[class_id].append(instance)
+
+    return instances_by_class
+
+
+def _match_instances_for_class(
+    expected_instances: List[OriginalInstanceRecord],
+    yolo_instances: List[YoloInstanceRecord],
+    iou_cutoff: float,
+) -> Dict[str, Any]:
+    """Match instances of a single class using both mask and bbox IoU.
+
+    Args:
+        expected_instances: List of expected instances for a single class
+        yolo_instances: List of YOLO instances for the same class
+        iou_cutoff: Minimum IoU threshold for matching
+
+    Returns:
+        Dict containing match results for both methods, including IoU values in matched pairs
+    """
+    match_results = {}
+
+    def _compute_mask_iou_for_match(
+        record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
+    ) -> float:
+        """Helper function to compute mask IoU for the match_instances call."""
         return calculate_mask_iou(record_a.original_mask, record_b.derived_mask)
-    except ValueError as e:
-        logger.warning(
-            f"Error computing mask IoU for matching between orig "
-            f"(sample {record_a.sample_id}, seg {record_a.segment_idx}, mask {record_a.mask_idx}) "
-            f"and yolo (sample {record_b.sample_id}): {e}. Returning 0.0 IoU."
-        )
-        return 0.0
+
+    def _compute_bbox_iou_for_match(
+        record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
+    ) -> float:
+        """Helper function to compute bbox IoU for the match_instances call."""
+        return calculate_bbox_iou(np.array(record_a.bbox), np.array(record_b.bbox))
+
+    def _perform_matching(compute_iou_fn, match_type):
+        """Helper to perform matching with error handling for both match types."""
+        try:
+            matched_indices, lost_indices, extra_indices = match_instances(
+                dataset_a=expected_instances,
+                dataset_b=yolo_instances,
+                compute_iou_fn=compute_iou_fn,
+                iou_cutoff=iou_cutoff,
+                use_hungarian=True,
+            )
+            match_results[f"{match_type}_matched"] = matched_indices  # includes IoU values
+            match_results[f"{match_type}_lost"] = lost_indices
+            match_results[f"{match_type}_extra"] = extra_indices
+            match_results[f"{match_type}_error"] = None
+        except Exception as e:
+            error_msg = f"Error during {match_type}-based matching: {e}"
+            logger.warning(error_msg)
+            match_results[f"{match_type}_matched"] = []
+            match_results[f"{match_type}_lost"] = list(range(len(expected_instances)))
+            match_results[f"{match_type}_extra"] = list(range(len(yolo_instances)))
+            match_results[f"{match_type}_error"] = error_msg
+
+    # Perform mask-based matching
+    _perform_matching(_compute_mask_iou_for_match, "mask")
+
+    # Perform bbox-based matching
+    _perform_matching(_compute_bbox_iou_for_match, "bbox")
+
+    return match_results
+
+
+def _process_matched_pairs(
+    expected_instances: List[OriginalInstanceRecord],
+    mask_matched_indices: List[Tuple[int, int, float]],
+    bbox_matched_indices: List[Tuple[int, int, float]],
+    iou_top: float,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Process both mask and bbox matched pairs using a unified approach.
+
+    Takes advantage of the IoU values already calculated during matching.
+    Avoids unnecessary cross-type IoU calculations with a generic processing function.
+
+    Args:
+        expected_instances: List of expected instances
+        mask_matched_indices: List of (expected_idx, yolo_idx, mask_iou) tuples
+        bbox_matched_indices: List of (expected_idx, yolo_idx, bbox_iou) tuples
+        iou_top: High quality threshold for IoU
+
+    Returns:
+        Tuple of (mask_matched_pairs, bbox_matched_pairs)
+    """
+
+    def _process_match(
+        orig_idx: int, yolo_idx: int, iou_value: float, match_type: str
+    ) -> Dict[str, Any]:
+        """Process a single match generically for any match type."""
+        orig_inst = expected_instances[orig_idx]
+
+        match_info = {
+            "original_segment_idx": orig_inst.segment_idx,
+            "original_mask_idx": orig_inst.mask_idx,
+            "yolo_instance_index": yolo_idx,
+            "class_id": orig_inst.class_id,
+            "iou": iou_value,
+            "threshold_passed": iou_value >= iou_top,
+            "match_type": match_type,
+        }
+        return match_info
+
+    # Process mask-based matches first
+    mask_matched_pairs = [
+        _process_match(orig_idx, yolo_idx, iou_value, "mask")
+        for orig_idx, yolo_idx, iou_value in mask_matched_indices
+    ]
+
+    # Process bbox-based matches unconditionally using list comprehension
+    bbox_matched_pairs = [
+        _process_match(orig_idx, yolo_idx, iou_value, "bbox")
+        for orig_idx, yolo_idx, iou_value in bbox_matched_indices
+    ]
+
+    return mask_matched_pairs, bbox_matched_pairs
+
+
+def _process_lost_and_extra_instances(
+    expected_instances: List[OriginalInstanceRecord],
+    yolo_instances: List[YoloInstanceRecord],
+    lost_indices: List[int],
+    extra_indices: List[int],
+    existing_lost: List[OriginalInstanceRecord],
+    existing_extra: List[YoloInstanceRecord],
+) -> Tuple[List[OriginalInstanceRecord], List[YoloInstanceRecord]]:
+    """Process lost and extra instances, avoiding duplicates with existing ones.
+
+    Args:
+        expected_instances: List of expected instances
+        yolo_instances: List of YOLO instances
+        lost_indices: Indices of lost instances in expected_instances
+        extra_indices: Indices of extra instances in yolo_instances
+        existing_lost: Already identified lost instances to check against
+        existing_extra: Already identified extra instances to check against
+
+    Returns:
+        Tuple of (new_lost_instances, new_extra_instances)
+    """
+    # Set of IDs for existing lost instances
+    existing_lost_ids = {(lost.segment_idx, lost.mask_idx) for lost in existing_lost}
+
+    # Set of IDs for existing extra instances
+    existing_extra_ids = {
+        (extra.sample_id, extra.class_id, tuple(extra.bbox)) for extra in existing_extra
+    }
+
+    # Filter lost instances
+    new_lost = []
+    for idx in lost_indices:
+        lost_inst = expected_instances[idx]
+        if (lost_inst.segment_idx, lost_inst.mask_idx) not in existing_lost_ids:
+            new_lost.append(lost_inst)
+
+    # Filter extra instances
+    new_extra = []
+    for idx in extra_indices:
+        extra_inst = yolo_instances[idx]
+        if (
+            extra_inst.sample_id,
+            extra_inst.class_id,
+            tuple(extra_inst.bbox),
+        ) not in existing_extra_ids:
+            new_extra.append(extra_inst)
+
+    return new_lost, new_extra
 
 
 def verify_sample_conversion(
@@ -300,14 +480,13 @@ def verify_sample_conversion(
     mask_type: str,
     iou_cutoff: float,
     iou_top: float,
-    global_sample_ratio: float = 1.0,
 ) -> VerificationResult:
     """Verifies the conversion for a single sample ID."""
 
     result = VerificationResult(sample_id=sample_id)
 
     # 1. Load and parse YOLO data
-    yolo_instances, yolo_load_error = _load_yolo_instances(
+    yolo_mcls_instances, yolo_load_error = _load_yolo_instances(
         sample_id, yolo_label_path, yolo_image_path
     )
     if yolo_load_error:
@@ -319,73 +498,99 @@ def verify_sample_conversion(
     if original_sample is None:
         logger.error(f"Original SegmSample for {sample_id} was not loaded. Cannot verify.")
         # If YOLO instances exist, they are all considered 'extra'
-        result.extra_instances.extend(yolo_instances)
+        result.mask_extra_instances.extend(yolo_mcls_instances)
+        result.bbox_extra_instances.extend(yolo_mcls_instances)
         result.processing_error = "Original HF sample not loaded"
         return result
 
     # 3. Process original_sample -> expected instances
-    original_instances_expected = _process_original_sample(
-        original_sample, phrase_map, mask_type, global_sample_ratio
+    expected_mcls_instances, original_process_error = _process_original_sample(
+        original_sample, phrase_map, mask_type
     )
+    if original_process_error:
+        logger.error(f"Error processing original sample for {sample_id}: {original_process_error}")
+        result.processing_error = f"Original Process Error: {original_process_error}"
+        return result
 
-    # 4. Match instances using generic matcher
-    # Note: We match based on mask IoU >= iou_cutoff
-    matched_indices, lost_indices, extra_indices = match_instances(
-        dataset_a=original_instances_expected,
-        dataset_b=yolo_instances,
-        compute_iou_fn=_compute_mask_iou_for_match,
-        iou_cutoff=iou_cutoff,
-        use_hungarian=True,
-    )
+    # 4. Group instances by class for both expected and YOLO instances
+    expected_by_class = _group_instances_by_class(expected_mcls_instances)
+    yolo_by_class = _group_instances_by_class(yolo_mcls_instances)
 
-    # 5. Process matches and calculate quality metrics
-    for orig_idx, yolo_idx in matched_indices:
-        orig_inst = original_instances_expected[orig_idx]
-        yolo_inst = yolo_instances[yolo_idx]
+    # Get all unique class IDs from both sets
+    all_class_ids = set(expected_by_class.keys()) | set(yolo_by_class.keys())
+    logger.debug(f"Found {len(all_class_ids)} unique class IDs across expected and YOLO")
 
-        # Calculate mask IoU (might be slightly different from match helper due to error handling)
-        try:
-            mask_iou = calculate_mask_iou(orig_inst.original_mask, yolo_inst.derived_mask)
-        except ValueError:
-            mask_iou = 0.0
+    # 5. Process each class separately
+    for class_id in all_class_ids:
+        expected_instances = expected_by_class.get(class_id, [])
+        yolo_instances = yolo_by_class.get(class_id, [])
 
-        # Calculate bbox IoU
-        try:
-            bbox_iou = calculate_bbox_iou(np.array(orig_inst.bbox), np.array(yolo_inst.bbox))
-        except Exception as e:
-            log_msg = (
-                f"Error calculating bbox IoU for sample {sample_id}, "
-                f"orig_idx {orig_idx}, yolo_idx {yolo_idx}: {e}"
-            )
-            logger.warning(log_msg)
-            bbox_iou = 0.0
+        # Log counts for this class
+        logger.debug(
+            f"Class {class_id}: {len(expected_instances)} expected, {len(yolo_instances)} YOLO"
+        )
 
-        # Check against the high IoU threshold (iou_top)
-        mask_threshold_passed = mask_iou >= iou_top
-        bbox_threshold_passed = bbox_iou >= iou_top
+        # Skip if either list is empty
+        if not expected_instances or not yolo_instances:
+            # If expected instances exist but no YOLO instances, they're all lost
+            if expected_instances:
+                result.mask_lost_instances.extend(expected_instances)
+                result.bbox_lost_instances.extend(expected_instances)
 
-        match_info = {
-            "original_segment_idx": orig_inst.segment_idx,
-            "original_mask_idx": orig_inst.mask_idx,
-            "yolo_instance_index": yolo_idx,
-            "class_id": orig_inst.class_id,
-            "mask_iou": mask_iou,
-            "bbox_iou": bbox_iou,
-            "mask_threshold_passed": mask_threshold_passed,
-            "bbox_threshold_passed": bbox_threshold_passed,
-        }
-        result.matched_pairs.append(match_info)
+            # If YOLO instances exist but no expected instances, they're all extra
+            if yolo_instances:
+                result.mask_extra_instances.extend(yolo_instances)
+                result.bbox_extra_instances.extend(yolo_instances)
 
-    # 6. Populate lost and extra instances
-    result.lost_instances = [original_instances_expected[i] for i in lost_indices]
-    result.extra_instances = [yolo_instances[i] for i in extra_indices]
+            continue
+
+        # Perform matching for this class
+        match_results = _match_instances_for_class(expected_instances, yolo_instances, iou_cutoff)
+
+        # Process mask-based matches
+        mask_pairs, bbox_pairs = _process_matched_pairs(
+            expected_instances,
+            match_results["mask_matched"],
+            match_results["bbox_matched"],
+            iou_top,
+        )
+        result.mask_matched_pairs.extend(mask_pairs)
+        result.bbox_matched_pairs.extend(bbox_pairs)
+
+        # Process lost and extra instances for mask-based matching
+        mask_lost, mask_extra = _process_lost_and_extra_instances(
+            expected_instances,
+            yolo_instances,
+            match_results["mask_lost"],
+            match_results["mask_extra"],
+            result.mask_lost_instances,
+            result.mask_extra_instances,
+        )
+        result.mask_lost_instances.extend(mask_lost)
+        result.mask_extra_instances.extend(mask_extra)
+
+        # Process lost and extra instances for bbox-based matching
+        bbox_lost, bbox_extra = _process_lost_and_extra_instances(
+            expected_instances,
+            yolo_instances,
+            match_results["bbox_lost"],
+            match_results["bbox_extra"],
+            result.bbox_lost_instances,
+            result.bbox_extra_instances,
+        )
+        result.bbox_lost_instances.extend(bbox_lost)
+        result.bbox_extra_instances.extend(bbox_extra)
 
     # Mark as completed (no error)
     result.processing_error = None
 
+    # Log summary
     logger.debug(
-        f"Verification completed for {sample_id}: {len(result.matched_pairs)} matches, "
-        f"{len(result.lost_instances)} lost, {len(result.extra_instances)} extra."
+        f"Verification completed for {sample_id}: "
+        f"Mask-based: {len(result.mask_matched_pairs)} matches, "
+        f"{len(result.mask_lost_instances)} lost, {len(result.mask_extra_instances)} extra. "
+        f"Bbox-based: {len(result.bbox_matched_pairs)} matches, "
+        f"{len(result.bbox_lost_instances)} lost, {len(result.bbox_extra_instances)} extra."
     )
 
     return result

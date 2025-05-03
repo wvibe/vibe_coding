@@ -8,7 +8,7 @@ from vibelab.dataops.cov_segm.convert_verifier import (
     _calculate_bbox_from_mask,
 )
 from vibelab.utils.common.label_match import match_instances
-from vibelab.utils.common.mask import calculate_mask_iou
+from vibelab.utils.common.mask import calculate_mask_iou, polygon_to_mask
 
 
 def test_calculate_bbox_from_mask():
@@ -29,15 +29,14 @@ def test_calculate_bbox_from_mask():
 
 
 def test_match_instances_exact_match():
-    """Test _match_instances with instances that have exact mask matches."""
-    # Create two original instances with simple masks
+    """Test _match_instances with perfect matches."""
+    # Create two masks with no overlap and different classes
     mask1 = np.zeros((10, 10), dtype=bool)
-    mask1[0:5, 0:5] = True  # Square in top-left (0,0) to (4,4)
+    mask1[0:5, 0:5] = True  # Class 1: 5x5 square in top-left
 
     mask2 = np.zeros((10, 10), dtype=bool)
-    mask2[5:10, 5:10] = True  # Square in bottom-right (5,5) to (9,9)
+    mask2[5:10, 5:10] = True  # Class 2: 5x5 square in bottom-right
 
-    # Create original instances (different classes)
     original_instances = [
         OriginalInstanceRecord(
             sample_id="sample1",
@@ -57,7 +56,6 @@ def test_match_instances_exact_match():
         ),
     ]
 
-    # Create matching YOLO instances (same masks but reverse order)
     yolo_instances = [
         YoloInstanceRecord(
             sample_id="sample1",
@@ -90,12 +88,18 @@ def test_match_instances_exact_match():
 
     # The first original should match the second YOLO (class 1)
     # The second original should match the first YOLO (class 2)
-    expected_matches = {(0, 1), (1, 0)}  # Set of (orig_idx, yolo_idx) tuples
-    actual_matches = set(matched)
+    # Matches now include IoU values (idx_a, idx_b, iou)
+    # Extract just the indices for comparison
+    match_indices = {(a, b) for a, b, _ in matched}
+    expected_indices = {(0, 1), (1, 0)}  # Set of (orig_idx, yolo_idx) tuples
 
-    assert actual_matches == expected_matches, (
-        f"Expected matches {expected_matches}, got {actual_matches}"
+    assert match_indices == expected_indices, (
+        f"Expected match indices {expected_indices}, got {match_indices}"
     )
+
+    # Verify IoU values are 1.0 for perfect matches
+    for _, _, iou in matched:
+        assert iou == 1.0, f"Expected IoU of 1.0 for exact match, got {iou}"
 
 
 def test_match_instances_partial_overlap():
@@ -146,6 +150,12 @@ def test_match_instances_partial_overlap():
     assert len(matched) == 1, f"Expected 1 match, got {len(matched)}"
     assert len(lost) == 0, f"Expected 0 lost instances, got {len(lost)}"
     assert len(extra) == 0, f"Expected 0 extra instances, got {len(extra)}"
+
+    # Verify the IoU value is included
+    assert len(matched[0]) == 3, f"Expected match tuple to have 3 elements, got {len(matched[0])}"
+    _, _, iou = matched[0]
+    # IoU should be around 0.173
+    assert 0.17 <= iou <= 0.18, f"Expected IoU around 0.173, got {iou}"
 
     # Test with IoU threshold just above the expected IoU
     matched, lost, extra = match_instances(
@@ -252,11 +262,16 @@ def test_match_instances_multiple_classes():
     assert len(lost) == 1, f"Expected 1 lost instance, got {len(lost)}"
     assert len(extra) == 0, f"Expected 0 extra instances, got {len(extra)}"
 
-    # Check the specific matches - order may vary based on implementation
-    matched_pairs = set(matched)
-    assert (0, 0) in matched_pairs, "Class 1a should match first YOLO instance"
-    assert (1, 1) in matched_pairs, "Class 1b should match second YOLO instance"
-    assert (2, 2) in matched_pairs, "Class 2 should match third YOLO instance"
+    # Check the specific matches - extract index pairs for comparison
+    match_indices = {(a, b) for a, b, _ in matched}
+    expected_indices = {(0, 0), (1, 1), (2, 2)}
+    assert match_indices == expected_indices, (
+        f"Expected match indices {expected_indices}, got {match_indices}"
+    )
+
+    # Verify IoU values are 1.0 for perfect matches
+    for _, _, iou in matched:
+        assert iou == 1.0, f"Expected IoU of 1.0 for exact match, got {iou}"
 
     # Check which instance was lost
     assert set(lost) == {3}, f"Expected lost instance [3], got {lost}"  # Original class 3
@@ -269,3 +284,46 @@ def _mask_iou_wrapper(a: OriginalInstanceRecord, b: YoloInstanceRecord) -> float
 
 
 DEFAULT_IOU_CUTOFF = 0.5  # generic cutoff for matching
+
+
+def test_bbox_calculation_methods():
+    """Test that direct bbox calculation and mask-based calculation yield similar results."""
+    # Test case 1: Simple square polygon
+    width, height = 100, 100
+    poly_abs = [(25, 25), (75, 25), (75, 75), (25, 75)]  # Simple square
+
+    # Direct calculation
+    x_min = min(x for x, _ in poly_abs)
+    y_min = min(y for _, y in poly_abs)
+    x_max = max(x for x, _ in poly_abs)
+    y_max = max(y for _, y in poly_abs)
+    direct_bbox = (x_min, y_min, x_max, y_max)  # Should be (25, 25, 75, 75)
+
+    # Mask-based calculation
+    mask = polygon_to_mask(poly_abs, height, width)
+    mask_bbox = _calculate_bbox_from_mask(mask)
+
+    # Compare results for simple polygon
+    assert direct_bbox == mask_bbox, f"Simple polygon: Direct {direct_bbox} != Mask {mask_bbox}"
+
+    # Test case 2: Complex polygon
+    complex_poly = [(30, 20), (70, 10), (90, 40), (80, 80), (40, 70), (10, 50)]
+
+    # Direct calculation
+    complex_x_min = min(x for x, _ in complex_poly)
+    complex_y_min = min(y for _, y in complex_poly)
+    complex_x_max = max(x for x, _ in complex_poly)
+    complex_y_max = max(y for _, y in complex_poly)
+    complex_direct_bbox = (complex_x_min, complex_y_min, complex_x_max, complex_y_max)
+
+    # Mask-based calculation
+    complex_mask = polygon_to_mask(complex_poly, height, width)
+    complex_mask_bbox = _calculate_bbox_from_mask(complex_mask)
+
+    # Compare results for complex polygon with allowed margin
+    allowed_margin = 1  # Allow 1 pixel difference
+    assert all(
+        abs(a - b) <= allowed_margin for a, b in zip(complex_direct_bbox, complex_mask_bbox)
+    ), (
+        f"Complex polygon: Direct {complex_direct_bbox} differs significantly from Mask {complex_mask_bbox}"
+    )
