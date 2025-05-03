@@ -162,6 +162,20 @@ def _match_instances_greedy(
     return matched_pairs, a_matched_mask, b_matched_mask
 
 
+def _pprint_iou_matrix(iou_matrix: np.ndarray):
+    # pretty print the iou matrix with two decimal places
+    logger.info("-----------iou matrix---------------------")
+    for i in range(len(iou_matrix)):
+        logline = ""
+        for j in range(len(iou_matrix[i])):
+            if iou_matrix[i, j] <= _INVALID_IOU_PLACEHOLDER:
+                logline += f"{'N/A':>5} "
+            else:
+                logline += f"{iou_matrix[i, j]:>5.2f} "
+        logger.info(logline)
+    logger.info("--------------------------------")
+
+
 def match_instances(
     dataset_a: List[Any],
     dataset_b: List[Any],

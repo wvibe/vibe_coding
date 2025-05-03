@@ -315,6 +315,9 @@ def _match_instances_for_class(
 ) -> Dict[str, Any]:
     """Match instances of a single class using both mask and bbox IoU.
 
+    Extracts relevant data (masks, bboxes) before calling the generic
+    match_instances function with the direct IoU calculation methods.
+
     Args:
         expected_instances: List of expected instances for a single class
         yolo_instances: List of YOLO instances for the same class
@@ -325,25 +328,36 @@ def _match_instances_for_class(
     """
     match_results = {}
 
-    def _compute_mask_iou_for_match(
-        record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
-    ) -> float:
-        """Helper function to compute mask IoU for the match_instances call."""
-        return calculate_mask_iou(record_a.original_mask, record_b.derived_mask)
+    # 1. Extract data needed for matching
+    original_masks = [inst.original_mask for inst in expected_instances]
+    yolo_masks = [inst.derived_mask for inst in yolo_instances]
+    original_bboxes = [np.array(inst.bbox) for inst in expected_instances]
+    yolo_bboxes = [np.array(inst.bbox) for inst in yolo_instances]
 
-    def _compute_bbox_iou_for_match(
-        record_a: OriginalInstanceRecord, record_b: YoloInstanceRecord
-    ) -> float:
-        """Helper function to compute bbox IoU for the match_instances call."""
-        return calculate_bbox_iou(np.array(record_a.bbox), np.array(record_b.bbox))
+    # 2. Remove intermediate helper functions
+    # def _compute_mask_iou_for_match(...):
+    # def _compute_bbox_iou_for_match(...):
 
-    def _perform_matching(compute_iou_fn, match_type):
+    # 3. Modify _perform_matching to use extracted data and direct IoU funcs
+    def _perform_matching(match_type):
         """Helper to perform matching with error handling for both match types."""
         try:
+            if match_type == "mask":
+                data_a = original_masks
+                data_b = yolo_masks
+                iou_func = calculate_mask_iou
+            elif match_type == "bbox":
+                data_a = original_bboxes
+                data_b = yolo_bboxes
+                iou_func = calculate_bbox_iou
+            else:
+                # Should not happen, but good practice
+                raise ValueError(f"Unknown match_type: {match_type}")
+
             matched_indices, lost_indices, extra_indices = match_instances(
-                dataset_a=expected_instances,
-                dataset_b=yolo_instances,
-                compute_iou_fn=compute_iou_fn,
+                dataset_a=data_a,
+                dataset_b=data_b,
+                compute_iou_fn=iou_func,  # Use direct IoU function
                 iou_cutoff=iou_cutoff,
                 use_hungarian=True,
             )
@@ -360,10 +374,10 @@ def _match_instances_for_class(
             match_results[f"{match_type}_error"] = error_msg
 
     # Perform mask-based matching
-    _perform_matching(_compute_mask_iou_for_match, "mask")
+    _perform_matching("mask")
 
     # Perform bbox-based matching
-    _perform_matching(_compute_bbox_iou_for_match, "bbox")
+    _perform_matching("bbox")
 
     return match_results
 

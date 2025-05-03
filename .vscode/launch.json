@@ -39,12 +39,14 @@
                 "validation",
                 "--mask-type",
                 "visible",
-                "--sample-id",
-                "abb-abb_hm-pick_trolly-20210125095705-3853485",
-                // "--sample-count",
-                // "10",
+                // "--sample-id",
+                // "abb-abb_hm-pick_trolly-20210125095705-3853485",
+                "--sample-count",
+                "100",
                 "--num-proc",
                 "6", // for 32GB RAM
+                "--seed",
+                "42"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
