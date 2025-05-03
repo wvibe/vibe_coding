@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from ultralytics import YOLO
-import torch
+from ultralytics.utils import SETTINGS
 
 # --- Vibe Imports --- #
 # Assuming src is in PYTHONPATH or handled by execution environment
@@ -159,43 +159,27 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
             logging.info(
                 f"Automatically found WandB run ID: {wandb_id_to_use}. Will attempt to resume."
             )
+            os.environ["WANDB_RESUME"] = "allow"
+            os.environ["WANDB_RUN_ID"] = wandb_id_to_use
         else:
             logging.warning(
                 f"Could not automatically find a matching WandB run ID for {name_to_use} "
                 f"in {args.wandb_dir}. WandB (if enabled) will start as a new run."
             )
         # --- End WandB ID Lookup --- #
-
     else:
         # New run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name_to_use = f"{args.name}_{timestamp}"
         model_to_load = args.model if args.model else main_config.get("model")
         resume_flag = False  # Explicitly false
-        wandb_id_to_use = None  # New runs don't automatically reuse IDs
         logging.info(f"Starting new run with name: {name_to_use}")
         if not model_to_load:
-            raise ValueError("Missing 'model' key in configuration for new run or not provided via --model.")
+            raise ValueError(
+                "Missing 'model' key in configuration for new run or not provided via --model."
+            )
 
-    return model_to_load, name_to_use, resume_flag, wandb_id_to_use
-
-
-def _setup_wandb(wandb_id: str | None, resume_flag: bool):
-    """Set environment variables for WandB based on provided ID.
-
-    Args:
-        wandb_id (str | None): WandB run ID to resume, if available.
-        resume_flag (bool): Flag indicating if training is being resumed.
-    """
-    if wandb_id:
-        if resume_flag:
-            logging.info(f"Setting up WandB to resume run ID: {wandb_id}")
-        else:
-            # This case is less likely now as we don't automatically assign IDs to new runs
-            logging.info(f"Setting up WandB with provided run ID: {wandb_id}")
-        os.environ["WANDB_RESUME"] = "allow"
-        os.environ["WANDB_RUN_ID"] = wandb_id
-    # else: Let Ultralytics handle default WandB initialization/behavior
+    return model_to_load, name_to_use, resume_flag
 
 
 def _load_model(model_path: str) -> YOLO:
@@ -223,7 +207,7 @@ def prepare_train_kwargs(
     name: str,
     resume: bool,
     effective_project_path: str,
-    absolute_data_config_path: Path
+    absolute_data_config_path: Path,
 ) -> dict:
     """Prepare the keyword arguments for the model.train() call.
 
@@ -246,6 +230,7 @@ def prepare_train_kwargs(
         "close_mosaic",
         "copy_paste",
         "cos_lr",
+        "csv_root",
         "degrees",
         "deterministic",
         "device",
@@ -275,6 +260,7 @@ def prepare_train_kwargs(
         "shear",
         "translate",
         "warmup_epochs",
+        "wdir_root",
         "weight_decay",
         "workers",
     }
@@ -443,19 +429,26 @@ def run_training_pipeline(args: argparse.Namespace):
 
     # Step 4: Determine run parameters (includes auto WandB ID lookup)
     try:
-        model_to_load, name_to_use, resume_flag, wandb_id_to_use = _determine_run_params(args, main_config, project_root)
+        model_to_load, name_to_use, resume_flag = _determine_run_params(
+            args, main_config, project_root
+        )
     except (FileNotFoundError, ValueError) as e:
         logging.error(f"Failed to determine run parameters: {e}")
         sys.exit(1)
 
     # Step 5: Determine project path (Fail if not specified)
-    effective_project_path = args.project if args.project is not None else main_config.get("project")
+    effective_project_path = (
+        args.project if args.project is not None else main_config.get("project")
+    )
     if not effective_project_path:
-        raise ValueError("Project path must be specified either via --project argument or in the config file.")
+        raise ValueError(
+            "Project path must be specified either via --project argument or in the config file."
+        )
     logging.info(f"Using project directory: {effective_project_path}")
 
-    # Step 6: Setup WandB
-    _setup_wandb(wandb_id_to_use, resume_flag)
+    # Step 6: Setup WandB to True for YOLO settings if wandb_dir is provided
+    if args.wandb_dir:
+        SETTINGS["wandb"] = True
 
     # Step 7: Setup model (Directly call _load_model)
     try:
@@ -465,7 +458,9 @@ def run_training_pipeline(args: argparse.Namespace):
         sys.exit(1)
 
     # Step 8: Prepare training arguments
-    train_kwargs = prepare_train_kwargs(main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path)
+    train_kwargs = prepare_train_kwargs(
+        main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path
+    )
 
     # Step 9: Execute training
     execute_training(model, train_kwargs, effective_project_path, name_to_use, project_root)

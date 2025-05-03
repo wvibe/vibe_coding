@@ -33,10 +33,13 @@ device: '0,1,2,3'     # Use all 4 A10G GPUs.
 pretrained: True      # Start from pretrained weights (Fine-tuning).
 exist_ok: True        # Allow overwriting/appending to existing run when resuming (though resume=False here).
 amp: True             # Enable Automatic Mixed Precision (Recommended for A10G). Should be default.
+save_period: 5
 
 # --- Output Settings ---
-project: runs/finetune/segment_cov_segm
-save_period: 5
+project: runs/segment/yolo_ultralytics
+task: ft_yolo11l_seg
+wdir_root: weights
+csv_root: logs
 
 # --- Wandb Logging ---
 enable_wandb: True    # Set to True to use WandB (ensure you are logged in).
