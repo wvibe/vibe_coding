@@ -4,9 +4,10 @@
 
 import numpy as np
 import pytest
+import cv2
 
 # Assume the module is importable; adjust path if needed in a real environment
-from src.utils.common.image_annotate import (
+from vibelab.utils.common.image_annotate import (
     DEFAULT_COLORS,
     InstanceLabel,
     LabelInfo,

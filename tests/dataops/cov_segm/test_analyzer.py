@@ -4,8 +4,8 @@ from typing import List
 from unittest.mock import MagicMock, patch
 
 # Assuming src directory is in PYTHONPATH or adjust as needed
-from src.dataops.cov_segm.analyzer import _aggregate_stats_from_metadata
-from src.dataops.cov_segm.datamodel import ConversationItem
+from vibelab.dataops.cov_segm.analyzer import _aggregate_stats_from_metadata
+from vibelab.dataops.cov_segm.datamodel import ConversationItem
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.DEBUG)
@@ -176,7 +176,7 @@ def mock_parse_conversations_logic(json_string):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_basic(mock_parse):
@@ -210,7 +210,7 @@ def test_aggregate_basic(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_phrase_deduplication_per_sample(mock_parse):
@@ -244,7 +244,7 @@ def test_aggregate_phrase_deduplication_per_sample(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_empty_input(mock_parse):
@@ -261,7 +261,7 @@ def test_aggregate_empty_input(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_missing_conversations_key(mock_parse):
@@ -280,7 +280,7 @@ def test_aggregate_missing_conversations_key(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_invalid_json_string(mock_parse):
@@ -299,7 +299,7 @@ def test_aggregate_invalid_json_string(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_pydantic_schema_error(mock_parse):
@@ -318,7 +318,7 @@ def test_aggregate_pydantic_schema_error(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_missing_phrase_data_in_item(mock_parse):
@@ -342,7 +342,7 @@ def test_aggregate_missing_phrase_data_in_item(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_skip_zero_masks_false(mock_parse):
@@ -376,7 +376,7 @@ def test_aggregate_skip_zero_masks_false(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_skip_zero_masks_true(mock_parse):
@@ -403,7 +403,7 @@ def test_aggregate_skip_zero_masks_true(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_all_skipped(mock_parse):
@@ -421,7 +421,7 @@ def test_aggregate_all_skipped(mock_parse):
 
 
 @patch(
-    "src.dataops.cov_segm.analyzer.parse_conversations",
+    "vibelab.dataops.cov_segm.analyzer.parse_conversations",
     side_effect=mock_parse_conversations_logic,
 )
 def test_aggregate_valid_and_skipped(mock_parse):

@@ -1,17 +1,26 @@
-# Data Operations (`src/dataops`) Design
+# Data Operations (`vibelab/dataops/cov_segm`) Design
 
-This document outlines the design choices and architecture for the `dataops` module.
+This document outlines the design choices and architecture for the `cov_segm` dataset implementation within the `dataops` module. It details the specific approach taken for handling the `lab42/cov-segm-v3` dataset from Hugging Face.
 
 ## Core Principles
 
-- **Modularity:** Each dataset gets its own sub-package (e.g., `cov_segm/`). Within each sub-package:
+- **Modularity:** The `cov_segm` sub-package contains:
     - `datamodel.py`: Defines Pydantic models mirroring the raw dataset structure (e.g., JSON fields).
-    - `loader.py`: Contains the primary function (`load_sample`) responsible for taking a raw dataset row (e.g., from Hugging Face `datasets`), parsing relevant metadata fields, fetching external assets (like S3 images), loading embedded assets (like mask columns), and returning a unified, processed data structure (often using `TypedDict` for clarity).
+    - `loader.py`: Contains the primary function (`load_sample`) responsible for taking a raw dataset row (e.g., from Hugging Face `datasets`), parsing relevant metadata fields, fetching external assets (like S3 images), loading embedded assets (like mask columns), and returning a unified, processed data structure.
     - `visualizer.py`: Provides functions to visualize the processed data structures returned by the loader.
     - `converter.py`: Contains functions to convert the processed data structure to other formats (e.g., YOLO).
 - **Reusability:** Common, dataset-agnostic utilities reside in `dataops/common/` (e.g., `s3_fetcher.py`).
-    - **Reference Code:** Where necessary, small, self-contained utility functions can be copied from the `ref/` directory *with clear attribution comments* indicating the source file. Avoid direct imports from `ref` into `src`.
-- **Clarity & Encapsulation:** Use Pydantic (`datamodel.py`) for parsing/validating raw structured data (like JSON). For processed data returned by loaders, **Object-Oriented classes** (e.g., `SegmSample`, `Segment`, `SegmMask` for `cov_segm`) are preferred over `TypedDict`s to improve encapsulation (bundling data with methods like mask parsing), maintainability, and clarity.
+    - **Reference Code:** Where necessary, small, self-contained utility functions can be copied from the `ref/` directory *with clear attribution comments* indicating the source file. Avoid direct imports from `ref` into `vibelab`.
+- **Clarity & Encapsulation:** Use Pydantic (`datamodel.py`) for robust validation of raw structured data (like JSON). For processed data returned by loaders, **Object-Oriented classes** are preferred over `TypedDict`s to improve encapsulation (bundling data with methods like mask parsing), maintainability, and clarity.
+
+## Implementation Roadmap
+
+The `cov_segm` implementation follows a structured approach:
+
+1. **Data Loading and Parsing**: Implementing the core functionality to load and parse the dataset
+2. **Visualization**: Adding tools to visualize the dataset samples and masks
+3. **Analysis**: Developing utilities to analyze dataset statistics and characteristics
+4. **Conversion**: Creating tools to convert the dataset to other formats (e.g., YOLO)
 
 ## `cov_segm` Dataset Specifics
 
@@ -25,36 +34,27 @@ This document outlines the design choices and architecture for the `dataops` mod
 
 ## Key Components (Summary)
 
-- **Loaders (`<dataset>/loader.py` -> `load_sample`):** Orchestrate loading, parsing, fetching, combining data. Returns processed data objects (e.g., `SegmSample`).
-- **Data Models (`<dataset>/datamodel.py`):** Define Pydantic models for raw data validation and **classes for processed data representation** (e.g., `SegmSample`, `ClsSegment`, `SegmMask` for `cov_segm`).
-- **Visualizers (`<dataset>/visualizer.py`):** Plot processed data.
-- **Converters (`<dataset>/converter.py`):** Transform processed data formats (e.g., to YOLO).
+- **Loaders (`cov_segm/loader.py` -> `load_sample`):** Orchestrate loading, parsing, fetching, combining data. Returns processed data objects (e.g., `SegmSample`).
+- **Data Models (`cov_segm/datamodel.py`):** Define Pydantic models for raw data validation and **classes for processed data representation** (e.g., `SegmSample`, `ClsSegment`, `SegmMask` for `cov_segm`).
+- **Visualizers (`cov_segm/visualizer.py`):** Plot processed data.
+- **Converters (`cov_segm/converter.py`):** Transform processed data formats (e.g., to YOLO).
 - **Common Utilities (`common/`):** Shared tools (e.g., `s3_fetcher.py`).
 
-## Implementation Notes
+## Implementation Notes for `cov_segm`
 
-- **OOP Data Model:** The refactoring from `TypedDict` to OOP classes has been completed for `datamodel.py` and `loader.py`. The `SegmMask`, `ClsSegment`, and `SegmSample` classes are now fully implemented and tested. The `SegmMask` class robustly handles various mask formats and parsing logic. The `loader.load_sample` function now correctly utilizes these classes and helper functions (`_resolve_reference_path`, `_process_mask_list`) to fetch raw data, delegate parsing to `SegmMask`, and construct the `SegmSample` object graph.
+- **OOP Data Model:** The implementation uses OOP classes - `SegmMask`, `ClsSegment`, and `SegmSample`. The `SegmMask` class robustly handles various mask formats and parsing logic. The `loader.load_sample` function utilizes these classes and helper functions (`_resolve_reference_path`, `_process_mask_list`) to fetch raw data, delegate parsing to `SegmMask`, and construct the `SegmSample` object graph.
 - **Binary Mask Operations:** When working with binary masks and boolean values:
   - Use direct boolean assertions rather than equality comparisons (e.g., `assert mask.is_valid` instead of `assert mask.is_valid == True`)
   - For negating boolean assertions, use `not` (e.g., `assert not mask.is_valid` instead of `assert mask.is_valid == False`)
   - For NumPy binary masks, use `~` for logical negation of entire arrays (e.g., `np.all(~binary_mask)` instead of `np.all(binary_mask == False)`)
 - **Handling RGB Images:** The `SegmMask._parse` method has limitations with RGB images. When working with RGB masks, convert them to grayscale or extract a single channel before processing to avoid dimension issues.
+- **Parallel Processing:** The OOP data model with serialization support allows for efficient parallel processing using Hugging Face `datasets.map(num_proc=N)`.
+- **Serialization:** All OOP classes (`SegmSample`, `ClsSegment`, `SegmMask`) include serialization support with efficient binary data handling for masks and images.
+- **Memory Efficiency:** Uses compression techniques for binary masks using `np.packbits()` to minimize memory usage during parallel processing.
+- **Progress Tracking:** Implements tqdm progress bars to clearly display both loading and conversion progress.
+- **Sampling Controls:** Includes global sampling ratio parameter for better control over dataset size during conversion.
 
-## Future Considerations - Implemented
-
-All planned features have now been implemented:
-
-*   **Parallel Processing:** Implementation complete for the `converter.py` module. The OOP data model with serialization support allows for efficient parallel processing using Hugging Face `datasets.map(num_proc=N)`.
-
-*   **Serialization:** Added serialization support to all OOP classes (`SegmSample`, `ClsSegment`, `SegmMask`) with efficient binary data handling for masks and images.
-
-*   **Memory Efficiency:** Implemented compression techniques for binary masks using `np.packbits()` to minimize memory usage during parallel processing.
-
-*   **Progress Tracking:** Added tqdm progress bars to clearly display both loading and conversion progress.
-
-*   **Sampling Controls:** Added global sampling ratio parameter for better control over dataset size during conversion.
-
-## Analyzer Module (`src/dataops/cov_segm/analyzer.py`)
+## Analyzer Module (`vibelab/dataops/cov_segm/analyzer.py`)
 
 This module provides functions for analyzing and aggregating phrase statistics across the `lab42/cov-segm-v3` dataset. It operates *only* on dataset metadata for speed and efficiency.
 
@@ -77,71 +77,69 @@ This module provides functions for analyzing and aggregating phrase statistics a
 ### Command-Line Usage
 To run the analyzer, use the following command:
 ```bash
-python -m src.dataops.cov_segm.analyzer --split train --sample_slice '[:100]' --top 10 --skip_zero
+python -m vibelab.dataops.cov_segm.analyzer --split train --sample_slice '[:100]' --top 10 --skip_zero
 ```
 
-## Visualizer Usage Examples (`src/dataops/cov_segm/visualizer.py`)
+## Visualizer Usage Examples (`vibelab/dataops/cov_segm/visualizer.py`)
 
 The visualizer script provides a command-line interface to inspect masks associated with specific text prompts within the dataset samples.
 
 **Basic Usage (Show visible masks for a prompt in the first sample):**
 
 ```bash
-python -m src.dataops.cov_segm.visualizer_main "the red car"
+python -m vibelab.dataops.cov_segm.visualizer_main "the red car"
 ```
 
 **Search for a prompt in the first 10 samples of the validation split:**
 
 ```bash
-python -m src.dataops.cov_segm.visualizer_main "a window reflection" --split validation --start_index 0 --sample_count 10
+python -m vibelab.dataops.cov_segm.visualizer_main "a window reflection" --split validation --start_index 0 --sample_count 10
 ```
 
 **Visualize 'full' segmentation masks instead of 'visible' instance masks:**
 
 ```bash
-python -m src.dataops.cov_segm.visualizer_main "the license plate" --mask_type full
+python -m vibelab.dataops.cov_segm.visualizer_main "the license plate" --mask_type full
 ```
 
 **Save the visualization to a file instead of displaying interactively:**
 
 ```bash
 # Creates ./viz_outputs/sample_ID_the_dog_visible.png (filename depends on sample ID)
-python -m src.dataops.cov_segm.visualizer_main "the dog" --output_dir ./viz_outputs
+python -m vibelab.dataops.cov_segm.visualizer_main "the dog" --output_dir ./viz_outputs
 ```
 
 **Enable debug logging for detailed information:**
 
 ```bash
-python -m src.dataops.cov_segm.visualizer_main "tree branches" --debug
+python -m vibelab.dataops.cov_segm.visualizer_main "tree branches" --debug
 ```
 
 **Combine options (Save full masks for a prompt in sample 5):**
 
 ```bash
-# Removed --dpi flag, as it's no longer supported
-python -m src.dataops.cov_segm.visualizer_main "the side mirror" --start_index 5 --sample_count 1 --mask_type full --output_dir ./viz_outputs
+python -m vibelab.dataops.cov_segm.visualizer_main "the side mirror" --start_index 5 --sample_count 1 --mask_type full --output_dir ./viz_outputs
 ```
 
 ## Visualizer Implementation Details
 
-The `cov_segm.visualizer` module has been refactored to work with the OOP data models (`SegmSample`, `ClsSegment`, `SegmMask`).
+The `cov_segm.visualizer` module works with the OOP data models (`SegmSample`, `ClsSegment`, `SegmMask`).
 
-- **Input:** The primary visualization function `visualize_prompt_masks` now accepts a `SegmSample` object.
+- **Input:** The primary visualization function `visualize_prompt_masks` accepts a `SegmSample` object.
 - **Mask Handling:** It directly uses the pre-computed boolean `binary_mask` attribute from the `SegmMask` objects within the target `ClsSegment`.
-- **Logic Simplification:** The internal helper `_apply_color_mask` no longer needs to handle different mask modes (PIL modes like 'L', 'P', '1') or interpret `positive_value`, as this parsing is encapsulated within the `SegmMask` class during the loading phase (`loader.py`). It simply applies color based on the provided boolean NumPy array.
+- **Logic Simplification:** The internal helper `_apply_color_mask` takes a boolean NumPy array as this parsing is encapsulated within the `SegmMask` class during the loading phase (`loader.py`). It simply applies color based on the provided boolean NumPy array.
 - **Filtering:** The visualization function filters the list of `SegmMask` objects to only include those marked as valid (`is_valid=True`) and having a non-`None` `binary_mask` before attempting to draw them.
-- **CLI (`visualizer_main.py`):** The command-line interface has been simplified, removing the `--dpi`, `--show`, and `--no-show` flags. Output is displayed interactively only if `--output_dir` is *not* provided.
+- **CLI (`visualizer_main.py`):** The command-line interface has been simplified, with output displayed interactively only if `--output_dir` is *not* provided.
 
-### Enhanced Debugging (Updated)
+### Enhanced Debugging
 
-The visualizer still includes debugging features:
+The visualizer includes debugging features:
 - Detailed logging of which *valid* masks are being processed, including source column and geometry (area, bbox) from the `SegmMask` object.
 - The `--debug` flag in `visualizer_main.py` enables detailed logging in both the visualizer and loader modules.
-- Raw conversation data debugging (using `get_last_parsed_conversations`) has been removed from `visualizer_main.py` as the function was removed from `loader.py`.
 
-## YOLO Format Converter (`src/dataops/cov_segm/converter.py`)
+## YOLO Format Converter (`vibelab/dataops/cov_segm/converter.py`)
 
-This module is responsible for converting the `lab42/cov-segm-v3` dataset, loaded via `src.dataops.cov_segm.loader.load_sample`, into the YOLO segmentation format.
+This module is responsible for converting the `lab42/cov-segm-v3` dataset, loaded via `vibelab.dataops.cov_segm.loader.load_sample`, into the YOLO segmentation format.
 
 ### Core Functionality
 
@@ -153,7 +151,7 @@ This module is responsible for converting the `lab42/cov-segm-v3` dataset, loade
     - `sampling_ratio`: Probability (0.0-1.0) for including matches of this phrase.
 - **Mask Selection:** Processes either 'visible' or 'full' masks based on the `--mask-tag` argument. Optionally skips segments with zero masks of the selected type (`--skip-zero`).
 - **Parallel Processing:** Uses Hugging Face's `datasets.map()` with the specified number of processes (`--num-proc`) to load samples in parallel from the dataset. Uses `load_from_cache_file=False` and `writer_batch_size=100` for better resource management.
-- **Mask Conversion:** Uses `src.utils.common.geometry.mask_to_yolo_polygons` to convert binary masks (NumPy arrays) from `SegmMask.binary_mask` into normalized polygon coordinates required by YOLO.
+- **Mask Conversion:** Uses `vibelab.utils.common.geometry.mask_to_yolo_polygons` to convert binary masks (NumPy arrays) from `SegmMask.binary_mask` into normalized polygon coordinates required by YOLO.
 - **Polygon Handling:** For masks that generate multiple polygons, the converter tracks this in statistics but only processes the first polygon to maintain one annotation per mask.
 - **Sampling:**
     - Applies a global sampling ratio (`--sample-ratio`) as a multiplier to each class's individual ratio.
@@ -182,8 +180,47 @@ The converter tracks comprehensive statistics during processing:
 
 ### Implementation Details
 
-- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, slicing, sampling, etc.). `--sample-count` has been removed in favor of `--sample-slice`.
+- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, slicing, sampling, etc.).
 - **Parallel Processing:** Leverages the OOP data model to support parallel loading with HF `datasets.map()` while showing progress with tqdm.
 - **Dependencies:** Requires `opencv-python-headless`, `datasets`, `pillow`, `numpy`, `python-dotenv`, `tqdm`.
 - **Error Handling:** Includes checks for file/directory existence, graceful handling of sample loading errors, mapping errors, and mask conversion issues.
 - **Reproducibility:** Uses `random.seed()` to ensure consistent sampling results with the same seed value.
+
+## Conversion Verification (`vibelab/dataops/cov_segm/convert_verifier.py`)
+
+This module provides tools to verify the accuracy of YOLO datasets generated by `converter.py` against the original Hugging Face dataset.
+
+### Core Logic
+
+1.  **Data Loading:** Loads specified YOLO label/image files and the corresponding original `SegmSample` from the HF dataset.
+2.  **Instance Extraction:**
+    *   **YOLO:** Parses YOLO label files, converts normalized polygons to absolute coordinates, generates binary masks (`polygon_to_mask`), and calculates bounding boxes. Creates `YoloInstanceRecord` objects.
+    *   **Original:** Processes the `SegmSample`, identifies relevant segments based on the `phrase_map`, and extracts masks and bounding boxes for the specified `mask_type`. Creates `OriginalInstanceRecord` objects.
+3.  **Instance Matching:**
+    *   Groups instances from both sources by `class_id`.
+    *   For each class, performs instance matching using `vibelab.utils.common.label_match.match_instances` based on both mask IoU (`calculate_mask_iou`) and bounding box IoU (`calculate_bbox_iou`) with a configurable `iou_cutoff`.
+4.  **Result Aggregation:** Compiles results into a `VerificationResult` object, detailing:
+    *   Matched pairs (including IoU values and whether a high `iou_top` threshold was met).
+    *   Lost instances (present in original, missing in YOLO).
+    *   Extra instances (present in YOLO, missing in original).
+    *   Separate results are maintained for mask-based and bbox-based matching.
+5.  **Error Handling:** Captures and reports errors during data loading or processing for individual samples.
+
+### Command-Line Interface (`verifier_main.py`)
+
+-   Provides a CLI to run the verification process.
+-   Handles argument parsing (split, mask type, paths, sample selection, IoU thresholds, etc.).
+-   Orchestrates data loading (including parallel loading of HF data using `datasets.map`), sample verification calls, and result aggregation.
+-   Reports summary statistics, including per-class metrics and IoU distributions for matched instances.
+-   Offers detailed per-sample output for debugging specific sample IDs.
+
+### Testing Strategy
+
+Unit tests (`tests/dataops/cov_segm/test_verifier.py`) focus on the core algorithmic logic:
+
+-   Matching functions (`_match_instances_for_class`, `_process_matched_pairs`, etc.).
+-   Result processing (`_process_lost_and_extra_instances`).
+-   Overall verification workflow (`verify_sample_conversion`) using mocked loading/parsing steps.
+-   Utility functions (`_calculate_bbox_from_mask`).
+
+Tests avoid overly complex mocking of the entire data loading pipeline (`_load_yolo_instances`, `_process_original_sample`) to maintain focus and simplicity.

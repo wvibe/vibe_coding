@@ -14,7 +14,7 @@
             "name": "Python: Debug Module (converter)",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.dataops.cov_segm.converter",
+            "module": "vibelab.dataops.cov_segm.converter",
             "args": [
                 "--train-split",
                 "train",
@@ -30,10 +30,32 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Python: Debug Module (convert_verifier)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "vibelab.dataops.cov_segm.verifier_main",
+            "args": [
+                "--train-split",
+                "validation",
+                "--mask-type",
+                "visible",
+                // "--sample-id",
+                // "abb-abb_hm-pick_trolly-20210125095705-3853485",
+                "--sample-count",
+                "100",
+                "--num-proc",
+                "6", // for 32GB RAM
+                "--seed",
+                "42"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Python: Debug Module (yolo_segment_viz)",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.utils.visualization.yolo_segment_viz",
+            "module": "vibelab.utils.visualization.yolo_segment_viz",
             "args": [
                 "--ds-root-env",
                 "COV_SEGM_ROOT",
@@ -51,7 +73,7 @@
             "name": "Python: Debug Module (yolov11_train_segment)",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.models.ext.yolov11.train_segment",
+            "module": "vibelab.models.ext.yolov11.train_segment",
             "args": [
                 "--config",
                 "configs/yolov11/finetune_segment_cov_segm.yaml",
