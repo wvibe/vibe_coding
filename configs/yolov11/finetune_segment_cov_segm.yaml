@@ -1,20 +1,20 @@
-# Training configuration optimized for 4x A10G GPUs fine-tuning YOLOv11 SEGMENTATION
+# Training configuration optimized for 8x A10G GPUs fine-tuning YOLOv11 SEGMENTATION
 # on FULL COV_SEGM dataset, with strong regularization to combat overfitting.
 
 # --- Base Model & Dataset ---
 model: yolo11l-seg.pt  # Base model weights file (YOLOv11 Large Segmentation)
 data: configs/yolov11/cov_segm_segment_visible.yaml # Path to the dataset definition yaml.
-                      # !! IMPORTANT: Ensure this points to FULL train (216k) & val (10k) sets !!
+                      # !! IMPORTANT: Ensure this points to FULL train (670k) & val (10k) sets !!
 
 # --- Training Hyperparameters ---
-epochs: 30            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
+epochs: 40            # Maximum number of epochs. Early stopping (patience) will likely stop it earlier.
 imgsz: 640            # Training image size.
-batch: 96             # Batch size for 4x A10G (24GB VRAM). 96/4 = 16 images/GPU.
+batch: 192            # Batch size for 8x A10G (24GB VRAM). 192/8 = 24 images/GPU.
                       # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
-workers: 32           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
+workers: 64           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
 optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
 lr0: 0.015            # Initial learning rate for SGD. Kept relatively low due to strong regularization.
-lrf: 0.01             # Final learning rate factor (final_lr = lr0 * lrf).
+lrf: 0.02             # Final learning rate factor (final_lr = lr0 * lrf).
 cos_lr: True          # Use cosine learning rate annealing schedule (Recommended).
 fraction: 0.5         # Use 100% of the training dataset per epoch (Essential).
 close_mosaic: 10      # Disable mosaic augmentation for the last N epochs (Standard practice).
@@ -22,21 +22,21 @@ close_mosaic: 10      # Disable mosaic augmentation for the last N epochs (Stand
 # --- Regularization & Augmentation to Prevent Overfitting ---
 mixup: 0.1            # Enable MixUp augmentation (Helps regularization). Adjust value (0.05-0.15) if needed.
 copy_paste: 0.1       # Enable Copy-Paste augmentation (Helps segmentation regularization). Adjust if needed.
-dropout: 0.1          # Add dropout for regularization. Check model structure compatibility if issues arise.
+dropout: 0.0          # Add dropout for regularization. Check model structure compatibility if issues arise.
 weight_decay: 0.0005  # Explicitly set weight decay for SGD.
 patience: 30          # Enable early stopping. Stop if val mAP50-95 doesn't improve for 30 epochs.
 # Other augmentation defaults from Ultralytics are usually active (e.g., hsv, flip).
 # You can tune them further if needed (e.g., scale, translate).
 
 # --- Execution Settings ---
-device: '0,1,2,3'     # Use all 4 A10G GPUs.
+device: '0,1,2,3,4,5,6,7'     # Use all 8 A10G GPUs.
 pretrained: True      # Start from pretrained weights (Fine-tuning).
 exist_ok: True        # Allow overwriting/appending to existing run when resuming (though resume=False here).
 amp: True             # Enable Automatic Mixed Precision (Recommended for A10G). Should be default.
 save_period: 5
 
 # --- Output Settings ---
-project: runs/segment/yolo_ultralytics
+project: runs/segment/cov_segm
 task: ft_yolo11l_seg
 wdir_root: weights
 csv_root: logs

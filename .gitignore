@@ -16,16 +16,18 @@ dist/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# external references
+ref
+
 # Model output directories
-**/output/
-**/model_outputs/
-**/runs/
+**/output
+**/model_outputs
+**/weights
+**/runs
+**/logs
 *.pt
 *.bin
 *.safetensors
+
 # Weights & Biases
 wandb
-ref
-weights
-logs
-yolo_ultralytics
