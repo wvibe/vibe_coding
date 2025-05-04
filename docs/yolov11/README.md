@@ -185,7 +185,7 @@ python src/models/ext/yolov11/train_detect.py \\
 
 - `--config`: Path to the main training configuration YAML file. This file must contain a `data` key pointing to the dataset-specific config file (e.g., `src/models/configs/datasets/voc_detect.yaml`). *Required.*
 - `--project` (optional): Override the base project directory specified in the config file (or script default).
-- `--name`: Base name for the training run. A timestamp (`_YYYYMMDD_HHMMSS`) will be automatically appended to create the actual run directory for *new* runs. For *resume* runs, this is still required syntactically but the actual run name is determined by the `--resume_with` path. *Required.*
+- `--name`: Base name for the training run. A timestamp (`_YYYYMMDD_HHMMSS`) will be automatically appended to create the actual run directory for *new* runs. For *resume* runs, this is still required syntactically but the actual run name is determined by the `--resume_with` path.
 - `--resume_with` (optional): Path to the *exact* run directory (e.g., `runs/train/detect/my_run_20231027_103000`) to resume training *checkpoint* from. If provided, the `--name` argument's value is effectively ignored for naming, but still required. The script will look for `weights/last.pt` within this directory.
 - `--wandb-dir` (optional): Path to the root directory containing WandB run folders (e.g., `./wandb`). Defaults to `wandb`. Used to automatically find the corresponding WandB run ID when resuming.
 
@@ -225,65 +225,73 @@ Training progress and results (checkpoints, metrics, logs) are saved to `<projec
 The `train_segment.py` script initiates training (finetuning or from scratch) for YOLOv11 segmentation models using parameters from a YAML configuration file. It now mirrors the detection training script structure, including argument handling and WandB integration.
 
 **Configuration (`src/models/configs/training/finetune_segment_*.yaml`):**
-- `model`: Path to the base segmentation model weights (`.pt`) or architecture YAML (`.yaml`) (e.g., `yolo11l-seg.pt`). *Required.*
+- `model`: Path to the base segmentation model weights (`.pt`) or architecture YAML (`.yaml`) (e.g., `yolo11l-seg.pt`). *Required if `--model` is not provided via CLI for new runs.*
 - `data`: Path (relative to project root) to the *dataset-specific* segmentation configuration YAML (e.g., `configs/yolov11/voc_segment.yaml`). This file should contain paths for `train`, `val`, `test` (optional), along with class `names`. *Required.*
-- `project`: Base directory for saving runs (e.g., `runs/train/segment`). Defaults will be used if omitted.
-- `pretrained`: Boolean (`True` for finetuning, `False` for scratch). Relevant only for *new* runs.
+- `project`: Base directory for saving runs (e.g., `runs/train/segment`). *Required.*
+- `auto_resume` (optional): Boolean (`True` or `False`) to enable/disable automatic resuming of runs with the same base `--name` within the `project` directory. Defaults to `True`. Auto-resume is disabled if `--model` is provided.
+- `pretrained`: Boolean (`True` for finetuning, `False` for scratch). Relevant only for *new* runs when loading weights via the `model` key here.
 - Other keys correspond to `ultralytics.YOLO.train` arguments suitable for segmentation.
 
 **Command-Line:**
 
 ```bash
-# Start a new training run (timestamp will be appended to name)
-python src/models/ext/yolov11/train_segment.py \\
-    --config <path_to_main_training_config.yaml> \\
-    --name <your_base_run_name> \\
-    [--project <output_project_dir>] \\
-    [--wandb-dir <path_to_wandb_root>] # Optional, default: 'wandb'
-
-# Resume a specific previous run
-python src/models/ext/yolov11/train_segment.py \\
-    --config <path_to_original_main_training_config.yaml> \\
-    --resume_with <path/to/exact/run_folder_with_timestamp> \\
-    --name <base_run_name> # Still required but overridden by resume_with path name
+# Start a new training run (or auto-resume if enabled and possible)
+python src/models/ext/yolov11/train_segment.py \
+    --config <path_to_main_training_config.yaml> \
+    --name <your_base_run_name> \
+    [--model <path_to_weights.pt>] \
     [--wandb-dir <path_to_wandb_root>] # Optional, default: 'wandb'
 ```
 
 **Arguments:**
 
-- `--config`: Path to the main training configuration YAML file (e.g., `configs/yolov11/finetune_segment_voc.yaml`). Must contain a `data` key pointing to the dataset-specific config. *Required.*
-- `--project` (optional): Override the base project directory specified in the config file (or script default).
-- `--name`: A unique name for the training run (e.g., `voc11_seg_finetune_run1`). Results will be saved under `<project>/<name>_YYYYMMDD_HHMMSS`.
-- `--resume_with`: (Optional) Path to a previous run directory to resume training (e.g., `runs/train/segment/voc11_seg_finetune_run1_20240101_000000`). If provided, `--name` should still be set to the *original* base name for WandB linking.
-- `--wandb-dir` (optional): Path to the root directory containing WandB run folders (e.g., `./wandb`). Defaults to `wandb`. Used to automatically find the corresponding WandB run ID when resuming.
+- `--config`: Path to the main training configuration YAML file (e.g., `configs/yolov11/finetune_segment_voc.yaml`). Must contain `project` and `data` keys. *Required.*
+- `--name`: Base name for the training run (e.g., `voc11_seg_finetune_run1`). A timestamp is appended for new runs. This name is used with the `project` path to find previous runs for auto-resuming. *Required.*
+- `--model` (optional): Path to a model file (`.pt`) to start a *new* training job from. This overrides the `model` key in the configuration file and *disables* the `auto_resume` feature for this specific invocation.
+- `--wandb-dir` (optional): Path to the root directory containing WandB run folders (e.g., `./wandb`). Defaults to `wandb`. Relevant for organizing WandB logs; resume linking relies on checkpoint metadata.
+
+**Auto-Resuming Behavior:**
+
+- If `auto_resume: True` (default or set in config) and `--model` is *not* provided:
+    1. The script checks for `<config.project>/last_run.log`.
+    2. If the log exists and matches the current `project` and `--name`, it attempts to load the checkpoint path recorded (`last_ckpt_path`).
+    3. If the checkpoint exists, training resumes from that state within the *original run directory* (e.g., `<project>/<name>_YYYYMMDD_HHMMSS`).
+    4. If the log doesn't exist, doesn't match, or the checkpoint is missing, a *new run* is started with a timestamp appended to `--name`.
+- If `auto_resume: False` or `--model` is provided, a *new run* is always started.
+
+**Tracking File (`last_run.log`):**
+
+- A file named `last_run.log` is created/updated in the `project` directory at the start of each training run (by Rank 0).
+- It contains details of the *most recently started* run for a given project/name combination, including the actual run directory name and the full path to the `last.pt` checkpoint file.
+- This file enables the auto-resume mechanism.
 
 **WandB Integration:**
 
 - The script integrates with WandB if it's enabled (`yolo settings wandb=True`).
-- When resuming (`--resume_with`), the script automatically searches the `--wandb-dir` for a WandB run whose configuration matches the `name` of the directory specified in `--resume_with`.
-- If a match is found, the script sets the `WANDB_RUN_ID` environment variable, allowing Ultralytics to resume logging to the correct existing WandB run.
-- If no match is found, a warning is logged, and a new WandB run will be created if WandB is enabled.
+- When resuming (via `auto_resume` finding a valid run), the underlying Ultralytics trainer automatically attempts to resume the corresponding WandB run using the ID stored in the checkpoint's metadata.
+- The `--wandb-dir` argument helps organize log directories but doesn't directly influence the resume linking.
 
-**Example (Fine-tune from pre-trained weights):**
+**Example (Fine-tune - New or Auto-Resume):**
 
 ```bash
-# Fine-tune from pre-trained weights
+# Start a new finetuning run OR resume the latest run named 'voc11_seg_finetune_run1'
+# Behavior depends on 'auto_resume' in config and existence/content of last_run.log
 python src/models/ext/yolov11/train_segment.py \
     --config configs/yolov11/finetune_segment_voc.yaml \
     --name voc11_seg_finetune_run1
 ```
 
-**Example (Resuming a Specific Finetuning Run):**
+**Example (Start New Run with Specific Weights):**
 
 ```bash
-# Resume a specific run
+# Force a new run, starting from specific weights (disables auto-resume)
 python src/models/ext/yolov11/train_segment.py \
     --config configs/yolov11/finetune_segment_voc.yaml \
-    --resume_with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
-    --name voc11_seg_finetune_run1
+    --name voc11_seg_finetune_run2_from_run1 \
+    --model runs/train/segment/voc11_seg_finetune_run1_YYYYMMDD_HHMMSS/weights/best.pt
 ```
 
-Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<name>_YYYYMMDD_HHMMSS`.
+Training progress and results (checkpoints, metrics, logs) are saved to `<project>/<actual_run_name>/` (where `actual_run_name` includes the timestamp for new runs or is the resumed directory name).
 
 ### Evaluation (Detection)
 

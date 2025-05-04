@@ -6,8 +6,9 @@ Mirrors the structure and capabilities of the YOLOv11 detection training script.
 """
 
 import argparse
+import csv
+import functools
 import logging
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -15,9 +16,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from ultralytics import YOLO
-from ultralytics.utils import SETTINGS
-
-from utils.logging.log_finder import find_wandb_run_id
+from ultralytics.utils import RANK, SETTINGS
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -91,6 +90,10 @@ def _load_training_config(args: argparse.Namespace, project_root: Path) -> tuple
     config_path_abs = (project_root / args.config).resolve()
     train_config = _parse_config_yaml(config_path_abs)
 
+    # Verify project path is specified in config
+    if "project" not in train_config:
+        raise ValueError("Missing 'project' key in the main training configuration.")
+
     # determine the data config path
     relative_data_config_path = train_config.get("data")
     if not relative_data_config_path:
@@ -105,86 +108,78 @@ def _load_training_config(args: argparse.Namespace, project_root: Path) -> tuple
     return train_config, data_config_path
 
 
-def _determine_run_params(
-    args: argparse.Namespace, train_config: dict, project_root: Path
-) -> tuple:
-    """Determine model path, run name, resume flag, and attempt to find WandB ID on resume.
+def _parse_tracker_log(tracker_file: Path) -> dict | None:
+    """Parse the training run tracker log file.
 
     Args:
-        args (argparse.Namespace): Command-line arguments.
-        train_config (dict): Training configuration dictionary.
-        project_root (Path): Project root directory path.
+        tracker_file (Path): Path to the tracker log file.
+
     Returns:
-        tuple: (model_to_load, name_to_use, resume_flag, wandb_id_to_use)
-    Raises:
-        FileNotFoundError: If resume directory or checkpoint file is not found.
-        ValueError: If 'model' key is missing in configuration for a new run.
+        dict | None: Dictionary with parsed tracking data if successful, None otherwise.
     """
-    model_to_load = None
-    name_to_use = args.name  # Base name, might be modified
-    resume_flag = False
-    wandb_id_to_use = None  # Default to None
+    try:
+        if not tracker_file.exists():
+            return None
 
-    if args.resume_with:
-        logging.info(f"Attempting to resume training from: {args.resume_with}")
-        resume_dir = (project_root / args.resume_with).resolve()
+        with open(tracker_file, "r") as f:
+            reader = csv.reader(f)
+            headers = next(reader)  # Read header row
+            data = next(reader)  # Read data row
 
-        if not resume_dir.is_dir():
-            raise FileNotFoundError(f"Resume directory not found: {resume_dir}")
+            # Convert to dictionary
+            log_data = dict(zip(headers, data))
+            return log_data
+    except (FileNotFoundError, csv.Error, IndexError, StopIteration) as e:
+        logging.warning(f"Error parsing tracker log {tracker_file}: {e}")
+        return None
 
-        checkpoint_path_for_resume = resume_dir / "weights" / "last.pt"
-        if not checkpoint_path_for_resume.is_file():
-            raise FileNotFoundError(
-                f"Checkpoint 'last.pt' not found in resume directory: {checkpoint_path_for_resume}"
-            )
 
-        model_to_load = str(checkpoint_path_for_resume)
-        name_to_use = resume_dir.name  # Use the exact name of the folder being resumed
-        resume_flag = True
-        logging.info(f"Resuming with checkpoint: {model_to_load}")
-        logging.info(f"Run name set to resumed directory: {name_to_use}")
+def _log_tracker_callback(base_name: str, trainer):
+    """Callback to log run information to the tracker file.
+    Only runs on RANK 0 process.
 
-        # Warning if CLI --name differs significantly from resumed name
-        if args.name:
-            # Check if provided name is a prefix of the resumed name (ignoring timestamp)
-            base_resumed_name = (
-                "_".join(name_to_use.split("_")[:-1]) if "_" in name_to_use else name_to_use
-            )
-            if args.name != base_resumed_name:
-                logging.warning(
-                    f"Provided --name '{args.name}' differs from resumed run base "
-                    f"'{base_resumed_name}'. Using full resumed name '{name_to_use}'."
-                )
-            # If it matches the base name, no warning needed as timestamp is the difference
+    Args:
+        base_name (str): The base name provided via CLI --name.
+        trainer: The YOLO trainer instance.
+    """
+    if RANK not in {-1, 0}:
+        return  # Only log on main process
 
-        # --- Attempt to find WandB ID automatically --- #
-        logging.info(f"Attempting to find corresponding WandB run ID in: {args.wandb_dir}")
-        wandb_id_to_use = find_wandb_run_id(str(resume_dir), args.wandb_dir)
-        if wandb_id_to_use:
-            logging.info(
-                f"Automatically found WandB run ID: {wandb_id_to_use}. Will attempt to resume."
-            )
-            os.environ["WANDB_RESUME"] = "allow"
-            os.environ["WANDB_RUN_ID"] = wandb_id_to_use
-        else:
-            logging.warning(
-                f"Could not automatically find a matching WandB run ID for {name_to_use} "
-                f"in {args.wandb_dir}. WandB (if enabled) will start as a new run."
-            )
-        # --- End WandB ID Lookup --- #
-    else:
-        # New run
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name_to_use = f"{args.name}_{timestamp}"
-        model_to_load = args.model if args.model else train_config.get("model")
-        resume_flag = False  # Explicitly false
-        logging.info(f"Starting new run with name: {name_to_use}")
-        if not model_to_load:
-            raise ValueError(
-                "Missing 'model' key in configuration for new run or not provided via --model."
-            )
+    try:
+        # Extract required information
+        project_path = trainer.args.project
+        # Define columns and data
+        columns = [
+            "project_path",
+            "base_name",
+            "actual_run_name",
+            "weights_dir",
+            "last_ckpt_path",
+            "wandb_id",
+            "config_epochs",
+            "start_timestamp",
+        ]
+        data = [
+            project_path,
+            base_name,
+            trainer.save_dir.name,
+            str(trainer.wdir),
+            str(trainer.last),
+            getattr(trainer.args, "wandb_id", None),
+            trainer.args.epochs,
+            datetime.now().isoformat(),
+        ]
 
-    return model_to_load, name_to_use, resume_flag
+        # Write to tracker file (overwrite)
+        tracker_file = Path(project_path) / "last_run.log"
+        with open(tracker_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            writer.writerow(data)
+
+        logging.info(f"Training run information logged to {tracker_file}")
+    except Exception as e:
+        logging.error(f"Failed to log run information: {e}")
 
 
 def _load_model(model_path: str) -> YOLO:
@@ -209,19 +204,19 @@ def _load_model(model_path: str) -> YOLO:
 
 def prepare_train_kwargs(
     train_config: dict,
-    name: str,
-    resume: bool,
-    effective_project_path: str,
-    absolute_data_config_path: Path,
+    run_name: str,
+    resume_flag: bool,
+    project_path: str,
+    data_config_path: Path,
 ) -> dict:
     """Prepare the keyword arguments for the model.train() call.
 
     Args:
         train_config (dict): Training configuration dictionary.
-        name (str): Name of the training run.
-        resume (bool): Flag indicating if training is being resumed.
-        effective_project_path (str): Project directory path for saving runs.
-        absolute_data_config_path (Path): Absolute path to the data configuration file.
+        run_name (str): Name of the training run.
+        resume_flag (bool): Flag indicating if training is being resumed.
+        project_path (str): Project directory path for saving runs.
+        data_config_path (Path): Absolute path to the data configuration file.
     Returns:
         dict: Dictionary of training arguments for model.train().
     """
@@ -274,10 +269,10 @@ def prepare_train_kwargs(
     train_kwargs = {k: v for k, v in train_config.items() if k in valid_train_args}
 
     # Add/override arguments from orchestration logic
-    train_kwargs["project"] = effective_project_path
-    train_kwargs["name"] = name
-    train_kwargs["resume"] = resume
-    train_kwargs["data"] = str(absolute_data_config_path)
+    train_kwargs["project"] = project_path
+    train_kwargs["name"] = run_name
+    train_kwargs["resume"] = resume_flag
+    train_kwargs["data"] = str(data_config_path)
 
     # Handle potential None/empty string for device (YOLO expects None or str)
     if "device" in train_kwargs and not train_kwargs["device"]:
@@ -295,27 +290,30 @@ def prepare_train_kwargs(
 def execute_training(
     model: YOLO,
     train_kwargs: dict,
-    effective_project_path: str,
-    name_to_use: str,
-    project_root: Path,
+    base_name: str,
 ) -> tuple[Path | None, bool]:
     """Execute the training process and capture results.
 
     Args:
         model (YOLO): Loaded YOLO model instance.
         train_kwargs (dict): Training arguments for model.train().
-        effective_project_path (str): Project directory path for saving runs.
-        name_to_use (str): Name of the training run.
-        project_root (Path): Project root directory path.
+        base_name (str): The base name from CLI.
     Returns:
         tuple[Path | None, bool]: Final output directory (if available) and training success flag.
     """
     logging.info("Starting segmentation training...")
     final_output_dir = None
     training_successful = False
+
     try:
+        # Create the partial function for the callback
+        log_callback_partial = functools.partial(_log_tracker_callback, base_name)
+
+        # Register our callback for tracking run information
+        callbacks = {"on_train_start": [log_callback_partial]}
+
         # The train method should work for segmentation task type based on the loaded model
-        model.train(**train_kwargs)
+        model.train(**train_kwargs, callbacks=callbacks)
         logging.info("Segmentation training finished successfully.")
         training_successful = True
 
@@ -325,8 +323,6 @@ def execute_training(
             logging.info(f"Results saved to: {final_output_dir}")
         else:
             logging.warning("Could not determine final save directory from trainer.")
-            fallback_dir = project_root / effective_project_path / name_to_use
-            logging.info(f"Expected results directory: {fallback_dir}")
     except Exception as e:
         logging.error(f"Error during segmentation training: {e}", exc_info=True)
 
@@ -334,6 +330,87 @@ def execute_training(
         logging.error("Segmentation training did not complete successfully.")
 
     return final_output_dir, training_successful
+
+
+def _determine_run_parameters(
+    args: argparse.Namespace, train_config: dict, project_dir: Path
+) -> tuple[bool, str | None, str]:
+    """Determine run parameters based on args, config, and tracker log.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+        train_config (dict): Loaded training configuration.
+        project_dir (Path): Project directory path.
+
+    Returns:
+        tuple[bool, str | None, str]: (resume_flag, model_to_load, run_name)
+    """
+    base_name = args.name
+    model_arg = args.model
+    auto_resume_enabled = train_config.get("auto_resume", True)
+    tracker_file = project_dir / "last_run.log"
+
+    resume_flag = False
+    model_to_load = None
+    run_name = None
+
+    # Case A: --model specified (forces new run)
+    if model_arg:
+        logging.info(
+            f"Model specified via --model={model_arg}, starting new training (auto_resume disabled)"
+        )
+        resume_flag = False
+        model_to_load = model_arg
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{base_name}_{timestamp}"
+
+    # Case B: Auto-resume attempt
+    elif auto_resume_enabled:
+        logging.info(f"Auto-resume enabled, checking for previous run with name '{base_name}'")
+        log_data = _parse_tracker_log(tracker_file)
+
+        if log_data:
+            logged_project = log_data.get("project_path")
+            logged_base_name = log_data.get("base_name")
+
+            if logged_project == str(project_dir) and logged_base_name == base_name:
+                last_ckpt_path = log_data.get("last_ckpt_path")
+
+                if last_ckpt_path and Path(last_ckpt_path).exists():
+                    logging.info(
+                        f"Found matching checkpoint at {last_ckpt_path}, resuming training"
+                    )
+                    resume_flag = True
+                    model_to_load = last_ckpt_path
+                    run_name = log_data.get("actual_run_name")
+                else:
+                    logging.warning(
+                        f"Matching run found in log, but checkpoint {last_ckpt_path} does not exist. Starting new run."
+                    )
+                    # Fall through to Case C implicitly
+            else:
+                logging.info(
+                    "Last run log exists but doesn't match current project/name. Starting new run."
+                )
+                # Fall through to Case C implicitly
+        else:
+            logging.info("No last run log found or couldn't parse it. Starting new run.")
+            # Fall through to Case C implicitly
+
+    # Case C: New run (default or fallback)
+    if not run_name:  # If we haven't set run_name yet, we're in Case C
+        logging.info("Proceeding to start a new training run.")
+        resume_flag = False
+        model_to_load = train_config.get("model")
+        if not model_to_load:
+            raise ValueError(
+                "Missing 'model' key in configuration for new run or not provided via --model."
+            )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{base_name}_{timestamp}"
+        logging.info(f"Starting new training run with name: {run_name}")
+
+    return resume_flag, model_to_load, run_name
 
 
 # --- Training Pipeline Steps --- #
@@ -359,9 +436,9 @@ def run_training_pipeline(args: argparse.Namespace):
     Args:
         args (argparse.Namespace): Command-line arguments.
     """
-    # Step 1: Validate arguments
-    if not args.resume_with and not args.name:
-        raise ValueError("--name is required when not using --resume-with")
+    # Step 1: Validate arguments - name is required
+    if not args.name:
+        raise ValueError("--name is required for all training runs")
 
     # Step 2: Setup project environment
     project_root = _setup_project_environment()
@@ -373,31 +450,33 @@ def run_training_pipeline(args: argparse.Namespace):
         logging.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    # Step 4: Determine run parameters (includes auto WandB ID lookup)
+    # Step 4: Determine project path from config (required)
+    project_path = train_config.get("project")
+    if not project_path:
+        raise ValueError("Project path must be specified in the config file ('project' key).")
+    project_dir = Path(project_path)
+    logging.info(f"Using project directory: {project_path}")
+
+    # Create project directory if it doesn't exist
+    if RANK in {-1, 0} and not project_dir.exists():
+        project_dir.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Created project directory: {project_path}")
+
+    # Step 5: Determine run parameters using the helper function
     try:
-        model_to_load, name_to_use, resume_flag = _determine_run_params(
-            args, train_config, project_root
+        resume_flag, model_to_load, run_name = _determine_run_parameters(
+            args, train_config, project_dir
         )
-    except (FileNotFoundError, ValueError) as e:
+    except ValueError as e:
         logging.error(f"Failed to determine run parameters: {e}")
         sys.exit(1)
-
-    # Step 5: Determine project path (Fail if not specified)
-    effective_project_path = (
-        args.project if args.project is not None else train_config.get("project")
-    )
-    if not effective_project_path:
-        raise ValueError(
-            "Project path must be specified either via --project argument or in the config file."
-        )
-    logging.info(f"Using project directory: {effective_project_path}")
 
     # Step 6: Setup WandB to True for YOLO settings if wandb_dir is provided
     if args.wandb_dir:
         SETTINGS["wandb"] = True
         logging.info(f"WandB enabled. Using directory: {args.wandb_dir}")
 
-    # Step 7: Setup model (Directly call _load_model)
+    # Step 7: Setup model
     try:
         model = _load_model(model_to_load)
     except Exception:
@@ -406,11 +485,15 @@ def run_training_pipeline(args: argparse.Namespace):
 
     # Step 8: Prepare training arguments
     train_kwargs = prepare_train_kwargs(
-        train_config, name_to_use, resume_flag, effective_project_path, data_config_path
+        train_config,
+        run_name,
+        resume_flag,
+        project_path,
+        data_config_path,
     )
 
-    # Step 9: Execute training
-    execute_training(model, train_kwargs, effective_project_path, name_to_use, project_root)
+    # Step 9: Execute training, passing the original training name
+    execute_training(model, train_kwargs, args.name)
 
     logging.info("Script finished.")
 
@@ -426,36 +509,14 @@ def main():
         required=True,
         help=(
             "Path to the main segmentation training configuration YAML file "
-            "(relative to project root). It must contain a 'data' key "
-            "pointing to the dataset-specific config."
-        ),
-    )
-    parser.add_argument(
-        "--project",
-        type=str,
-        default=None,
-        help=(
-            "Override the base directory to save runs. If None, uses 'project' from config "
-            "or default ('runs/train/segment')."
+            "(relative to project root). It must contain 'project' and 'data' keys."
         ),
     )
     parser.add_argument(
         "--name",
         type=str,
-        required=False,
-        default=None,
-        help="Base name for the training run. A timestamp will be appended for new runs. "
-        "Required if not using --resume-with.",
-    )
-    parser.add_argument(
-        "--resume-with",
-        type=str,
-        default=None,
-        help=(
-            "Path to the exact training run directory "
-            "(e.g., runs/train/segment/run_YYMMDD_HHMMSS) to resume from. "
-            "Overrides --name logic for naming and loads last.pt."
-        ),
+        required=True,
+        help="Base name for the training run. A timestamp will be appended for new runs.",
     )
     parser.add_argument(
         "--wandb-dir",
@@ -472,7 +533,7 @@ def main():
         default=None,
         help=(
             "Path to a model file (e.g., last.pt) to use for a new training job. "
-            "Overrides the 'model' key in the configuration file."
+            "Overrides the 'model' key in the configuration file and disables auto-resume."
         ),
     )
 
@@ -482,21 +543,19 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example Usage (Fine-tuning):
+    # Example Usage (New training):
     # python src/models/ext/yolov11/train_segment.py \
     #     --config configs/yolov11/finetune_segment_voc.yaml \
     #     --name voc11_seg_finetune_run1
     #
-    # Example Usage (Resuming):
+    # Example Usage (With custom model weights):
     # python src/models/ext/yolov11/train_segment.py \
     #     --config configs/yolov11/finetune_segment_voc.yaml \
-    #     --resume-with runs/train/segment/voc11_seg_finetune_run1_20240101_000000 \
-    #     --name voc11_seg_finetune_run1
+    #     --name voc11_seg_finetune_run1 \
+    #     --model path/to/custom/weights.pt
     #
-    # Example Usage (With Custom Weights Directory):
-    # python src/models/ext/yolov11/train_segment.py \
-    #     --config configs/yolov11/finetune_segment_cov_segm.yaml \
-    #     --name cov_segm_ft_yolo11l_260k \
-    #     --weights-dir /path/to/nfs/mount
+    # Note: Auto-resume is enabled by default and can be configured in the YAML file.
+    # If a previous run with the same base name exists, it will attempt to resume
+    # from the last checkpoint.
 
     main()

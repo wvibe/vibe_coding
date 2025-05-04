@@ -75,31 +75,30 @@ YOLOv11 segmentation models are trained using the `train_segment.py` script loca
 
 ## Limitations and Workarounds
 
-### Resuming Training Limitations with Ultralytics YOLO
+#### Extending Training Runs
 
-A known limitation with the Ultralytics YOLO library (as of version 8.3.117) is that resuming training from a checkpoint (`last.pt`) may fail if the library determines that the total number of epochs specified in the checkpoint's metadata has been reached. When this occurs, attempting to resume with `resume=True` results in an `AssertionError` indicating that training is already finished, even if additional epochs are desired.
+A potential limitation with the Ultralytics YOLO library is managing the total number of epochs when resuming. If a run was initially configured for `N` epochs and completed, simply resuming it might not allow training for *additional* epochs beyond `N` using the standard resume mechanism (which restores the exact state, including the epoch count).
 
-- **Error Message**: `AssertionError: <path/to/last.pt> training to <N> epochs is finished, nothing to resume.`
-- **Cause**: The Ultralytics trainer checks the `epochs` value embedded in the checkpoint file and compares it against the current epoch. If the current epoch is equal to or greater than the total epochs, it prevents resuming.
-- **Impact**: This prevents extending training beyond the originally specified number of epochs when using the `--resume-with` argument in `train_segment.py`.
+**Workaround for Additional Training (using `--model`):**
 
-### Workaround for Additional Training
+To perform additional training based on the output of a previous run (whether completed or interrupted), the recommended approach is to use the `--model` argument with the new `train_segment.py` script:
 
-To perform additional training based on the last model output when resuming fails due to the epoch limit:
+1.  **Identify the Checkpoint**: Locate the desired checkpoint file from the previous run (e.g., `runs/train/segment/<previous_run_name>/weights/best.pt` or `last.pt`).
+2.  **Start a New Training Job**: Initiate a new training job using the `--model` argument pointing to that checkpoint. Assign a *new base name* using `--name` to avoid conflicts with the auto-resume logic for the *original* name.
 
-1. **Start a New Training Job with the Checkpoint**:
-   Instead of using `--resume-with`, use the `--model` argument to specify the path to the `last.pt` checkpoint file. This starts a new training job from epoch 0, using the weights from the checkpoint as the starting point, without attempting to resume the optimizer state or other metadata.
+    ```bash
+    # Example: Continue training based on the best weights of a previous run
+    python -m src.models.ext.yolov11.train_segment \
+        --config configs/yolov11/finetune_segment_voc.yaml \
+        --name voc11_seg_finetune_run1_extended \
+        --model runs/train/segment/voc11_seg_finetune_run1_YYYYMMDD_HHMMSS/weights/best.pt
+    ```
 
-   ```bash
-   python -m src.models.ext.yolov11.train_segment --config configs/yolov11/finetune_segment_cov_segm.yaml --name new_finetune_run --model runs/finetune/segment_cov_segm/finetune_yolo11l-seg_260k_20250426_142406/weights/last.pt
-   ```
+    - **Effect**: This starts a new training run from epoch 0, initializing weights from the specified checkpoint. It creates a new run directory (e.g., `voc11_seg_finetune_run1_extended_TIMESTAMP`) and a distinct WandB trace (if enabled).
+    - **Configuration**: You can adjust the total `epochs` and other parameters in your YAML configuration file for this new phase of training.
+    - **Benefit**: This cleanly separates the extended training phase and avoids potential issues with the internal epoch tracking of the Ultralytics resume state.
 
-   - **Effect**: This creates a new run with a fresh WandB trace (if enabled) and allows setting a new number of epochs or other training parameters via the configuration file.
-   - **Trade-off**: Unlike a true resume, this approach does not preserve the optimizer state, learning rate scheduler, or current epoch from the checkpoint, which may affect training convergence or require additional epochs to stabilize.
-
-2. **Adjust Configuration**: Ensure the configuration YAML file specifies the desired number of epochs and other parameters for the new training job.
-
-This workaround is implemented in the updated `train_segment.py` script, which supports the `--model` argument to override the model specified in the configuration file and start a new training session.
+This approach leverages the flexibility of starting new runs from specific weights, providing a clear way to continue or extend training.
 
 ## Usage Examples
 
