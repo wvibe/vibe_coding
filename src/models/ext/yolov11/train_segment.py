@@ -17,38 +17,35 @@ from dotenv import load_dotenv
 from ultralytics import YOLO
 from ultralytics.utils import SETTINGS
 
-# --- Vibe Imports --- #
-# Assuming src is in PYTHONPATH or handled by execution environment
-try:
-    from utils.logging.log_finder import find_wandb_run_id
-except ImportError:
-    # Fallback if run directly and utils path needs adjustment
-    project_root_for_import = Path(__file__).resolve().parents[4]
-    sys.path.insert(0, str(project_root_for_import / "src"))
-    try:
-        from utils.logging.log_finder import find_wandb_run_id
-    except ImportError as e:
-        logging.error("Could not import find_wandb_run_id. Ensure src is in PYTHONPATH.")
-        raise e
-# --- End Vibe Imports --- #
-
+from utils.logging.log_finder import find_wandb_run_id
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def get_project_root() -> Path:
-    """Find the project root directory relative to this script.
+def _setup_project_environment() -> Path:
+    """Setup the project environment and return the project root.
 
-    Assumes the script is located in project_root/src/models/ext/yolov11.
     Returns:
-        Path: The absolute path to the project root directory.
+        Path: Project root directory path.
     """
-    return Path(__file__).resolve().parents[4]
+    # Inline get_project_root()
+    project_root = Path(__file__).resolve().parents[4]
+    logging.info(f"Project Root: {project_root}")
+
+    # Inline setup_environment()
+    dotenv_path = project_root / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+        logging.info(f".env loaded from: {dotenv_path}")
+    else:
+        logging.info(".env file not found, proceeding without it.")
+
+    return project_root
 
 
-def load_config(config_path: Path) -> dict:
-    """Load training configuration from a YAML file.
+def _parse_config_yaml(config_path: Path) -> dict:
+    """Load configuration from a YAML file.
 
     Args:
         config_path (Path): Path to the YAML configuration file.
@@ -68,7 +65,7 @@ def load_config(config_path: Path) -> dict:
             config = yaml.safe_load(f)
         if not config:
             raise ValueError("Config file is empty or invalid.")
-        logging.info("Configuration loaded successfully.")
+        logging.info(f"Configuration loaded successfully from: {config_path}")
         return config
     except yaml.YAMLError as e:
         logging.error(f"Error parsing YAML file: {e}")
@@ -78,36 +75,44 @@ def load_config(config_path: Path) -> dict:
         raise
 
 
-def _validate_and_get_data_config_path(main_config: dict, project_root: Path) -> Path:
-    """Validate and resolve the data config path from the main config.
+def _load_training_config(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
+    """Load training configurations.
 
     Args:
-        main_config (dict): Main training configuration dictionary.
+        args (argparse.Namespace): Command-line arguments.
         project_root (Path): Project root directory path.
     Returns:
-        Path: Absolute path to the data configuration YAML file.
+        tuple[dict, Path]: Training configuration dictionary and absolute path to data config file.
     Raises:
-        ValueError: If the 'data' key is missing in the main configuration.
-        FileNotFoundError: If the data config file does not exist.
+        FileNotFoundError: If configuration files are not found.
+        ValueError: If configurations are invalid.
+        yaml.YAMLError: If there is an error parsing YAML files.
     """
-    relative_data_config_path = main_config.get("data")
+    config_path_abs = (project_root / args.config).resolve()
+    train_config = _parse_config_yaml(config_path_abs)
+
+    # determine the data config path
+    relative_data_config_path = train_config.get("data")
     if not relative_data_config_path:
         raise ValueError("Missing 'data' key in the main training configuration.")
-    absolute_data_config_path = (project_root / relative_data_config_path).resolve()
-    if not absolute_data_config_path.is_file():
+    data_config_path = (project_root / relative_data_config_path).resolve()
+    if not data_config_path.is_file():
         raise FileNotFoundError(
-            f"Data config file specified in main config not found: {absolute_data_config_path}"
+            f"Data config file specified in main config not found: {data_config_path}"
         )
-    logging.info(f"Using data config file: {absolute_data_config_path}")
-    return absolute_data_config_path
+    logging.info(f"Using data config file: {data_config_path}")
+
+    return train_config, data_config_path
 
 
-def _determine_run_params(args: argparse.Namespace, main_config: dict, project_root: Path) -> tuple:
+def _determine_run_params(
+    args: argparse.Namespace, train_config: dict, project_root: Path
+) -> tuple:
     """Determine model path, run name, resume flag, and attempt to find WandB ID on resume.
 
     Args:
         args (argparse.Namespace): Command-line arguments.
-        main_config (dict): Main training configuration dictionary.
+        train_config (dict): Training configuration dictionary.
         project_root (Path): Project root directory path.
     Returns:
         tuple: (model_to_load, name_to_use, resume_flag, wandb_id_to_use)
@@ -171,7 +176,7 @@ def _determine_run_params(args: argparse.Namespace, main_config: dict, project_r
         # New run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name_to_use = f"{args.name}_{timestamp}"
-        model_to_load = args.model if args.model else main_config.get("model")
+        model_to_load = args.model if args.model else train_config.get("model")
         resume_flag = False  # Explicitly false
         logging.info(f"Starting new run with name: {name_to_use}")
         if not model_to_load:
@@ -203,7 +208,7 @@ def _load_model(model_path: str) -> YOLO:
 
 
 def prepare_train_kwargs(
-    main_config: dict,
+    train_config: dict,
     name: str,
     resume: bool,
     effective_project_path: str,
@@ -212,7 +217,7 @@ def prepare_train_kwargs(
     """Prepare the keyword arguments for the model.train() call.
 
     Args:
-        main_config (dict): Main training configuration dictionary.
+        train_config (dict): Training configuration dictionary.
         name (str): Name of the training run.
         resume (bool): Flag indicating if training is being resumed.
         effective_project_path (str): Project directory path for saving runs.
@@ -266,7 +271,7 @@ def prepare_train_kwargs(
     }
 
     # The filtering logic remains the same
-    train_kwargs = {k: v for k, v in main_config.items() if k in valid_train_args}
+    train_kwargs = {k: v for k, v in train_config.items() if k in valid_train_args}
 
     # Add/override arguments from orchestration logic
     train_kwargs["project"] = effective_project_path
@@ -348,65 +353,6 @@ def setup_environment(project_root: Path) -> None:
         logging.info(".env file not found, proceeding without it.")
 
 
-def load_configurations(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
-    """Load main and data configurations for training.
-
-    Args:
-        args (argparse.Namespace): Command-line arguments.
-        project_root (Path): Project root directory path.
-    Returns:
-        tuple[dict, Path]: Main configuration dictionary and absolute path to data config file.
-    Raises:
-        FileNotFoundError: If configuration files are not found.
-        ValueError: If configurations are invalid.
-        yaml.YAMLError: If there is an error parsing YAML files.
-    """
-    config_path_abs = (project_root / args.config).resolve()
-    main_config = load_config(config_path_abs)
-    absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
-    return main_config, absolute_data_config_path
-
-
-def setup_project_environment() -> Path:
-    """Setup the project environment and return the project root.
-
-    Returns:
-        Path: Project root directory path.
-    """
-    # Inline get_project_root()
-    project_root = Path(__file__).resolve().parents[4]
-    logging.info(f"Project Root: {project_root}")
-
-    # Inline setup_environment()
-    dotenv_path = project_root / ".env"
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path=dotenv_path)
-        logging.info(f".env loaded from: {dotenv_path}")
-    else:
-        logging.info(".env file not found, proceeding without it.")
-
-    return project_root
-
-
-def load_training_configurations(args: argparse.Namespace, project_root: Path) -> tuple[dict, Path]:
-    """Load training configurations.
-
-    Args:
-        args (argparse.Namespace): Command-line arguments.
-        project_root (Path): Project root directory path.
-    Returns:
-        tuple[dict, Path]: Main configuration dictionary and absolute path to data config file.
-    Raises:
-        FileNotFoundError: If configuration files are not found.
-        ValueError: If configurations are invalid.
-        yaml.YAMLError: If there is an error parsing YAML files.
-    """
-    config_path_abs = (project_root / args.config).resolve()
-    main_config = load_config(config_path_abs)
-    absolute_data_config_path = _validate_and_get_data_config_path(main_config, project_root)
-    return main_config, absolute_data_config_path
-
-
 def run_training_pipeline(args: argparse.Namespace):
     """Orchestrate the steps for loading config and running training.
 
@@ -418,11 +364,11 @@ def run_training_pipeline(args: argparse.Namespace):
         raise ValueError("--name is required when not using --resume-with")
 
     # Step 2: Setup project environment
-    project_root = setup_project_environment()
+    project_root = _setup_project_environment()
 
     # Step 3: Load configurations
     try:
-        main_config, absolute_data_config_path = load_training_configurations(args, project_root)
+        train_config, data_config_path = _load_training_config(args, project_root)
     except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
         logging.error(f"Configuration error: {e}")
         sys.exit(1)
@@ -430,7 +376,7 @@ def run_training_pipeline(args: argparse.Namespace):
     # Step 4: Determine run parameters (includes auto WandB ID lookup)
     try:
         model_to_load, name_to_use, resume_flag = _determine_run_params(
-            args, main_config, project_root
+            args, train_config, project_root
         )
     except (FileNotFoundError, ValueError) as e:
         logging.error(f"Failed to determine run parameters: {e}")
@@ -438,7 +384,7 @@ def run_training_pipeline(args: argparse.Namespace):
 
     # Step 5: Determine project path (Fail if not specified)
     effective_project_path = (
-        args.project if args.project is not None else main_config.get("project")
+        args.project if args.project is not None else train_config.get("project")
     )
     if not effective_project_path:
         raise ValueError(
@@ -449,6 +395,7 @@ def run_training_pipeline(args: argparse.Namespace):
     # Step 6: Setup WandB to True for YOLO settings if wandb_dir is provided
     if args.wandb_dir:
         SETTINGS["wandb"] = True
+        logging.info(f"WandB enabled. Using directory: {args.wandb_dir}")
 
     # Step 7: Setup model (Directly call _load_model)
     try:
@@ -459,7 +406,7 @@ def run_training_pipeline(args: argparse.Namespace):
 
     # Step 8: Prepare training arguments
     train_kwargs = prepare_train_kwargs(
-        main_config, name_to_use, resume_flag, effective_project_path, absolute_data_config_path
+        train_config, name_to_use, resume_flag, effective_project_path, data_config_path
     )
 
     # Step 9: Execute training

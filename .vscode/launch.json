@@ -6,7 +6,12 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": [],
+            "args": [
+                "--run-dir",
+                "runs/segment/cov_segm/visible_645k_frc50_run1_20250503_153431/",
+                "--wandb-dir",
+                "wandb"
+            ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

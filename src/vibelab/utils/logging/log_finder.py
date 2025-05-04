@@ -49,6 +49,7 @@ def _get_wandb_config_path(wandb_run_subdir: pathlib.Path) -> Optional[pathlib.P
         if not config_path.exists():
             logging.debug(f"Config file not found in {wandb_run_subdir} or its 'files' subdir.")
             return None
+    logging.debug(f"Found config file at: {config_path}")
     return config_path
 
 
@@ -152,14 +153,16 @@ if __name__ == "__main__":
         description="Find the WandB run ID for a given Ultralytics run directory."
     )
     parser.add_argument(
-        "ultralytics_run_dir",
+        "--run-dir",
+        dest="run_dir",  # Store in args.run_dir
         type=str,
+        required=True,  # Make this flag mandatory
         help="Path to the Ultralytics run directory (e.g., runs/finetune/detect/exp10)",
     )
     parser.add_argument(
-        "wandb_root_dir",
+        "--wandb-dir",
+        dest="wandb_dir",  # Store in args.wandb_dir
         type=str,
-        nargs="?",  # Make wandb_root_dir optional
         default="wandb",  # Default to 'wandb' in the current directory
         help="Path to the root WandB directory (default: ./wandb)",
     )
@@ -172,7 +175,8 @@ if __name__ == "__main__":
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    wandb_id = find_wandb_run_id(args.ultralytics_run_dir, args.wandb_root_dir)
+    # Access arguments using their destination names (args.run_dir, args.wandb_dir)
+    wandb_id = find_wandb_run_id(args.run_dir, args.wandb_dir)
 
     if wandb_id:
         print(f"WandB Run ID: {wandb_id}")

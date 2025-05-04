@@ -36,7 +36,7 @@ amp: True             # Enable Automatic Mixed Precision (Recommended for A10G).
 save_period: 5
 
 # --- Output Settings ---
-project: runs/segment/cov_segm
+project: runs/segment/cov_segm # wandb project runs-segment-cov_segm
 task: ft_yolo11l_seg
 wdir_root: weights
 csv_root: logs
