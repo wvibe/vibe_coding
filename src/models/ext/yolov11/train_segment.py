@@ -310,10 +310,11 @@ def execute_training(
         log_callback_partial = functools.partial(_log_tracker_callback, base_name)
 
         # Register our callback for tracking run information
-        callbacks = {"on_train_start": [log_callback_partial]}
+        model.add_callback("on_train_start", log_callback_partial)
+        logging.info("Callback registered for on_train_start")
 
         # The train method should work for segmentation task type based on the loaded model
-        model.train(**train_kwargs, callbacks=callbacks)
+        model.train(**train_kwargs)
         logging.info("Segmentation training finished successfully.")
         training_successful = True
 
