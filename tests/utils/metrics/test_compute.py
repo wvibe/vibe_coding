@@ -5,7 +5,7 @@ import pytest
 import torch
 
 # Assume the file structure allows this import
-from src.utils.metrics.compute import get_model_params, get_peak_gpu_memory_mb
+from vibelab.utils.metrics.compute import get_model_params, get_peak_gpu_memory_mb
 
 # --- Tests for get_model_params ---
 

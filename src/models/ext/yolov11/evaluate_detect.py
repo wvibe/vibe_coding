@@ -38,8 +38,8 @@ from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
 # Import custom metrics utilities
-from src.utils.metrics.compute import get_model_params, get_peak_gpu_memory_mb
-from src.utils.metrics.detection import (
+from vibelab.utils.metrics.compute import get_model_params, get_peak_gpu_memory_mb
+from vibelab.utils.metrics.detection import (
     calculate_ap,
     calculate_map,
     calculate_pr_data,
