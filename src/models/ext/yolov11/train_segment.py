@@ -7,7 +7,6 @@ Mirrors the structure and capabilities of the YOLOv11 detection training script.
 
 import argparse
 import csv
-import functools
 import logging
 import sys
 from datetime import datetime
@@ -134,52 +133,46 @@ def _parse_tracker_log(tracker_file: Path) -> dict | None:
         return None
 
 
-def _log_tracker_callback(base_name: str, trainer):
-    """Callback to log run information to the tracker file.
-    Only runs on RANK 0 process.
+def log_run_tracker(tracker_file_path: Path, base_name: str, train_kwargs: dict) -> None:
+    """Write run information to the tracker file for potential future resuming.
 
     Args:
-        base_name (str): The base name provided via CLI --name.
-        trainer: The YOLO trainer instance.
+        tracker_file_path (Path): Path to the tracker log file.
+        base_name (str): Base name of the run (from args.name).
+        train_kwargs (dict): Training arguments dictionary for model.train().
     """
-    if RANK not in {-1, 0}:
-        return  # Only log on main process
-
     try:
-        # Extract required information
-        project_path = trainer.args.project
+        # Extract required information from train_kwargs
+        project_path = train_kwargs["project"]
+        actual_run_name = train_kwargs["name"]
+        config_epochs = train_kwargs["epochs"]
+        timestamp = datetime.now().isoformat()
+
         # Define columns and data
         columns = [
             "project_path",
             "base_name",
             "actual_run_name",
-            "weights_dir",
-            "last_ckpt_path",
-            "wandb_id",
             "config_epochs",
-            "start_timestamp",
+            "log_timestamp",
         ]
         data = [
             project_path,
             base_name,
-            trainer.save_dir.name,
-            str(trainer.wdir),
-            str(trainer.last),
-            getattr(trainer.args, "wandb_id", None),
-            trainer.args.epochs,
-            datetime.now().isoformat(),
+            actual_run_name,
+            config_epochs,
+            timestamp,
         ]
 
         # Write to tracker file (overwrite)
-        tracker_file = Path(project_path) / "last_run.log"
-        with open(tracker_file, "w", newline="") as f:
+        with open(tracker_file_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(columns)
             writer.writerow(data)
 
-        logging.info(f"Training run information logged to {tracker_file}")
+        logging.info(f"Run tracker information logged to {tracker_file_path}")
     except Exception as e:
-        logging.error(f"Failed to log run information: {e}")
+        logging.error(f"Failed to write run tracker log to {tracker_file_path}: {e}")
 
 
 def _load_model(model_path: str) -> YOLO:
@@ -290,14 +283,12 @@ def prepare_train_kwargs(
 def execute_training(
     model: YOLO,
     train_kwargs: dict,
-    base_name: str,
 ) -> tuple[Path | None, bool]:
     """Execute the training process and capture results.
 
     Args:
         model (YOLO): Loaded YOLO model instance.
         train_kwargs (dict): Training arguments for model.train().
-        base_name (str): The base name from CLI.
     Returns:
         tuple[Path | None, bool]: Final output directory (if available) and training success flag.
     """
@@ -306,13 +297,6 @@ def execute_training(
     training_successful = False
 
     try:
-        # Create the partial function for the callback
-        log_callback_partial = functools.partial(_log_tracker_callback, base_name)
-
-        # Register our callback for tracking run information
-        model.add_callback("on_train_start", log_callback_partial)
-        logging.info("Callback registered for on_train_start")
-
         # The train method should work for segmentation task type based on the loaded model
         model.train(**train_kwargs)
         logging.info("Segmentation training finished successfully.")
@@ -334,7 +318,7 @@ def execute_training(
 
 
 def _determine_run_parameters(
-    args: argparse.Namespace, train_config: dict, project_dir: Path
+    args: argparse.Namespace, train_config: dict, project_dir: Path, tracker_file: Path
 ) -> tuple[bool, str | None, str]:
     """Determine run parameters based on args, config, and tracker log.
 
@@ -342,75 +326,66 @@ def _determine_run_parameters(
         args (argparse.Namespace): Command-line arguments.
         train_config (dict): Loaded training configuration.
         project_dir (Path): Project directory path.
+        tracker_file (Path): Path to the tracker log file.
 
     Returns:
         tuple[bool, str | None, str]: (resume_flag, model_to_load, run_name)
     """
-    base_name = args.name
-    model_arg = args.model
-    auto_resume_enabled = train_config.get("auto_resume", True)
-    tracker_file = project_dir / "last_run.log"
-
+    # Initialize default values for a new run
     resume_flag = False
-    model_to_load = None
-    run_name = None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"{args.name}_{timestamp}"
 
-    # Case A: --model specified (forces new run)
-    if model_arg:
+    # Default model path is always from the config unless overridden by --model
+    if args.model:
         logging.info(
-            f"Model specified via --model={model_arg}, starting new training (auto_resume disabled)"
+            f"Model specified via --model={args.model}, starting new training (auto-resume disabled)"
         )
-        resume_flag = False
-        model_to_load = model_arg
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"{base_name}_{timestamp}"
+        model_to_load = args.model
+        return resume_flag, model_to_load, run_name
 
-    # Case B: Auto-resume attempt
-    elif auto_resume_enabled:
-        logging.info(f"Auto-resume enabled, checking for previous run with name '{base_name}'")
+    model_to_load = train_config.get("model")
+    if not model_to_load:
+        raise ValueError(
+            "Missing 'model' key in configuration for new run or not provided via --model."
+        )
+
+    # Only attempt to resume if auto-resume is enabled and no model override
+    if args.auto_resume:
+        logging.info(f"Auto-resume enabled, checking for previous run with name '{args.name}'")
         log_data = _parse_tracker_log(tracker_file)
 
         if log_data:
             logged_project = log_data.get("project_path")
             logged_base_name = log_data.get("base_name")
 
-            if logged_project == str(project_dir) and logged_base_name == base_name:
-                last_ckpt_path = log_data.get("last_ckpt_path")
+            if logged_project == str(project_dir) and logged_base_name == args.name:
+                logging.info("Found matching run in log, will attempt to resume training")
+                resume_flag = True
+                run_name = log_data.get("actual_run_name")
 
-                if last_ckpt_path and Path(last_ckpt_path).exists():
-                    logging.info(
-                        f"Found matching checkpoint at {last_ckpt_path}, resuming training"
-                    )
-                    resume_flag = True
-                    model_to_load = last_ckpt_path
-                    run_name = log_data.get("actual_run_name")
-                else:
+                # Verify the run directory exists
+                run_dir = project_dir / run_name
+                if not run_dir.exists():
                     logging.warning(
-                        f"Matching run found in log, but checkpoint {last_ckpt_path} does not exist. Starting new run."
+                        f"Run directory {run_dir} from tracker log does not exist. Starting new run."
                     )
-                    # Fall through to Case C implicitly
+                    resume_flag = False
+                    run_name = f"{args.name}_{timestamp}"
+                else:
+                    logging.info(f"Verified run directory exists: {run_dir}")
+                    # Still use model from config, trainer will handle loading last.pt with resume=True
+                    return resume_flag, model_to_load, run_name
             else:
                 logging.info(
                     "Last run log exists but doesn't match current project/name. Starting new run."
                 )
-                # Fall through to Case C implicitly
         else:
             logging.info("No last run log found or couldn't parse it. Starting new run.")
-            # Fall through to Case C implicitly
+    else:
+        logging.info("Auto-resume disabled. Starting new run.")
 
-    # Case C: New run (default or fallback)
-    if not run_name:  # If we haven't set run_name yet, we're in Case C
-        logging.info("Proceeding to start a new training run.")
-        resume_flag = False
-        model_to_load = train_config.get("model")
-        if not model_to_load:
-            raise ValueError(
-                "Missing 'model' key in configuration for new run or not provided via --model."
-            )
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"{base_name}_{timestamp}"
-        logging.info(f"Starting new training run with name: {run_name}")
-
+    # At this point, we're doing a new run with the model from config
     return resume_flag, model_to_load, run_name
 
 
@@ -463,10 +438,13 @@ def run_training_pipeline(args: argparse.Namespace):
         project_dir.mkdir(parents=True, exist_ok=True)
         logging.info(f"Created project directory: {project_path}")
 
+    # Define tracker file path (used both for reading and writing)
+    tracker_file_path = project_dir / "last_run.log"
+
     # Step 5: Determine run parameters using the helper function
     try:
         resume_flag, model_to_load, run_name = _determine_run_parameters(
-            args, train_config, project_dir
+            args, train_config, project_dir, tracker_file_path
         )
     except ValueError as e:
         logging.error(f"Failed to determine run parameters: {e}")
@@ -493,8 +471,11 @@ def run_training_pipeline(args: argparse.Namespace):
         data_config_path,
     )
 
-    # Step 9: Execute training, passing the original training name
-    execute_training(model, train_kwargs, args.name)
+    # Step 9: Log run information to tracker file before training starts
+    log_run_tracker(tracker_file_path, args.name, train_kwargs)
+
+    # Step 10: Execute training
+    execute_training(model, train_kwargs)
 
     logging.info("Script finished.")
 
@@ -535,6 +516,15 @@ def main():
         help=(
             "Path to a model file (e.g., last.pt) to use for a new training job. "
             "Overrides the 'model' key in the configuration file and disables auto-resume."
+        ),
+    )
+    parser.add_argument(
+        "--auto-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Automatically resume training from the last run with the same base name "
+            "if a checkpoint exists. Disabled if --model is specified."
         ),
     )
 

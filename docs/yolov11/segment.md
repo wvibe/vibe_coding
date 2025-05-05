@@ -73,6 +73,36 @@ YOLOv11 segmentation models are trained using the `train_segment.py` script loca
 
 [Existing content about training process...]
 
+## Resuming Training Runs
+
+The `train_segment.py` script provides two methods for resuming training:
+
+1. **Automatic Resume (using `--auto-resume`):**
+   - When the `--auto-resume` flag is enabled, the script will check for previous runs with the same base name (specified by `--name`) in the project directory.
+   - If a matching run is found, the script will resume training from the last checkpoint, preserving the original run directory and WandB logging (if enabled).
+   - This is useful for continuing training that was interrupted.
+   - Usage example:
+     ```bash
+     python -m src.models.ext.yolov11.train_segment \
+         --config configs/yolov11/finetune_segment_voc.yaml \
+         --name voc11_seg_finetune_run1 \
+         --auto-resume
+     ```
+
+2. **Manual Resume (using `--model`):**
+   - Alternatively, you can explicitly specify a checkpoint to resume from using the `--model` parameter.
+   - This approach starts a new training run but initializes weights from the specified checkpoint.
+   - This is useful when you want more control over the resumption process or when extending training beyond the original epoch count.
+   - Usage example:
+     ```bash
+     python -m src.models.ext.yolov11.train_segment \
+         --config configs/yolov11/finetune_segment_voc.yaml \
+         --name voc11_seg_finetune_run1_extended \
+         --model runs/segment/cov_segm/voc11_seg_finetune_run1_YYYYMMDD_HHMMSS/weights/best.pt
+     ```
+
+Note that the `--auto-resume` flag is disabled by default, and it will be ignored if `--model` is specified.
+
 ## Limitations and Workarounds
 
 #### Extending Training Runs
