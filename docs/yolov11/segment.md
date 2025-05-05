@@ -133,3 +133,30 @@ This approach leverages the flexibility of starting new runs from specific weigh
 ## Usage Examples
 
 [Existing content about usage examples...]
+
+# YOLOv11 Segmentation Prediction
+
+This document describes how to use the `predict_segment.py` script for running inference with YOLOv11 segmentation models.
+
+## Overview
+
+The `vibelab.models.ext.yolov11.predict_segment` script provides a command-line interface to load a YOLOv11 segmentation model and run predictions on various sources (single image, directory, or standard datasets like VOC/COCO).
+
+## Usage
+
+Run the script from the project root using `python -m`:
+
+```bash
+python -m vibelab.models.ext.yolov11.predict_segment --config <path_to_config.yaml> [options]
+```
+
+## Configuration File (`predict_segment.yaml`)
+
+The script relies on a YAML configuration file to specify most parameters. See `configs/yolov11/predict_segment_demo.yaml` for an example.
+
+## Implementation Details
+
+- The script utilizes `vibelab.models.ext.yolov11.predict_utils` for shared logic like config loading, output directory setup, and source processing.
+- It loads the specified model using `ultralytics.YOLO(config['model'])`.
+- Inference is performed via `model.predict(...)`, passing relevant parameters from the config (e.g., `conf`, `iou`, `device`, `save`).
+- Performance statistics (FPS, timing) are calculated based on the `results` object returned by `predict` and logged.

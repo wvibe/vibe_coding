@@ -14,7 +14,7 @@ This directory contains code and documentation related to experiments with YOLOv
 
 ## Source Code
 
-- Main scripts: [`src/models/ext/yolov11/`](../../src/models/ext/yolov11/)
+- Main scripts: [`src/vibelab/models/ext/yolov11/`](../../src/vibelab/models/ext/yolov11/)
 - Configurations: [`configs/yolov11/`](../../configs/yolov11/)
 - Tests:
   - Prediction: `tests/models/ext/yolov11/test_predict.py`
@@ -34,7 +34,7 @@ The `predict_detect.py` script runs inference using a YOLOv11 model based on par
 **Command-Line:**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
+python -m vibelab.models.ext.yolov11.predict_detect \
     --config configs/yolov11/predict_detect.yaml \
     --dataset <dataset_id> \
     --tag <split_tag> \
@@ -59,7 +59,7 @@ python -m src.models.ext.yolov11.predict_detect \
 **Example (using default config on VOC test2007):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
+python -m vibelab.models.ext.yolov11.predict_detect \
     --config configs/yolov11/predict_detect.yaml \
     --dataset voc \
     --tag test2007 \
@@ -69,7 +69,7 @@ python -m src.models.ext.yolov11.predict_detect \
 **Example (using specific device and random sampling):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
+python -m vibelab.models.ext.yolov11.predict_detect \
     --config configs/yolov11/predict_detect.yaml \
     --dataset voc \
     --tag val2007 \
@@ -101,7 +101,7 @@ to specify the target dataset split and the output run name.
 # Activate environment if needed (e.g., conda activate vbl)
 # Ensure .env file is present at project root for dataset path resolution
 
-python -m src.models.ext.yolov11.predict_segment \
+python -m vibelab.models.ext.yolov11.predict_segment \
     --config configs/yolov11/predict_segment.yaml \
     --dataset <dataset_id> \
     --tag <split_tag> \
@@ -126,7 +126,7 @@ python -m src.models.ext.yolov11.predict_segment \
 **Example (using default config on VOC val2007):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_segment \
+python -m vibelab.models.ext.yolov11.predict_segment \
     --config configs/yolov11/predict_segment.yaml \
     --dataset voc \
     --tag val2007 \
@@ -136,7 +136,7 @@ python -m src.models.ext.yolov11.predict_segment \
 **Example (using specific device and disabling saving):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_segment \
+python -m vibelab.models.ext.yolov11.predict_segment \
     --config configs/yolov11/predict_segment.yaml \
     --dataset voc \
     --tag test2007 \
@@ -306,13 +306,13 @@ For detailed configuration options, refer to the specific comments within `evalu
 **Command-Line:**
 
 ```bash
-python -m src.models.ext.yolov11.evaluate_detect --config <path_to_config.yaml>
+python -m vibelab.models.ext.yolov11.evaluate_detect --config <path_to_config.yaml>
 ```
 
 **Example (using default config):**
 
 ```bash
-python -m src.models.ext.yolov11.evaluate_detect \
+python -m vibelab.models.ext.yolov11.evaluate_detect \
     --config src/models/ext/yolov11/configs/evaluate_default.yaml
 ```
 

@@ -6,7 +6,7 @@ import pytest
 
 # Assuming predict_segment.py is importable relative to project root
 # This might need adjustment based on actual test runner setup
-from src.models.ext.yolov11.predict_segment import (
+from vibelab.models.ext.yolov11.predict_segment import (
     _extract_and_average_times,
     construct_source_path,
     process_source,
@@ -15,9 +15,9 @@ from src.models.ext.yolov11.predict_segment import (
 # --- Tests for construct_source_path ---
 
 
-@patch("src.models.ext.yolov11.predict_segment.os.getenv")
-@patch("src.models.ext.yolov11.predict_segment.Path.is_dir")
-@patch("src.models.ext.yolov11.predict_segment.Path.iterdir")
+@patch("vibelab.models.ext.yolov11.predict_segment.os.getenv")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.is_dir")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.iterdir")
 def test_construct_source_path_success(mock_iterdir, mock_is_dir, mock_getenv):
     """Test successful path construction."""
     mock_getenv.return_value = "/fake/voc/base"
@@ -34,7 +34,7 @@ def test_construct_source_path_success(mock_iterdir, mock_is_dir, mock_getenv):
     mock_is_dir.assert_called_once()
 
 
-@patch("src.models.ext.yolov11.predict_segment.os.getenv")
+@patch("vibelab.models.ext.yolov11.predict_segment.os.getenv")
 def test_construct_source_path_unknown_dataset(mock_getenv, caplog):
     """Test error handling for unknown dataset ID."""
     mock_getenv.return_value = None  # Simulate unknown dataset mapping
@@ -48,7 +48,7 @@ def test_construct_source_path_unknown_dataset(mock_getenv, caplog):
     mock_getenv.assert_not_called()  # getenv shouldn't be called if mapping fails
 
 
-@patch("src.models.ext.yolov11.predict_segment.os.getenv")
+@patch("vibelab.models.ext.yolov11.predict_segment.os.getenv")
 def test_construct_source_path_env_var_not_set(mock_getenv, caplog):
     """Test error handling when the required environment variable is not set."""
     mock_getenv.return_value = None
@@ -62,8 +62,8 @@ def test_construct_source_path_env_var_not_set(mock_getenv, caplog):
     mock_getenv.assert_called_once_with("VOC_SEGMENT")
 
 
-@patch("src.models.ext.yolov11.predict_segment.os.getenv")
-@patch("src.models.ext.yolov11.predict_segment.Path.is_dir")
+@patch("vibelab.models.ext.yolov11.predict_segment.os.getenv")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.is_dir")
 def test_construct_source_path_not_a_directory(mock_is_dir, mock_getenv, caplog):
     """Test error handling when the constructed path is not a directory."""
     mock_getenv.return_value = "/fake/path"
@@ -80,9 +80,9 @@ def test_construct_source_path_not_a_directory(mock_is_dir, mock_getenv, caplog)
     mock_is_dir.assert_called_once()
 
 
-@patch("src.models.ext.yolov11.predict_segment.os.getenv")
-@patch("src.models.ext.yolov11.predict_segment.Path.is_dir")
-@patch("src.models.ext.yolov11.predict_segment.Path.iterdir")
+@patch("vibelab.models.ext.yolov11.predict_segment.os.getenv")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.is_dir")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.iterdir")
 def test_construct_source_path_empty_directory(mock_iterdir, mock_is_dir, mock_getenv, caplog):
     """Test warning when the source directory is empty."""
     mock_getenv.return_value = "/empty/dir"
@@ -105,7 +105,7 @@ def test_construct_source_path_empty_directory(mock_iterdir, mock_is_dir, mock_g
 # --- Tests for process_source ---
 
 
-@patch("src.models.ext.yolov11.predict_segment.Path.glob")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.glob")
 def test_process_source_no_sampling(mock_glob):
     """Test processing source without sampling (sample_count=None)."""
     source_dir = Path("/fake/source")
@@ -121,7 +121,7 @@ def test_process_source_no_sampling(mock_glob):
     mock_glob.assert_called_once_with("*")
 
 
-@patch("src.models.ext.yolov11.predict_segment.Path.glob")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.glob")
 def test_process_source_sample_count_zero(mock_glob):
     """Test processing source with sample_count=0 (should process all)."""
     source_dir = Path("/fake/source")
@@ -134,8 +134,8 @@ def test_process_source_sample_count_zero(mock_glob):
     mock_glob.assert_called_once_with("*")
 
 
-@patch("src.models.ext.yolov11.predict_segment.Path.glob")
-@patch("src.models.ext.yolov11.predict_segment.random.sample")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.glob")
+@patch("vibelab.models.ext.yolov11.predict_segment.random.sample")
 def test_process_source_with_sampling(mock_random_sample, mock_glob):
     """Test processing source with random sampling."""
     source_dir = Path("/fake/source")
@@ -161,8 +161,8 @@ def test_process_source_with_sampling(mock_random_sample, mock_glob):
     mock_random_sample.assert_called_once_with(valid_images, sample_count)
 
 
-@patch("src.models.ext.yolov11.predict_segment.Path.glob")
-@patch("src.models.ext.yolov11.predict_segment.random.sample")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.glob")
+@patch("vibelab.models.ext.yolov11.predict_segment.random.sample")
 def test_process_source_sample_more_than_found(mock_random_sample, mock_glob, caplog):
     """Test sampling when sample_count exceeds the number of found images."""
     source_dir = Path("/fake/source")
@@ -187,7 +187,7 @@ def test_process_source_sample_more_than_found(mock_random_sample, mock_glob, ca
     mock_random_sample.assert_called_once_with(valid_images, num_found)
 
 
-@patch("src.models.ext.yolov11.predict_segment.Path.glob")
+@patch("vibelab.models.ext.yolov11.predict_segment.Path.glob")
 def test_process_source_no_images_found(mock_glob, caplog):
     """Test processing source when no image files are found."""
     source_dir = Path("/fake/source")

@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../")))
 
-from src.models.ext.yolov11.predict_detect import (
+from vibelab.models.ext.yolov11.predict_detect import (
     _calculate_and_log_stats,
     _extract_and_average_times,
     process_source,
@@ -131,7 +131,7 @@ def test_calculate_stats_wall_clock(
     """Test wall clock statistics calculation with different configurations."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (
@@ -139,7 +139,7 @@ def test_calculate_stats_wall_clock(
         num_results,
     )
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
     )
 
     # Create mock results
@@ -162,7 +162,7 @@ def test_calculate_stats_successful(monkeypatch):
     """Test normal statistics calculation with successful results."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Setup component time stats
     mock_avg_times = {"preprocess": 15.0, "inference": 55.0, "postprocess": 20.0, "total": 90.0}
@@ -171,7 +171,7 @@ def test_calculate_stats_successful(monkeypatch):
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (mock_avg_times, valid_count)
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
     )
 
     # Create mock results and args
@@ -196,12 +196,12 @@ def test_calculate_stats_no_valid_speed_data(monkeypatch):
     """Test when no valid speed data is available."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (None, 0)
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
     )
 
     # Setup
@@ -223,7 +223,7 @@ def test_calculate_stats_empty_results(monkeypatch):
     """Test with empty results list."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Setup
     mock_results = []
@@ -241,7 +241,7 @@ def test_calculate_stats_none_results(monkeypatch):
     """Test with None results (prediction failed)."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Setup
     mock_results = None
@@ -260,7 +260,7 @@ def test_process_source_empty_directory(monkeypatch):
     """Test when source directory is empty."""
     # Mock logger
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Mock Path
     mock_dir = mock.MagicMock(spec=Path)
@@ -278,7 +278,7 @@ def test_process_source_all_images(monkeypatch):
     """Test processing all images (no sampling)."""
     # Mock logger
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Mock Path with image files
     mock_dir = mock.MagicMock(spec=Path)
@@ -308,7 +308,7 @@ def test_process_source_with_sampling(monkeypatch):
     """Test sampling a subset of images."""
     # Mock logger
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Mock random.sample
     image_files = [
@@ -321,7 +321,9 @@ def test_process_source_with_sampling(monkeypatch):
     selected_images = image_files[:sample_count]
 
     mock_random_sample = mock.MagicMock(return_value=selected_images)
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.random.sample", mock_random_sample)
+    monkeypatch.setattr(
+        "vibelab.models.ext.yolov11.predict_detect.random.sample", mock_random_sample
+    )
 
     # Mock Path
     mock_dir = mock.MagicMock(spec=Path)
@@ -340,7 +342,7 @@ def test_process_source_sample_more_than_available(monkeypatch):
     """Test requesting more samples than available images."""
     # Mock logger
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Mock image files
     image_files = [
@@ -351,7 +353,9 @@ def test_process_source_sample_more_than_available(monkeypatch):
     # Mock random.sample
     sample_count = 5  # More than available
     mock_random_sample = mock.MagicMock(return_value=image_files)
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.random.sample", mock_random_sample)
+    monkeypatch.setattr(
+        "vibelab.models.ext.yolov11.predict_detect.random.sample", mock_random_sample
+    )
 
     # Mock Path
     mock_dir = mock.MagicMock(spec=Path)
@@ -373,7 +377,7 @@ def test_process_source_glob_exception(monkeypatch):
     """Test handling of exceptions when listing files."""
     # Mock logger
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_detect.logger", mock_logger)
 
     # Mock Path with exception
     mock_dir = mock.MagicMock(spec=Path)

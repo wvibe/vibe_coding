@@ -1,9 +1,63 @@
-# YOLOv11 Design Notes
+# YOLOv11 Integration Design
 
-## Core Library
+This document outlines the design choices for integrating YOLOv11 models into the `vibelab` project, focusing on training, prediction, and evaluation workflows.
 
-- This module relies heavily on the `ultralytics` Python package.
-- We will leverage its `YOLO` class for loading models, running inference (`predict`), and training/finetuning (`train`).
+## Core Principles
+
+- **Leverage Ultralytics:** Utilize the `ultralytics` library for core model loading, training (`model.train()`), and prediction (`model.predict()`).
+- **Configuration Driven:** Use YAML files for managing parameters for training, prediction, and evaluation to ensure reproducibility and ease of modification.
+- **Clear Separation:** Maintain separate scripts for distinct tasks (training, prediction, evaluation), although training is now unified.
+- **Standardized Output:** Define consistent output directory structures for runs.
+- **Namespace:** All code resides under the `vibelab.models.ext.yolov11` namespace.
+
+## Key Components
+
+1.  **Unified Training Script (`train_yolo.py`)**
+    -   **Purpose:** Handles both detection and segmentation model training/fine-tuning.
+    -   **Inputs:** `--config` (path to main training YAML), `--name` (base run name), optional `--resume-with` (path to previous run dir), optional `--model` (override model in config).
+    -   **Configuration (`<task>_config.yaml`):** Contains hyperparameters (`epochs`, `batch`, `lr0`, etc.), model path (`model`), data configuration path (`data`), output project directory (`project`).
+    -   **Data Configuration (`<dataset>_<task>.yaml`):** Standard Ultralytics data YAML specifying `path`, `train`, `val`, `test` splits, and `names`.
+    -   **Logic:**
+        -   Parses args and loads main config.
+        -   Validates data config path.
+        -   Determines run parameters (model path, run name, resume status, WandB ID) based on args and potential resume path.
+        -   Sets up WandB environment variables if resuming with a known ID.
+        -   Loads the YOLO model (using `YOLO(model_path)`).
+        -   Prepares keyword arguments for `model.train()` by filtering the main config.
+        -   Calls `model.train(**kwargs)`.
+        -   Logs run information for potential future auto-resuming.
+    -   **Output:** Standard Ultralytics run directory structure under `<config.project>/<run_name>_<timestamp>`.
+
+2.  **Prediction Scripts (`predict_detect.py`, `predict_segment.py`)**
+    -   **Purpose:** Run inference using a trained YOLOv11 model.
+    -   **Inputs:** `--config` (path to prediction YAML), optional `--dataset`, `--tag`, `--sample-count`.
+    -   **Configuration (`predict_<task>.yaml`):** Specifies `model`, `source_type` (file, dir, dataset), `source_path` (if file/dir), `dataset_id` / `tag` (if dataset), `conf_thres`, `iou_thres`, `device`, `save`, `show`, `output_project`, `output_name_prefix`.
+    -   **Logic:**
+        -   Load config and merge CLI overrides (`device`, `save`, `show`).
+        -   Determine source path (from file/dir or by constructing from dataset/tag).
+        -   Prepare output directory (`<output_project>/<prefix>_<timestamp>`).
+        -   Load model (`YOLO(model_path)`).
+        -   Process source (list images, optionally sample).
+        -   Run `model.predict()` with appropriate arguments.
+        -   Calculate and log performance stats (FPS, component times).
+    -   **Output:** Predictions saved (if `save=True`) in the output directory.
+
+3.  **Evaluation Script (`evaluate_detect.py`)**
+    -   **Purpose:** Evaluate a trained detection model against a ground truth dataset.
+    -   **Inputs:** `--config` (path to evaluation YAML).
+    -   **Configuration (`evaluate_detect.yaml`):** Specifies `model`, dataset details (`image_dir`, `label_dir`, `class_names`), evaluation parameters (`conf_thres`, `iou_thres`, `device`), metric parameters (`map_iou_threshold`, `conf_threshold_cm`, etc.), output settings (`project`, `name`).
+    -   **Logic:**
+        -   Load config.
+        -   Setup output directory.
+        -   Load model and count parameters.
+        -   Run inference on the dataset images, measure time/memory.
+        -   Load ground truth labels.
+        -   Calculate detection metrics (mAP, AP per class, confusion matrix) using `vibelab.utils.metrics.detection`.
+        -   Save results (JSON, summary text) and generate plots (PR curves, confusion matrix).
+    -   **Output:** Evaluation results, plots, and summary saved in the output directory.
+
+4.  **Utilities (`predict_utils.py`, `evaluate_utils.py`, `vibelab.utils.metrics.*`)**
+    -   Contain helper functions for common tasks like path construction, config merging, statistics calculation, metric computations, output directory setup, ground truth loading, result saving, etc., promoting DRY principles.
 
 ## Initial Scope: Detection
 

@@ -80,6 +80,7 @@ This section tracks the step-by-step plan for the migration of `src/models/ext/y
 | `utils.metrics`       | ✅     | Migrated, tests/docs updated |
 | `utils.visualization` | ⬜     | |
 | `models.ext`          | ⬜     | |
+| `models.ext.yolov11`  | ✅     | Migrated, train_segment.py and train_detect.py merged into train_yolo.py |
 | `models.py`           | ⬜     | |
 
 ### Remaining Tasks

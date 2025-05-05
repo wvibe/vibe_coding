@@ -1,70 +1,39 @@
-# YOLOv11 Evaluation
+# YOLOv11 Detection Evaluation
 
-This document describes the evaluation functionality for YOLOv11 detection models implemented in `evaluate_detect.py`.
+This document explains how to use the `evaluate_detect.py` script to evaluate the performance of YOLOv11 detection models.
 
 ## Overview
 
-The evaluation script provides a comprehensive framework for assessing YOLOv11 model performance on object detection tasks. It leverages the metric utilities developed in `src/utils/metrics/detection.py` and `src/utils/metrics/compute.py` to calculate standard detection metrics like mAP and provide computational insights.
+The `vibelab.models.ext.yolov11.evaluate_detect` script takes a configuration file specifying a trained model and a dataset, runs inference on the dataset, compares the predictions against ground truth labels, and calculates standard detection metrics (mAP, AP per class, confusion matrix).
 
-## Configuration
+## Usage
 
-The evaluation script is driven by a YAML configuration file with the following structure:
+Execute the script from the project root using `python -m`:
 
-```yaml
-# --- Model ---
-model: "yolo11n.pt" # REQUIRED: Model path or name
-
-# --- Dataset ---
-dataset:
-  image_dir: "/path/to/images"  # REQUIRED: Path to evaluation images
-  label_dir: "/path/to/labels"  # REQUIRED: Path to corresponding YOLO format labels
-  class_names:                  # REQUIRED: Class names list
-    - class1
-    - class2
-    # ...
-
-# --- Evaluation Parameters ---
-evaluation_params:
-  imgsz: 640             # Image size for inference
-  batch_size: 16         # Batch size for model.predict
-  device: 0              # Compute device
-  iou_thres_nms: 0.65    # IoU threshold for NMS
-  conf_thres: 0.001      # Confidence threshold
-  max_det: 300           # Maximum detections per image
-  warmup_iterations: 5   # Warmup iterations before timing
-
-# --- Metrics Configuration ---
-metrics:
-  iou_thresholds: [0.5, 0.55, ..., 0.95]  # IoU thresholds for mAP
-
-  confidence_threshold_cm: 0.3 # Confidence threshold for confusion matrix
-  iou_threshold_cm: 0.5        # IoU threshold for confusion matrix
-  target_classes_cm:           # Classes for confusion matrix
-    - class1
-    - class2
-    # ...
-
-  size_ranges:                 # Area ranges for mAP@Size
-    small: [0, 1024]           # area < 32*32
-    medium: [1024, 9216]       # 32*32 <= area < 96*96
-    large: [9216, null]        # area >= 96*96
-
-# --- Computation Measurement ---
-computation:
-  measure_inference_time: True  # Measure inference time
-  measure_memory: True          # Measure peak GPU memory usage
-
-# --- Output Control ---
-output:
-  project: "runs/evaluate/detect"  # Base directory for output
-  name: null                       # Run name (defaults to model+timestamp)
-  save_results: False              # Save annotated images and YOLO format txt for each image (in `individual_results` subdir)
-  # Ultralytics predict() save flags (NOT directly used by this script's main logic, but may affect internal predict behavior if passed):
-  # save_json: True                  # (UL flag) Save results to JSON - Handled by our script's metrics saving
-  # save_txt: True                   # (UL flag) Save results as text files - Handled by `save_results` if needed
-  # save_conf: True                  # (UL flag) Include confidence in text files - Handled by `save_results` if needed
-  # Metrics/Plot Saving (Controlled by our script):
-  save_metrics_json: True          # Save final computed metrics to metrics.json
-  plot_confusion_matrix: True      # Generate confusion matrix plot
-  plot_precision_recall: True      # Generate P-R curve plots
+```bash
+python -m vibelab.models.ext.yolov11.evaluate_detect --config <path_to_evaluation_config.yaml>
 ```
+
+## Configuration File (`evaluate_detect.yaml`)
+
+A YAML configuration file controls the evaluation process. See `configs/yolov11/evaluate_detect.yaml` for a detailed example.
+
+## Implementation Details
+
+1.  **Setup:** Loads configuration, sets up the output directory using helpers from `evaluate_utils.py`.
+2.  **Model Loading:** Loads the specified YOLO model using `ultralytics.YOLO`.
+3.  **Parameter Counting:** Uses `vibelab.utils.metrics.compute.get_model_params` to count trainable parameters.
+4.  **Inference:** Runs `model.predict()` on all images specified in the dataset configuration. Includes warmup runs. Measures wall time and attempts to get peak GPU memory using `vibelab.utils.metrics.compute.get_peak_gpu_memory_mb`.
+5.  **Ground Truth Loading:** Uses `evaluate_utils.load_ground_truth` to read label files (`.txt` in YOLO format) and convert them to the required format (list of dictionaries with `box` and `class_id`).
+6.  **Metric Calculation:**
+    -   Calls `vibelab.utils.metrics.detection.calculate_all_metrics`, which orchestrates:
+        -   Matching predictions to ground truths for various IoU thresholds (`match_predictions`).
+        -   Calculating precision-recall data (`calculate_pr_data`).
+        -   Calculating Average Precision (AP) per class and mean AP (mAP) at the specified IoU threshold (`calculate_ap`, `calculate_map`).
+        -   Calculating mAP@0.5:0.95 (COCO standard) using `_calculate_map_coco`.
+        -   Generating a confusion matrix (`generate_confusion_matrix`).
+7.  **Result Saving:** Uses `evaluate_utils.save_evaluation_results` to:
+    -   Generate a text summary (`_generate_text_summary`).
+    -   Save computed metrics and configuration to `evaluation_results.json`.
+    -   Save the text summary to `summary.txt`.
+    -   Generate and save plots for PR curves (`_plot_pr_curve`) and the confusion matrix (`_plot_confusion_matrix`) using matplotlib.
