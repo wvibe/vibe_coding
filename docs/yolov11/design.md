@@ -28,17 +28,16 @@ This document outlines the design choices for integrating YOLOv11 models into th
         -   Logs run information for potential future auto-resuming.
     -   **Output:** Standard Ultralytics run directory structure under `<config.project>/<run_name>_<timestamp>`.
 
-2.  **Prediction Scripts (`predict_detect.py`, `predict_segment.py`)**
-    -   **Purpose:** Run inference using a trained YOLOv11 model.
-    -   **Inputs:** `--config` (path to prediction YAML), optional `--dataset`, `--tag`, `--sample-count`.
-    -   **Configuration (`predict_<task>.yaml`):** Specifies `model`, `source_type` (file, dir, dataset), `source_path` (if file/dir), `dataset_id` / `tag` (if dataset), `conf_thres`, `iou_thres`, `device`, `save`, `show`, `output_project`, `output_name_prefix`.
+2.  **Unified Prediction Script (`predict_yolo.py`)**
+    -   **Purpose:** Run inference using a trained YOLOv11 model for detection or segmentation tasks.
+    -   **Inputs:** `--config` (path to prediction YAML), `--dataset` (source path or env var name), `--task` (`detect` or `segment`), `--tag`, `--name`, optional `--device`, `--save`, `--show`, `--sample_count`.
+    -   **Configuration (`predict_<task>.yaml`):** Specifies `model`, `project`, and YOLO prediction parameters (e.g., `conf`, `imgsz`, `save`, `save_txt`).
     -   **Logic:**
         -   Load config and merge CLI overrides (`device`, `save`, `show`).
-        -   Determine source path (from file/dir or by constructing from dataset/tag).
-        -   Prepare output directory (`<output_project>/<prefix>_<timestamp>`).
-        -   Load model (`YOLO(model_path)`).
-        -   Process source (list images, optionally sample).
-        -   Run `model.predict()` with appropriate arguments.
+        -   Resolve the source path (either directly from a provided path or via an environment variable).
+        -   Process source directory (list images, optionally sample).
+        -   Prepare output directory (`<config.project>/<name>_<timestamp>`).
+        -   Call `_run_yolo_prediction` with appropriate parameters, passing the `task_type` from the CLI argument.
         -   Calculate and log performance stats (FPS, component times).
     -   **Output:** Predictions saved (if `save=True`) in the output directory.
 
@@ -64,10 +63,10 @@ This document outlines the design choices for integrating YOLOv11 models into th
 - **Configuration:**
   - Dataset configurations (e.g., `voc_detect.yaml`) follow the Ultralytics format for training/finetuning.
   - Prediction uses separate YAML configs (e.g., `predict_detect.yaml`) specifying model, output project dir, and Ultralytics prediction args (`conf`, `imgsz`, `save_txt`, `save`, etc.).
-- **Prediction Scripts:** The scripts (`predict_detect.py`, `predict_segment.py`) provide a command-line interface to run pre-trained YOLOv11 models.
-  - Takes `--config <yaml_path>`, `--dataset <dataset_id>`, `--tag <split_tag>`, and `--name <run_name>` as input.
+- **Prediction Script:** The unified `predict_yolo.py` script provides a command-line interface to run pre-trained YOLOv11 models for either detection or segmentation tasks.
+  - Takes `--config <yaml_path>`, `--dataset <env_var_or_path>`, `--task <detect|segment>`, `--tag <split_tag>`, and `--name <run_name>` as input.
   - Reads parameters from the specified YAML config.
-  - Constructs the source path from dataset and tag (`${DATASET_BASE_PATH}/images/{tag}`).
+  - Resolves the source path either directly from the provided path or via an environment variable, then appends `/images/{tag}`.
   - Supports random selection of N images if `--sample_count N` is specified.
   - Saves results to `<config.project>/<name>_<timestamp>/`.
   - Calculates and reports prediction time statistics (wall clock time, FPS, component times).
