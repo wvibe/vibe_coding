@@ -12,7 +12,7 @@ from PIL import Image
 from vibelab.dataops.cov_segm.datamodel import ClsSegment, SegmSample
 from vibelab.utils.common.bbox import calculate_iou as calculate_bbox_iou
 from vibelab.utils.common.label_match import match_instances
-from vibelab.utils.common.mask import calculate_mask_iou, polygon_to_mask
+from vibelab.utils.common.mask import calculate_mask_iou, polygons_to_mask
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ def _load_yolo_instances(
             return [], log_msg
 
         # Generate mask from absolute polygon (still needed for IoU calculations)
-        derived_mask = polygon_to_mask(poly_abs, height, width)
+        derived_mask = polygons_to_mask(poly_abs, (height, width), normalized=False)
         derived_bbox = _calculate_bbox_from_mask(derived_mask)
         if derived_mask.sum() == 0 or derived_bbox is None:
             log_msg = (

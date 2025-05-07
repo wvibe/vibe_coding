@@ -1,8 +1,7 @@
 """Geometric utility functions for mask operations."""
 
 import logging
-import warnings
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -12,7 +11,50 @@ logger = logging.getLogger(__name__)
 # Default minimum contour area to consider for polygon conversion
 DEFAULT_MIN_CONTOUR_AREA = 1.0
 # Default tolerance factor for polygon approximation (relative to arc length)
-DEFAULT_POLYGON_APPROX_TOLERANCE = 0.005
+DEFAULT_POLYGON_APPROX_TOLERANCE = 0.01
+
+
+def _preprocess_binary_mask(binary_mask: np.ndarray, img_shape: Tuple[int, int]) -> np.ndarray:
+    """Validate and preprocess binary mask for contour finding.
+
+    Args:
+        binary_mask: Input mask to validate and preprocess
+        img_shape: Target (height, width) for validation
+
+    Returns:
+        Processed mask as uint8 with values 0/255
+
+    Raises:
+        ValueError: For invalid image shape or mask dimensions
+    """
+    # Check image shape validity
+    h, w = img_shape
+    if h <= 0 or w <= 0:
+        raise ValueError(f"Invalid image shape: {img_shape}")
+
+    # Check mask dimensions
+    if binary_mask.ndim != 2:
+        raise ValueError(f"Mask must be 2D, got {binary_mask.ndim}D")
+
+    if binary_mask.size == 0:
+        return np.zeros((h, w), dtype=np.uint8)
+
+    # Normalize to uint8 with values 0/255
+    if binary_mask.dtype != np.uint8:
+        max_val = binary_mask.max()
+        if max_val == 1:
+            mask_uint8 = (binary_mask * 255).astype(np.uint8)
+        elif max_val == 0:  # Empty mask
+            mask_uint8 = binary_mask.astype(np.uint8)
+        elif max_val == 255:
+            mask_uint8 = binary_mask.astype(np.uint8)  # Already uint8 0/255
+        else:
+            # Convert non-zero values to 255
+            mask_uint8 = np.where(binary_mask > 0, 255, 0).astype(np.uint8)
+    else:
+        mask_uint8 = binary_mask
+
+    return mask_uint8
 
 
 def _find_and_simplify_contours(
@@ -20,37 +62,68 @@ def _find_and_simplify_contours(
     min_contour_area: float,
     polygon_approx_tolerance: float,
 ) -> List[np.ndarray]:
-    """Find, filter, and simplify contours from a binary mask."""
+    """Find, filter, and optionally simplify contours from a binary mask.
+
+    Operates on a copy of the input mask to avoid modifying the original.
+    Filtering and simplification are applied conditionally based on parameters.
+
+    Args:
+        binary_mask: A 2D binary image (dtype uint8) where non-zero pixels
+                    represent the object(s) of interest.
+        min_contour_area: Minimum contour area (in pixels) to consider. If <= 0,
+                        no area filtering is applied.
+        polygon_approx_tolerance: Approximation tolerance factor for simplification
+                                (relative to arc length). If <= 0, no
+                                simplification is applied.
+
+    Returns:
+        A list of contours that pass the filtering criteria, where each contour
+        is a numpy array of shape (N, 1, 2) representing the vertices.
+    """
+    # Create a copy to avoid modifying the original mask
+    mask_copy = binary_mask.copy()
+
     # Find contours
-    contours, hierarchy = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_copy, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
         return []
 
-    valid_simplified_contours = []
+    valid_contours = []
     for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < min_contour_area:
-            continue
+        processed_contour = contour  # Start with the original contour
 
-        # Approximate contour
-        epsilon = polygon_approx_tolerance * cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, epsilon, True)
+        # Conditional Area Filtering
+        if min_contour_area > 0:
+            area = cv2.contourArea(processed_contour)
+            if area < min_contour_area:
+                continue
+
+        # Conditional Polygon Approximation (Simplification)
+        if polygon_approx_tolerance > 0:
+            epsilon = polygon_approx_tolerance * cv2.arcLength(processed_contour, True)
+            processed_contour = cv2.approxPolyDP(processed_contour, epsilon, True)
 
         # Need at least 3 points for a valid polygon
-        if len(approx) >= 3:
-            valid_simplified_contours.append(approx)
+        if len(processed_contour) >= 3:
+            valid_contours.append(processed_contour)
 
-    return valid_simplified_contours
+    return valid_contours
 
 
-def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optional[np.ndarray]:
-    """Connect multiple contours using Gemini's stitching logic.
+def _connect_contours_stitched(
+    simplified_contours: List[np.ndarray],
+) -> Tuple[Optional[np.ndarray], Optional[str]]:
+    """Connect multiple contours using stitching logic.
 
-    Returns single (M, 2) polygon array (pixel coords) or None if connection fails.
+    Args:
+        simplified_contours: List of simplified contours to connect
+
+    Returns:
+        Tuple of (result, error) where:
+        - result: Single (M, 2) polygon array (pixel coords) or None if connection fails
+        - error: None on success, or error message explaining why connection failed
     """
-    logger.debug(f"Attempting to connect {len(simplified_contours)} contours.")
-
     # Calculate centroids and sort (Y then X)
     centroids = []
     for contour in simplified_contours:
@@ -88,8 +161,7 @@ def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optiona
         if best_pair[0] is not None:
             connection_pairs.append(best_pair)
         else:
-            logger.error("Could not find connection points between polygons. Cannot connect parts.")
-            return None  # Indicate connection failure
+            return None, "no_connection_points"
 
     # Stitch Vertices
     stitched_vertices_list = []
@@ -111,18 +183,12 @@ def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optiona
             entry_idx = entry_idx_arr[0]
             exit_idx = exit_idx_arr[0]
         except IndexError:
-            logger.warning(
-                f"Connection points ({entry_point_on_current.tolist()}, "
-                f"{exit_point_on_current.tolist()}) not found exactly in "
-                f"polygon vertices after approximation. Using fallback."
-            )
             dist_entry = np.sum((current_poly - entry_point_on_current) ** 2, axis=1)
             dist_exit = np.sum((current_poly - exit_point_on_current) ** 2, axis=1)
             entry_idx = np.argmin(dist_entry)
             exit_idx = np.argmin(dist_exit)
             if entry_idx == exit_idx:
-                logger.error("Fallback failed: Entry/Exit indices same. Cannot connect.")
-                return None  # Indicate connection failure
+                return None, "entry_exit_same_point"
 
         # Traverse vertices from entry_idx to exit_idx
         current_v_idx = entry_idx
@@ -134,8 +200,7 @@ def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optiona
             current_v_idx = (current_v_idx + 1) % num_vertices_current
             traversed_indices += 1
         else:
-            logger.error("Stitching traversal failed (infinite loop?). Cannot connect.")
-            return None  # Indicate connection failure
+            return None, "traversal_failed"
 
         # Add the bridge point (entry point of the *next* polygon)
         next_entry_point = connection_pairs[i][1]
@@ -143,7 +208,7 @@ def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optiona
 
     # Final processing of stitched vertices
     if not stitched_vertices_list:
-        return None  # Should not happen if loops completed
+        return None, "empty_stitching_result"
 
     # Remove potential duplicate point at the very end
     if len(stitched_vertices_list) > 1 and np.allclose(
@@ -155,37 +220,45 @@ def _connect_contours_stitched(simplified_contours: List[np.ndarray]) -> Optiona
 
     # Return the single combined polygon if it's valid
     if len(final_vertices) >= 3:
-        return final_vertices
+        return final_vertices, None
     else:
-        logger.warning("Combined polygon is degenerate (< 3 points). Connection failed.")
-        return None
+        return None, "degenerate_polygon"
 
 
 def _normalize_and_flatten_polygons(
     polygons_pixels: List[np.ndarray], img_shape: Tuple[int, int]
 ) -> List[List[float]]:
-    """Normalize, clamp, clip, and flatten polygon coordinates."""
+    """Normalize, clamp, clip, and flatten multiple polygon coordinates.
+
+    Args:
+        polygons_pixels: A list of numpy arrays, where each array represents a
+                         polygon in pixel coordinates (shape (N, 1, 2) or (N, 2)).
+        img_shape: The original image shape (height, width).
+
+    Returns:
+        A list where each sublist contains the flattened, normalized coordinates
+        [x1, y1, x2, y2, ...] for a polygon.
+
+    Raises:
+        ValueError: For invalid image shape
+    """
     h, w = img_shape
     if h <= 0 or w <= 0:
-        return []  # Should be checked earlier, but safeguard
+        raise ValueError(f"Invalid image shape: {img_shape}")
 
-    normalized_polygons = []
+    normalized_polygons_flat_list = []
     for polygon_pixels in polygons_pixels:
-        if len(polygon_pixels) < 3:
-            continue
+        if polygon_pixels is None or len(polygon_pixels) < 3:
+            continue  # Skip invalid polygons silently, they can be filtered by the caller
 
-        # Ensure numpy array for operations
-        poly = np.array(polygon_pixels).astype(np.float32)
-
-        # Clamp pixel coordinates to image bounds before normalization
-        poly[:, 0] = np.clip(poly[:, 0], 0, w - 1)  # x-coordinates
-        poly[:, 1] = np.clip(poly[:, 1], 0, h - 1)  # y-coordinates
+        # Reshape to (N, 2) if needed and ensure float32
+        poly = np.array(polygon_pixels).reshape(-1, 2).astype(np.float32)
 
         # Normalize coordinates
         poly[:, 0] /= w  # Normalize x
         poly[:, 1] /= h  # Normalize y
 
-        # Clip normalized coordinates strictly to [0.0, 1.0] as final safeguard
+        # Clip normalized coordinates to [0.0, 1.0] to handle any out-of-bounds points
         poly = np.clip(poly, 0.0, 1.0)
 
         # Flatten to [x1, y1, x2, y2, ...]
@@ -193,11 +266,101 @@ def _normalize_and_flatten_polygons(
 
         # Final check: Ensure at least 3 points (6 coordinates) after normalization
         if len(normalized_flat) >= 6:
-            normalized_polygons.append(normalized_flat)
-        else:
-            logger.debug("Polygon degenerate after normalization/clipping, skipping.")
+            normalized_polygons_flat_list.append(normalized_flat)
 
-    return normalized_polygons
+    return normalized_polygons_flat_list
+
+
+def polygons_to_mask(
+    polygons: Union[List[List[float]], List[np.ndarray], List[Tuple[int, int]]],
+    img_shape: Tuple[int, int],
+    normalized: bool = False,
+) -> np.ndarray:
+    """Convert polygons to a binary mask.
+
+    Supports multiple input formats: YOLO normalized coordinates, pixel coordinates
+    as arrays, or simple list of (x,y) tuples.
+
+    Args:
+        polygons: Polygon coordinates in one of three formats:
+                 1. List of normalized YOLO coordinates [x1,y1,x2,y2,...] (if normalized=True)
+                 2. List of numpy arrays with pixel coordinates (shape (N,1,2) or (N,2))
+                 3. Single polygon as List of (x,y) pixel coordinate tuples
+        img_shape: The target mask shape (height, width)
+        normalized: Whether the coordinates are normalized [0.0-1.0] (YOLO format)
+                    or already in pixel coordinates
+
+    Returns:
+        A binary mask as numpy array (dtype=bool)
+
+    Raises:
+        ValueError: For invalid image shape
+    """
+    h, w = img_shape
+    if h <= 0 or w <= 0:
+        raise ValueError(f"Invalid image shape: {img_shape}")
+
+    mask = np.zeros(img_shape, dtype=np.uint8)
+
+    if not polygons:
+        return mask.astype(bool)
+
+    # Handle input format variations
+    if normalized:
+        # Assume we have normalized YOLO format [x1,y1,x2,y2,...]
+        for poly in polygons:  # type: ignore
+            # Reshape from flat list to array of points
+            try:
+                points = np.array(poly).reshape(-1, 2)
+
+                # Denormalize by multiplying by image dimensions
+                points_pixels = (points * np.array([w, h])).astype(np.int32)
+
+                # Reshape for fillPoly: (N, 1, 2)
+                points_pixels = points_pixels.reshape((-1, 1, 2))
+
+                # Skip invalid polygons (less than 3 points)
+                if len(points_pixels) < 3:
+                    continue
+
+                # Draw the polygon on the mask
+                cv2.fillPoly(mask, [points_pixels], 1)
+            except (ValueError, TypeError):
+                # Skip malformed polygons
+                continue
+    else:
+        # Handle non-normalized polygons (already in pixel coordinates)
+        pts_list = []
+
+        # Check if we have a single polygon given as list of tuples
+        if isinstance(polygons[0], tuple) and len(polygons[0]) == 2:
+            # Single polygon as list of coordinate tuples [(x1,y1), (x2,y2), ...]
+            if len(polygons) < 3:  # type: ignore
+                return mask.astype(bool)
+
+            pts_np = np.array(polygons, dtype=np.int32).reshape((-1, 1, 2))  # type: ignore
+            pts_list = [pts_np]
+        else:
+            # Multiple polygons, each as numpy array
+            for poly in polygons:
+                if poly is None or len(poly) < 3:
+                    continue
+
+                # Reshape if necessary and ensure int32
+                try:
+                    pts_np = np.array(poly).reshape((-1, 1, 2)).astype(np.int32)
+                    pts_list.append(pts_np)
+                except (ValueError, TypeError):
+                    continue
+
+        if pts_list:
+            try:
+                cv2.fillPoly(mask, pts_list, 1)
+            except Exception:
+                # Return empty mask on error
+                return np.zeros(img_shape, dtype=bool)
+
+    return mask.astype(bool)
 
 
 def mask_to_yolo_polygons(
@@ -206,7 +369,7 @@ def mask_to_yolo_polygons(
     connect_parts: bool = False,
     min_contour_area: float = DEFAULT_MIN_CONTOUR_AREA,
     polygon_approx_tolerance: float = DEFAULT_POLYGON_APPROX_TOLERANCE,
-) -> List[List[float]]:
+) -> Tuple[List[List[float]], Optional[str]]:
     """
     Convert a binary instance mask to normalized YOLO polygon coordinates.
 
@@ -222,50 +385,39 @@ def mask_to_yolo_polygons(
                                  (relative to arc length).
 
     Returns:
-        List of polygons. If connect_parts is False, each sublist is a separate
-        polygon [x1, y1, x2, y2, ...]. If connect_parts is True and successful,
-        returns a list containing a single sublist for the combined polygon.
-        Returns an empty list if no valid contours/polygons are found.
+        Tuple containing:
+        - List of polygons, where each sublist is a separate polygon [x1, y1, x2, y2, ...].
+          If connect_parts is True and successful, returns a list containing a single
+          sublist for the combined polygon. Empty list if no valid polygons found.
+        - Error code (string) or None if successful.
+
         Coordinates are normalized to [0.0, 1.0].
     """
-    h, w = img_shape
-    if h <= 0 or w <= 0:
-        logger.warning("Invalid image shape provided (height or width is zero).")
-        return []
+    try:
+        # Preprocess and validate the mask
+        mask_uint8 = _preprocess_binary_mask(binary_mask, img_shape)
+    except ValueError as e:
+        return [], str(e)
 
-    if binary_mask.ndim != 2:
-        logger.error(f"Input mask must be 2D, but got shape {binary_mask.shape}")
-        return []
-
-    # Ensure mask is uint8 for findContours
-    if binary_mask.dtype != np.uint8:
-        mask_uint8 = binary_mask.astype(np.uint8)
-        if mask_uint8.max() == 1:
-            mask_uint8 *= 255
-    else:
-        mask_uint8 = binary_mask
-
-    # 1. Find and simplify contours
+    # Find and simplify contours
     simplified_contours = _find_and_simplify_contours(
         mask_uint8, min_contour_area, polygon_approx_tolerance
     )
 
     if not simplified_contours:
-        logger.warning("No valid contours found in mask.")
-        return []
+        return [], "no_contours"
 
     # --- Polygon Generation ---
     final_polygons_pixels = []  # List to store polygons in pixel coordinates (N, 2)
 
-    # 2. Handle connection or separate processing
+    # Handle connection or separate processing
     if connect_parts and len(simplified_contours) > 1:
-        connected_polygon = _connect_contours_stitched(simplified_contours)
+        connected_polygon, error = _connect_contours_stitched(simplified_contours)
         if connected_polygon is not None:
             # Store the single connected polygon
             final_polygons_pixels.append(connected_polygon)
         else:
             # Fallback: connection failed, process separately
-            logger.warning("Contour connection failed, processing contours separately.")
             for contour in simplified_contours:
                 final_polygons_pixels.append(contour.reshape(-1, 2))
     else:
@@ -273,38 +425,92 @@ def mask_to_yolo_polygons(
         for contour in simplified_contours:
             final_polygons_pixels.append(contour.reshape(-1, 2))
 
-    # 3. Normalize and flatten results
-    return _normalize_and_flatten_polygons(final_polygons_pixels, img_shape)
+    # Normalize and flatten results
+    try:
+        normalized_polygons = _normalize_and_flatten_polygons(final_polygons_pixels, img_shape)
+        if not normalized_polygons:
+            return [], "normalization_produced_empty_result"
+        return normalized_polygons, None
+    except ValueError as e:
+        return [], str(e)
 
 
-def polygon_to_mask(polygon_coords: List[Tuple[int, int]], height: int, width: int) -> np.ndarray:
-    """Convert a polygon (list of pixel coordinates) to a binary mask.
+def mask_to_yolo_polygons_verified(
+    binary_mask: np.ndarray,
+    img_shape: Tuple[int, int],
+    iou_threshold: float = 0.95,
+    min_contour_area: float = 0.0,  # Default: no area filtering
+    polygon_approx_tolerance: float = 0.0,  # Default: no simplification
+) -> Tuple[List[List[float]], Optional[str]]:
+    """
+    Convert a binary instance mask to normalized YOLO polygon coordinates,
+    verifying the conversion accuracy via IoU.
+
+    Finds contours, optionally filters by area and simplifies, normalizes them,
+    then reconstructs a mask from the normalized polygons and compares its IoU
+    with the original mask. Returns the normalized polygons only if the IoU
+    meets the threshold.
 
     Args:
-        polygon_coords: List of (x, y) pixel coordinates for the polygon vertices.
-        height: Height of the target mask.
-        width: Width of the target mask.
+        binary_mask: A 2D numpy array representing the binary mask (0/1 or 0/255).
+        img_shape: The original image shape (height, width).
+        iou_threshold: Minimum IoU between original and reconstructed mask to
+                       consider the conversion valid (default: 0.95).
+        min_contour_area: Minimum contour area (pixels) to keep. If <= 0, no
+                          area filtering is applied.
+        polygon_approx_tolerance: Approximation tolerance factor for simplification
+                                  (relative to arc length). If <= 0, no
+                                  simplification is applied.
 
     Returns:
-        A boolean numpy array of shape (height, width) where True indicates
-        pixels inside the polygon.
-    """
-    if not polygon_coords or len(polygon_coords) < 3:
-        logger.warning("Cannot create mask from empty or degenerate polygon.")
-        return np.zeros((height, width), dtype=bool)
+        Tuple containing:
+        - List of polygons, where each sublist is a separate normalized polygon
+          [x1, y1, x2, y2, ...]. Empty list if no valid contours or IoU check fails.
+        - Error code (string) or None if successful.
 
-    mask = np.zeros((height, width), dtype=np.uint8)  # Start with uint8 for fillPoly
-    # Reshape points for cv2.fillPoly: needs array of shape (N, 1, 2)
-    pts_np = np.array(polygon_coords, dtype=np.int32).reshape((-1, 1, 2))
+        Coordinates are normalized to [0.0, 1.0].
+    """
+    try:
+        # 1. Preprocess and validate the mask
+        mask_uint8 = _preprocess_binary_mask(binary_mask, img_shape)
+    except ValueError as e:
+        return [], str(e)
+
+    # 2. Find, filter, and simplify contours (conditionally)
+    valid_contours = _find_and_simplify_contours(
+        mask_uint8, min_contour_area, polygon_approx_tolerance
+    )
+
+    if not valid_contours:
+        # Return early if no contours found (only report if mask wasn't empty)
+        return [], "no_contours" if mask_uint8.any() else None
+
+    # 3. Normalize and flatten polygons
+    try:
+        normalized_polygons = _normalize_and_flatten_polygons(valid_contours, img_shape)
+    except ValueError as e:
+        return [], str(e)
+
+    if not normalized_polygons:
+        return [], "normalization_failed"
+
+    # 4. Verification Step: Reconstruct mask and check IoU
+    reconstructed_mask = polygons_to_mask(normalized_polygons, img_shape, normalized=True)
+
+    # 5. Calculate IoU between original and reconstructed mask
+    input_mask_bool = mask_uint8.astype(bool)
+    reconstructed_mask_bool = reconstructed_mask.astype(bool)
 
     try:
-        cv2.fillPoly(mask, [pts_np], color=1)  # Fill with 1
-    except Exception as e:
-        logger.error(f"Error during cv2.fillPoly: {e}", exc_info=True)
-        # Return empty mask on error
-        return np.zeros((height, width), dtype=bool)
+        iou = calculate_mask_iou(input_mask_bool, reconstructed_mask_bool)
+    except ValueError as e:
+        return [], f"iou_calculation_error:{str(e)}"
 
-    return mask.astype(bool)  # Convert to boolean
+    # 6. Final Return based on IoU
+    if iou >= iou_threshold:
+        return normalized_polygons, None
+    else:
+        return [], f"low_iou:{iou:.4f}<{iou_threshold:.4f}"
 
 
 def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
@@ -316,6 +522,9 @@ def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
 
     Returns:
         The IoU value (float) between 0.0 and 1.0.
+
+    Raises:
+        ValueError: If masks have different shapes or are not boolean.
     """
     if mask1.shape != mask2.shape:
         raise ValueError(f"Mask shapes must match. Got {mask1.shape} and {mask2.shape}")
@@ -332,16 +541,3 @@ def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
 
     iou = intersection / union
     return float(np.clip(iou, 0.0, 1.0))
-
-
-def compute_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
-    """DEPRECATED: Use calculate_mask_iou instead.
-
-    This function is kept for backward compatibility and will be removed in a future version.
-    """
-    warnings.warn(
-        "compute_mask_iou is deprecated; use calculate_mask_iou instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return calculate_mask_iou(mask1, mask2)

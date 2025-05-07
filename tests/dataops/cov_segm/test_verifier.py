@@ -14,7 +14,7 @@ from vibelab.dataops.cov_segm.convert_verifier import (
     verify_sample_conversion,
 )
 from vibelab.utils.common.label_match import match_instances
-from vibelab.utils.common.mask import calculate_mask_iou, polygon_to_mask
+from vibelab.utils.common.mask import calculate_mask_iou, polygons_to_mask
 
 
 def test_calculate_bbox_from_mask():
@@ -306,7 +306,7 @@ def test_bbox_calculation_methods():
     direct_bbox = (x_min, y_min, x_max, y_max)  # Should be (25, 25, 75, 75)
 
     # Mask-based calculation
-    mask = polygon_to_mask(poly_abs, height, width)
+    mask = polygons_to_mask(poly_abs, (height, width), normalized=False)
     mask_bbox = _calculate_bbox_from_mask(mask)
 
     # Compare results for simple polygon
@@ -323,7 +323,7 @@ def test_bbox_calculation_methods():
     complex_direct_bbox = (complex_x_min, complex_y_min, complex_x_max, complex_y_max)
 
     # Mask-based calculation
-    complex_mask = polygon_to_mask(complex_poly, height, width)
+    complex_mask = polygons_to_mask(complex_poly, (height, width), normalized=False)
     complex_mask_bbox = _calculate_bbox_from_mask(complex_mask)
 
     # Compare results for complex polygon with allowed margin

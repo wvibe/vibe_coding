@@ -110,7 +110,7 @@ This module provides utility functions for mask operations, especially for worki
 ### Key Constants
 
 - `DEFAULT_MIN_CONTOUR_AREA`: Minimum area (in pixels) for a contour to be considered valid (default: 1.0).
-- `DEFAULT_POLYGON_APPROX_TOLERANCE`: Default epsilon value for polygon approximation relative to arc length (default: 0.005).
+- `DEFAULT_POLYGON_APPROX_TOLERANCE`: Default epsilon value for polygon approximation relative to arc length (default: 0.01).
 
 ### Main Public Functions
 
@@ -127,16 +127,40 @@ This module provides utility functions for mask operations, especially for worki
   1. Finds and simplifies contours in the binary mask using OpenCV
   2. If `connect_parts` is True, attempts to stitch multiple contours into a single polygon
   3. Normalizes pixel coordinates to [0,1] range and flattens to YOLO format
-- **Output:** List of polygons in YOLO format (`[x1, y1, x2, y2, ...]`), each polygon normalized to [0,1] range.
+- **Output:** Tuple containing:
+  - List of polygons in YOLO format (`[x1, y1, x2, y2, ...]`), each polygon normalized to [0,1] range
+  - Error string or None if successful
 
-#### `polygon_to_mask(polygon_coords, height, width)`
+#### `mask_to_yolo_polygons_verified(binary_mask, img_shape, iou_threshold=0.95, min_contour_area=0.0, polygon_approx_tolerance=0.0)`
 
-- **Purpose:** Convert a polygon (list of pixel coordinates) to a binary mask.
+- **Purpose:** Converts a binary mask to YOLO polygons and verifies the accuracy through IoU checking.
 - **Input:**
-  - `polygon_coords`: List of (x, y) pixel coordinates for polygon vertices
-  - `height`, `width`: Dimensions of the target mask
-- **Logic:** Uses OpenCV's `fillPoly` to create a binary mask from the polygon points
-- **Output:** Boolean numpy array where True indicates pixels inside the polygon
+  - `binary_mask`: Binary mask array (0/1 or 0/255 values)
+  - `img_shape`: Image dimensions (height, width)
+  - `iou_threshold`: Minimum IoU required between original and reconstructed mask (default: 0.95)
+  - `min_contour_area`: Minimum contour area to keep (default: 0.0, no filtering)
+  - `polygon_approx_tolerance`: Controls simplification (default: 0.0, no simplification)
+- **Logic:**
+  1. Performs the conversion to YOLO polygons
+  2. Reconstructs a mask from the polygons
+  3. Calculates IoU between original and reconstructed mask
+  4. Only returns the polygons if IoU meets the threshold
+- **Output:** Tuple containing:
+  - List of polygons in YOLO format if IoU threshold is met, otherwise empty list
+  - Error string or None if successful
+
+#### `polygons_to_mask(polygons, img_shape, normalized=False)`
+
+- **Purpose:** Convert polygons to a binary mask. Unified function that handles different polygon formats.
+- **Input:**
+  - `polygons`: List of polygons in one of three formats:
+    1. List of normalized YOLO coordinates [x1,y1,x2,y2,...] (if normalized=True)
+    2. List of numpy arrays with pixel coordinates (shape (N,1,2) or (N,2))
+    3. Single polygon as List of (x,y) pixel coordinate tuples
+  - `img_shape`: Dimensions of the target mask (height, width)
+  - `normalized`: Whether the coordinates are normalized [0.0-1.0] (YOLO format) or already in pixel coordinates
+- **Logic:** Uses OpenCV's `fillPoly` to create a binary mask from the polygon points, handling different input formats
+- **Output:** Boolean numpy array where True indicates pixels inside the polygon(s)
 
 #### `calculate_mask_iou(mask1, mask2)`
 
@@ -146,6 +170,13 @@ This module provides utility functions for mask operations, especially for worki
 - **Output:** IoU value between 0.0 and 1.0
 
 ### Helper Functions
+
+#### `_preprocess_binary_mask(binary_mask, img_shape)`
+
+- **Purpose:** Validate and preprocess a binary mask for contour finding.
+- **Logic:** Checks for valid dimensions, handles different data types, and normalizes to uint8 with values 0/255.
+- **Error Handling:** Raises ValueError for invalid image shape or mask dimensions
+- **Output:** Preprocessed uint8 mask with values 0/255
 
 #### `_find_and_simplify_contours(binary_mask, min_contour_area, polygon_approx_tolerance)`
 
@@ -161,7 +192,9 @@ This module provides utility functions for mask operations, especially for worki
   2. Identifies closest connection points between consecutive contours
   3. Traverses each contour from entry to exit point, building a connected path
   4. Creates bridge points to connect contours
-- **Output:** A single numpy array containing the vertices of the stitched polygon, or None if stitching fails.
+- **Output:** Tuple containing:
+  - A single numpy array containing the vertices of the stitched polygon, or None if stitching fails
+  - Error string explaining failure reason, or None if successful
 
 #### `_normalize_and_flatten_polygons(polygons_pixels, img_shape)`
 
@@ -171,7 +204,8 @@ This module provides utility functions for mask operations, especially for worki
   2. Normalizes coordinates to [0,1] range based on image dimensions
   3. Flattens coordinates to YOLO format `[x1, y1, x2, y2, ...]`
   4. Performs validity checks (at least 3 points after processing)
-- **Output:** List of polygon coordinates in flattened YOLO format, normalized to [0,1] range.
+- **Error Handling:** Raises ValueError for invalid image shape
+- **Output:** List of polygon coordinates in flattened YOLO format, normalized to [0,1] range
 
 ---
 

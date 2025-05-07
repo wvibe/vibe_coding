@@ -26,10 +26,11 @@ stats_counters: Dict[str, Any] = {
     "total_samples": 0,
     "processed_samples": 0,  # Samples successfully loaded by load_sample
     "segments_loaded": 0,
-    "skipped_samples_load_error": 0,
-    "skipped_segments_no_mapping": 0,  # Segments skipped
-    "skipped_segments_sampling": 0,  # Segments skipped
-    "skipped_segments_zero_masks": 0,  # Segments skipped
+    "skipped_sample_load_error": 0,
+    "skipped_sample_no_mapping": 0,  # Segments skipped
+    "skipped_sample_sampling": 0,  # Segments skipped
+    "skipped_segment_no_mapping": 0,  # Segments skipped
+    "skipped_segment_zero_masks": 0,  # Segments skipped
     "segments_processed": 0,  # Segments processed
     "masks_skipped_invalid": 0,
     "masks_for_annotation": 0,
@@ -242,56 +243,61 @@ def _load_data(
     return dataset, phrase_map, class_names
 
 
-def _get_sampled_mapping_info(
+def _get_phrase_mapping_info(
     segment: ClsSegment,
     phrase_map: Dict[str, Dict[str, Any]],
-    global_sample_ratio: float = 1.0,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
-    """Checks segment phrases against the map and applies sampling.
-
-    Args:
-        segment: The segment containing phrases to check against the mapping.
-        phrase_map: Mapping of phrases to class information.
-        global_sample_ratio: Global sampling ratio (0.0-1.0) to apply to all classes.
-                             Note: ratio 0 means no sampling.
-
-    Returns:
-        Tuple[Dict, str] (mapping_info, matched_phrase) if a sampled match is found,
-        otherwise None.
-    """
-    global stats_counters
-    matched_phrase = None
-    mapping_info = None
-
+    """Gets the mapping information for a phrase."""
     # Iterate through phrases in the segment
     for phrase in segment.phrases:
         phrase_text = phrase.text.strip()
         if not phrase_text:  # Skip empty phrases
-            logging.warning("Empty phrase in segment")
             continue
 
         current_mapping = phrase_map.get(phrase_text)
         if current_mapping:  # Found a mapping
-            mapping_info = current_mapping
-            matched_phrase = phrase_text
-            break  # Stop at the first match
+            return current_mapping, phrase_text
+    return None, None
 
-    # Check if a mapping was found
-    if mapping_info is None or matched_phrase is None:
-        stats_counters["skipped_segments_no_mapping"] += 1
-        return None
+
+def _skip_sample_by_mapping_and_sampling(
+    sample: SegmSample,
+    phrase_map: Dict[str, Dict[str, Any]],
+    global_sample_ratio: float = 1.0,
+) -> bool:
+    """Checks if a sample should be skipped based on the mapping and sampling config.
+
+    A sample should be skipped if:
+    1. it has no segment belonging to any class in the phrase mapping, or
+    2. it fall below the effective samlpe ratio, which is the product of,
+        A. the max sampling ratio of its segments
+        B. the global sample ratio.
+
+    Args:
+        sample: The sample to check.
+        phrase_map: The phrase mapping.
+        global_sample_ratio: The global sample ratio.
+
+    Returns:
+        True if the sample should be skipped, False otherwise.
+    """
+    max_segment_sampling_ratio = 0.0
+    for segment in sample.segments:
+        mapping_info, _ = _get_phrase_mapping_info(segment, phrase_map)
+        if mapping_info["sampling_ratio"] > max_segment_sampling_ratio:
+            max_segment_sampling_ratio = mapping_info["sampling_ratio"]
+
+    if max_segment_sampling_ratio == 0.0:
+        stats_counters["skipped_sample_no_mapping"] += 1
+        return True
 
     if global_sample_ratio > 0.0:
-        # Apply sampling based on the found mapping and global ratio
-        local_sampling_ratio = mapping_info.get("sampling_ratio", 1.0)
-        # Combine global and local ratios (both are 0.0-1.0, so multiply)
-        effective_ratio = global_sample_ratio * local_sampling_ratio
+        effective_ratio = global_sample_ratio * max_segment_sampling_ratio
+        if random.random() > effective_ratio:
+            stats_counters["skipped_sample_sampling"] += 1
+        return True
 
-        if random.random() > effective_ratio:  # Note: This has > not < as per original code
-            stats_counters["skipped_segments_sampling"] += 1
-            return None
-
-    return mapping_info, matched_phrase
+    return False
 
 
 def load_mapping_config(
@@ -452,7 +458,7 @@ def _process_samples(
     for i, sample_dict in processed_iterator:
         # Check for loading errors
         if sample_dict.get("error", False):
-            stats_counters["skipped_samples_load_error"] += 1
+            stats_counters["skipped_sample_load_error"] += 1
             continue
 
         try:
@@ -461,7 +467,7 @@ def _process_samples(
             stats_counters["processed_samples"] += 1
         except Exception as e:
             logging.error(f"Error deserializing sample at index {i}: {e}")
-            stats_counters["skipped_samples_load_error"] += 1
+            stats_counters["skipped_sample_load_error"] += 1
             continue
 
         # Get sample properties
@@ -471,18 +477,21 @@ def _process_samples(
         # Initialize tracking for annotation writing
         annotations_for_image = []
 
+        if _skip_sample_by_mapping_and_sampling(sample, phrase_map, args.sample_ratio):
+            # no logging here, as it's already logged in _skip_sample_by_mapping_and_sampling
+            continue
+
         # Process each segment
         for segment in sample.segments:
             stats_counters["segments_loaded"] += 1
 
             # Apply mapping and sampling
-            mapping_result = _get_sampled_mapping_info(segment, phrase_map, args.sample_ratio)
+            mapping_info, matched_phrase = _get_phrase_mapping_info(segment, phrase_map)
 
-            if mapping_result is None:
-                # Mapping or sampling failed
+            if mapping_info is None:
+                stats_counters["skipped_segment_no_mapping"] += 1
                 continue
 
-            mapping_info, matched_phrase = mapping_result
             class_id = mapping_info["class_id"]
 
             # Get the appropriate masks to process based on mask_tag
@@ -498,7 +507,7 @@ def _process_samples(
                 stats_counters["masks_skipped_invalid"] += len(masks_to_process) - len(valid_masks)
 
             if args.skip_zero and len(valid_masks) == 0:
-                stats_counters["skipped_segments_zero_masks"] += 1
+                stats_counters["skipped_segment_zero_masks"] += 1
                 continue
 
             masks_processed = 0
@@ -590,11 +599,12 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
     logging.info("Conversion finished.")
     logging.info(f"Total samples in dataset split: {counters['total_samples']}")
     logging.info(f"Successfully loaded samples: {counters['processed_samples']}")
-    logging.info(f"Samples skipped (load error): {counters['skipped_samples_load_error']}")
+    logging.info(f"Samples skipped (load error): {counters['skipped_sample_load_error']}")
+    logging.info(f"Samples skipped (no mapping): {counters['skipped_sample_no_mapping']}")
+    logging.info(f"Samples skipped (sampling): {counters['skipped_sample_sampling']}")
     logging.info(f"Segments loaded: {counters['segments_loaded']}")
-    logging.info(f"Segments skipped (no mapping): {counters['skipped_segments_no_mapping']}")
-    logging.info(f"Segments skipped (sampling): {counters['skipped_segments_sampling']}")
-    logging.info(f"Segments skipped (zero masks): {counters['skipped_segments_zero_masks']}")
+    logging.info(f"Segments skipped (no mapping): {counters['skipped_segment_no_mapping']}")
+    logging.info(f"Segments skipped (zero masks): {counters['skipped_segment_zero_masks']}")
     logging.info(f"Segments processed: {counters['segments_processed']}")
     logging.info(f"Masks skipped (invalid): {counters['masks_skipped_invalid']}")
     logging.info(f"Masks for annotation: {counters['masks_for_annotation']}")
