@@ -1,6 +1,7 @@
 """Geometric utility functions for mask operations."""
 
 import logging
+import os
 from typing import List, Optional, Tuple, Union
 
 import cv2
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_MIN_CONTOUR_AREA = 1.0
 # Default tolerance factor for polygon approximation (relative to arc length)
 DEFAULT_POLYGON_APPROX_TOLERANCE = 0.01
+
+_debug_save_counter = 0
+DEBUG_MASK_DIR = "tmp/mask_debug"
 
 
 def _preprocess_binary_mask(binary_mask: np.ndarray, img_shape: Tuple[int, int]) -> np.ndarray:
@@ -435,82 +439,103 @@ def mask_to_yolo_polygons(
         return [], str(e)
 
 
+def save_mask_and_polygon_debug_images(
+    original_binary_mask: np.ndarray,
+    yolo_polygon_normalized: List[float],  # Expecting a single polygon's flat coordinate list
+    img_shape: Tuple[int, int],
+) -> None:
+    """Saves the original binary mask and a mask reconstructed from a YOLO polygon for debugging."""
+    global _debug_save_counter
+    _debug_save_counter += 1
+
+    try:
+        if not os.path.exists(DEBUG_MASK_DIR):
+            os.makedirs(DEBUG_MASK_DIR)
+
+        # Save original mask
+        original_mask_to_save = (original_binary_mask.astype(np.uint8)) * 255
+        original_file_path = os.path.join(
+            DEBUG_MASK_DIR, f"{_debug_save_counter}_original_mask.png"
+        )
+        cv2.imwrite(original_file_path, original_mask_to_save)
+        logger.info(f"Saved debug original mask to: {original_file_path}")
+
+        # Reconstruct and save polygon mask
+        if yolo_polygon_normalized and len(yolo_polygon_normalized) >= 6:
+            # polygons_to_mask expects a list of polygons
+            reconstructed_mask = polygons_to_mask(
+                [yolo_polygon_normalized], img_shape, normalized=True
+            )
+            reconstructed_mask_to_save = (reconstructed_mask.astype(np.uint8)) * 255
+            polygon_file_path = os.path.join(
+                DEBUG_MASK_DIR, f"{_debug_save_counter}_polygon_mask.png"
+            )
+            cv2.imwrite(polygon_file_path, reconstructed_mask_to_save)
+            logger.info(f"Saved debug polygon mask to: {polygon_file_path}")
+        else:
+            logger.warning(
+                f"Debug save: Invalid or empty polygon for counter {_debug_save_counter}, not saving polygon mask."
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to save debug masks for counter {_debug_save_counter}: {e}")
+
+
 def mask_to_yolo_polygons_verified(
     binary_mask: np.ndarray,
     img_shape: Tuple[int, int],
-    iou_threshold: float = 0.95,
-    min_contour_area: float = 0.0,  # Default: no area filtering
-    polygon_approx_tolerance: float = 0.0,  # Default: no simplification
-) -> Tuple[List[List[float]], Optional[str]]:
+    min_contour_area: float,  # Parameter passed from caller
+    polygon_approx_tolerance: float,  # Parameter passed from caller
+) -> Tuple[List[List[float]], float, Optional[str]]:
     """
-    Convert a binary instance mask to normalized YOLO polygon coordinates,
-    verifying the conversion accuracy via IoU.
-
-    Finds contours, optionally filters by area and simplifies, normalizes them,
-    then reconstructs a mask from the normalized polygons and compares its IoU
-    with the original mask. Returns the normalized polygons only if the IoU
-    meets the threshold.
+    Convert a binary instance mask to normalized YOLO polygon coordinates.
+    Calculates and returns the IoU between the original mask and the mask
+    reconstructed from the generated polygons.
 
     Args:
         binary_mask: A 2D numpy array representing the binary mask (0/1 or 0/255).
         img_shape: The original image shape (height, width).
-        iou_threshold: Minimum IoU between original and reconstructed mask to
-                       consider the conversion valid (default: 0.95).
-        min_contour_area: Minimum contour area (pixels) to keep. If <= 0, no
-                          area filtering is applied.
-        polygon_approx_tolerance: Approximation tolerance factor for simplification
-                                  (relative to arc length). If <= 0, no
-                                  simplification is applied.
+        min_contour_area: Minimum contour area (pixels) to keep.
+        polygon_approx_tolerance: Approximation tolerance factor for simplification.
 
     Returns:
         Tuple containing:
-        - List of polygons, where each sublist is a separate normalized polygon
-          [x1, y1, x2, y2, ...]. Empty list if no valid contours or IoU check fails.
+        - List of polygons [[x1,y1,x2,y2,...], ...]. Empty if no valid polygons.
+        - IoU value (float) between original and reconstructed. 0.0 if error before IoU.
         - Error code (string) or None if successful.
-
-        Coordinates are normalized to [0.0, 1.0].
     """
     try:
-        # 1. Preprocess and validate the mask
         mask_uint8 = _preprocess_binary_mask(binary_mask, img_shape)
     except ValueError as e:
-        return [], str(e)
+        return [], 0.0, str(e)
 
-    # 2. Find, filter, and simplify contours (conditionally)
     valid_contours = _find_and_simplify_contours(
         mask_uint8, min_contour_area, polygon_approx_tolerance
     )
 
     if not valid_contours:
-        # Return early if no contours found (only report if mask wasn't empty)
-        return [], "no_contours" if mask_uint8.any() else None
+        return [], 0.0, "no_contours" if mask_uint8.any() else None
 
-    # 3. Normalize and flatten polygons
     try:
         normalized_polygons = _normalize_and_flatten_polygons(valid_contours, img_shape)
     except ValueError as e:
-        return [], str(e)
+        return [], 0.0, str(e)
 
     if not normalized_polygons:
-        return [], "normalization_failed"
+        return [], 0.0, "normalization_failed"
 
-    # 4. Verification Step: Reconstruct mask and check IoU
     reconstructed_mask = polygons_to_mask(normalized_polygons, img_shape, normalized=True)
-
-    # 5. Calculate IoU between original and reconstructed mask
     input_mask_bool = mask_uint8.astype(bool)
-    reconstructed_mask_bool = reconstructed_mask.astype(bool)
 
     try:
-        iou = calculate_mask_iou(input_mask_bool, reconstructed_mask_bool)
+        iou = calculate_mask_iou(
+            input_mask_bool, reconstructed_mask
+        )  # reconstructed_mask is already bool
     except ValueError as e:
-        return [], f"iou_calculation_error:{str(e)}"
+        return normalized_polygons, 0.0, f"iou_calculation_error:{str(e)}"
 
-    # 6. Final Return based on IoU
-    if iou >= iou_threshold:
-        return normalized_polygons, None
-    else:
-        return [], f"low_iou:{iou:.4f}<{iou_threshold:.4f}"
+    # Return polygons, IoU, and no error if successful up to this point
+    return normalized_polygons, iou, None
 
 
 def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:

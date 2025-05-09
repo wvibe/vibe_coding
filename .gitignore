@@ -9,6 +9,7 @@ venv/
 *.egg
 build/
 dist/
+tmp/
 
 # IDE
 .DS_Store
