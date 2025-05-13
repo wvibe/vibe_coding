@@ -21,10 +21,10 @@
             "request": "launch",
             "module": "vibelab.dataops.cov_segm.converter",
             "args": [
-                "--mapping-config",
-                "configs/dataops/cov_segm_yolo_mapping_20cls.csv",
                 "--train-split",
                 "train",
+                "--label-type",
+                "bbox",
                 "--sample-slice",
                 "[:100]",
                 "--num-proc",

@@ -123,6 +123,13 @@ def _setup_argparse() -> argparse.ArgumentParser:
         help="Type of mask to convert ('visible' or 'full').",
     )
     parser.add_argument(
+        "--label-type",
+        type=str,
+        choices=["bbox", "mask"],
+        default="bbox",
+        help="Type of labels to generate ('bbox' or 'mask').",
+    )
+    parser.add_argument(
         "--train-split",
         type=str,
         required=True,
@@ -176,9 +183,9 @@ def _setup_argparse() -> argparse.ArgumentParser:
     return parser
 
 
-def _configure_environment(args: argparse.Namespace) -> Tuple[Path, Path, Path]:
+def _configure_environment(args: argparse.Namespace) -> Tuple[Path, Path]:
     """Configures logging, env vars, paths, and random seed.
-    Returns paths for images, mask labels, and bbox labels.
+    Returns paths for images and labels directories.
     """
     if not (0.0 <= args.sample_ratio <= 1.0):
         raise ValueError(f"Invalid sample_ratio: {args.sample_ratio}. Must be between 0.0 and 1.0.")
@@ -189,20 +196,19 @@ def _configure_environment(args: argparse.Namespace) -> Tuple[Path, Path, Path]:
             "Output directory must be specified via --output-dir or COV_SEGM_ROOT env var."
         )
     yolo_root = Path(output_dir_str) / (args.output_name or args.mask_tag)
-    logging.info(f"Output dataset root: {yolo_root}")
+    # Add a subfolder for label type
+    yolo_root_typed = yolo_root / args.label_type
+    logging.info(f"Output dataset root: {yolo_root_typed}")
     if args.seed is not None:
         random.seed(args.seed)
         logging.info(f"Using random seed: {args.seed}")
-    image_dir = yolo_root / "images" / args.train_split
-    label_mask_dir = yolo_root / "labels-mask" / args.train_split
-    label_bbox_dir = yolo_root / "labels-bbox" / args.train_split
+    image_dir = yolo_root_typed / "images" / args.train_split
+    label_dir = yolo_root_typed / "labels" / args.train_split
     image_dir.mkdir(parents=True, exist_ok=True)
-    label_mask_dir.mkdir(parents=True, exist_ok=True)
-    label_bbox_dir.mkdir(parents=True, exist_ok=True)
+    label_dir.mkdir(parents=True, exist_ok=True)
     logging.info(f"Output images will be saved to: {image_dir}")
-    logging.info(f"Output mask labels will be saved to: {label_mask_dir}")
-    logging.info(f"Output bbox labels will be saved to: {label_bbox_dir}")
-    return image_dir, label_mask_dir, label_bbox_dir
+    logging.info(f"Output labels will be saved to: {label_dir}")
+    return image_dir, label_dir
 
 
 def _load_data(
@@ -409,15 +415,14 @@ def _update_annotations_list(
 
 def _generate_single_sample_labels(
     sample: SegmSample, phrase_map: Dict[str, Dict[str, Any]], args: argparse.Namespace
-) -> Tuple[List[Dict], List[Dict], Optional[Any]]:
-    """Processes a single SegmSample, generates lists of optimized annotations."""
+) -> Tuple[List[Dict], Optional[Any]]:
+    """Processes a single SegmSample, generates annotations for the specified label type."""
     global stats_counters
     image_height, image_width = sample.image.height, sample.image.width
     if _skip_sample_by_mapping_and_sampling(sample, phrase_map, args.sample_ratio):
-        return [], [], None
+        return [], None
 
-    current_mask_annotations_rich: List[Dict] = []
-    current_bbox_annotations_rich: List[Dict] = []
+    current_annotations_rich: List[Dict] = []
 
     for segment in sample.segments:
         stats_counters["segments_loaded"] += 1
@@ -444,129 +449,123 @@ def _generate_single_sample_labels(
             stats_counters["instances_loaded"] += 1
             current_v_mask_binary = v_mask.binary_mask
 
-            polygons_yolo_lists, iou, err_msg = mask_to_yolo_polygons_verified(
-                binary_mask=current_v_mask_binary, img_shape=(image_height, image_width)
-            )
-
-            if err_msg or not polygons_yolo_lists:
-                stats_counters["skipped_mask_no_polygon"] += 1
-                logging.warning(
-                    f"Sample {sample.id}, Phrase '{matched_phrase}': Failed to convert mask to "
-                    f"polygon during verification. Error: {err_msg}"
+            if args.label_type == "mask":
+                polygons_yolo_lists, iou, err_msg = mask_to_yolo_polygons_verified(
+                    binary_mask=current_v_mask_binary, img_shape=(image_height, image_width)
                 )
-            else:
-                stats_counters["mask_annotations_ious"].append(iou)
 
-                # Concatenate all polygon parts into a single annotation string
-                all_coords_flat = []
-                for poly_part in polygons_yolo_lists:
-                    all_coords_flat.extend(poly_part)
-
-                num_vertices = len(all_coords_flat) // 2
-                stats_counters["mask_annotations_vertices"].append(num_vertices)
-
-                annotation_str = " ".join(map(str, all_coords_flat))
-                candidate_mask_payload = {
-                    "source_binary_mask": current_v_mask_binary,
-                    "class_id": current_class_id,
-                    "priority": current_priority,
-                    "annotation_str": annotation_str,
-                }
-                update_stats = _update_annotations_list(
-                    current_mask_annotations_rich,
-                    candidate_mask_payload,
-                    ANNOTATION_OVERLAP_IOU_THRESH,
-                )
-                if update_stats == 0:
-                    stats_counters["mask_annotations_updated"] += 1
-                elif update_stats == 1:
-                    stats_counters["mask_annotations_appended"] += 1
+                if err_msg or not polygons_yolo_lists:
+                    stats_counters["skipped_mask_no_polygon"] += 1
+                    logging.warning(
+                        f"Sample {sample.id}, Phrase '{matched_phrase}': Failed to convert mask to "
+                        f"polygon during verification. Error: {err_msg}"
+                    )
                 else:
-                    stats_counters["mask_annotations_skipped"] += 1
+                    stats_counters["mask_annotations_ious"].append(iou)
 
-            abs_xyxy_bbox = v_mask.bbox
-            if abs_xyxy_bbox is None:
-                stats_counters["skipped_bbox_no_bbox"] += 1
-                logging.warning(
-                    f"Sample {sample.id}, Phrase '{matched_phrase}': SegmMask bbox is None, "
-                    f"cannot generate bbox label."
-                )
-            else:
-                bbox_yolo_annotation_str = _get_yolo_bbox_str_from_abs_xyxy(
-                    abs_xyxy_bbox, image_width, image_height
-                )
-                candidate_bbox_payload = {
-                    "source_binary_mask": current_v_mask_binary,
-                    "abs_bbox_xyxy": abs_xyxy_bbox,
-                    "class_id": current_class_id,
-                    "priority": current_priority,
-                    "annotation_str": bbox_yolo_annotation_str,
-                }
-                update_stats = _update_annotations_list(
-                    current_bbox_annotations_rich,
-                    candidate_bbox_payload,
-                    ANNOTATION_OVERLAP_IOU_THRESH,
-                )
-                if update_stats == 0:
-                    stats_counters["bbox_annotations_updated"] += 1
-                elif update_stats == 1:
-                    stats_counters["bbox_annotations_appended"] += 1
+                    # Concatenate all polygon parts into a single annotation string
+                    all_coords_flat = []
+                    for poly_part in polygons_yolo_lists:
+                        all_coords_flat.extend(poly_part)
+
+                    num_vertices = len(all_coords_flat) // 2
+                    stats_counters["mask_annotations_vertices"].append(num_vertices)
+
+                    annotation_str = " ".join(map(str, all_coords_flat))
+                    candidate_payload = {
+                        "source_binary_mask": current_v_mask_binary,
+                        "class_id": current_class_id,
+                        "priority": current_priority,
+                        "annotation_str": annotation_str,
+                    }
+                    update_stats = _update_annotations_list(
+                        current_annotations_rich,
+                        candidate_payload,
+                        ANNOTATION_OVERLAP_IOU_THRESH,
+                    )
+                    if update_stats == 0:
+                        stats_counters["mask_annotations_updated"] += 1
+                    elif update_stats == 1:
+                        stats_counters["mask_annotations_appended"] += 1
+                    else:
+                        stats_counters["mask_annotations_skipped"] += 1
+
+            elif args.label_type == "bbox":
+                abs_xyxy_bbox = v_mask.bbox
+                if abs_xyxy_bbox is None:
+                    stats_counters["skipped_bbox_no_bbox"] += 1
+                    logging.warning(
+                        f"Sample {sample.id}, Phrase '{matched_phrase}': SegmMask bbox is None, "
+                        f"cannot generate bbox label."
+                    )
                 else:
-                    stats_counters["bbox_annotations_skipped"] += 1
+                    bbox_yolo_annotation_str = _get_yolo_bbox_str_from_abs_xyxy(
+                        abs_xyxy_bbox, image_width, image_height
+                    )
+                    candidate_payload = {
+                        "source_binary_mask": current_v_mask_binary,
+                        "abs_bbox_xyxy": abs_xyxy_bbox,
+                        "class_id": current_class_id,
+                        "priority": current_priority,
+                        "annotation_str": bbox_yolo_annotation_str,
+                    }
+                    update_stats = _update_annotations_list(
+                        current_annotations_rich,
+                        candidate_payload,
+                        ANNOTATION_OVERLAP_IOU_THRESH,
+                    )
+                    if update_stats == 0:
+                        stats_counters["bbox_annotations_updated"] += 1
+                    elif update_stats == 1:
+                        stats_counters["bbox_annotations_appended"] += 1
+                    else:
+                        stats_counters["bbox_annotations_skipped"] += 1
 
-    final_mask_output_list = [
+    final_output_list = [
         {"class_id": ann["class_id"], "annotation_str": ann["annotation_str"]}
-        for ann in current_mask_annotations_rich
+        for ann in current_annotations_rich
     ]
-    final_bbox_output_list = [
-        {"class_id": ann["class_id"], "annotation_str": ann["annotation_str"]}
-        for ann in current_bbox_annotations_rich
-    ]
-    annotations_made_for_sample = bool(final_mask_output_list or final_bbox_output_list)
+    annotations_made_for_sample = bool(final_output_list)
 
     if annotations_made_for_sample:
         stats_counters["sample_with_annotations"].add(sample.id)
 
-        stats_counters["mask_annotations_generated"] += len(final_mask_output_list)
-        class_counts = {}
-        for ann_data in final_mask_output_list:
-            final_cid = ann_data["class_id"]
-            class_counts.setdefault(final_cid, 0)
-            class_counts[final_cid] += 1
-        for cid, count in class_counts.items():
-            stats_counters["mask_instances_per_class"].setdefault(cid, []).append(count)
+        if args.label_type == "mask":
+            stats_counters["mask_annotations_generated"] += len(final_output_list)
+            class_counts = {}
+            for ann_data in final_output_list:
+                final_cid = ann_data["class_id"]
+                class_counts.setdefault(final_cid, 0)
+                class_counts[final_cid] += 1
+            for cid, count in class_counts.items():
+                stats_counters["mask_instances_per_class"].setdefault(cid, []).append(count)
+        else:  # args.label_type == "bbox"
+            stats_counters["bbox_annotations_generated"] += len(final_output_list)
+            class_counts = {}
+            for ann_data in final_output_list:
+                final_cid = ann_data["class_id"]
+                class_counts.setdefault(final_cid, 0)
+                class_counts[final_cid] += 1
+            for cid, count in class_counts.items():
+                stats_counters["bbox_instances_per_class"].setdefault(cid, []).append(count)
 
-        stats_counters["bbox_annotations_generated"] += len(final_bbox_output_list)
-        class_counts = {}
-        for ann_data in final_bbox_output_list:
-            final_cid = ann_data["class_id"]
-            class_counts.setdefault(final_cid, 0)
-            class_counts[final_cid] += 1
-        for cid, count in class_counts.items():
-            stats_counters["bbox_instances_per_class"].setdefault(cid, []).append(count)
-
-    return (
-        final_mask_output_list,
-        final_bbox_output_list,
-        sample.image if annotations_made_for_sample else None,
-    )
+    return final_output_list, sample.image if annotations_made_for_sample else None
 
 
 def _save_sample_outputs(
     sample_id: str,
     image_to_save: Any,
-    mask_annotations: List[Dict],
-    bbox_annotations: List[Dict],
+    annotations: List[Dict],
     image_dir: Path,
-    label_mask_dir: Path,
-    label_bbox_dir: Path,
+    label_dir: Path,
+    label_type: str,
     no_overwrite_flag: bool,
 ):
     """Handles all file I/O for a single sample's outputs."""
     global stats_counters
     base_filename = sample_id
 
-    if mask_annotations or bbox_annotations:
+    if annotations:
         image_path = image_dir / f"{sample_id}.jpg"
         if no_overwrite_flag and image_path.exists():
             stats_counters["skipped_existing_images"] += 1
@@ -579,43 +578,30 @@ def _save_sample_outputs(
             except Exception as e:
                 logging.error(f"Failed to save image {sample_id}.jpg to {image_path}: {e}")
 
-    if mask_annotations:
-        label_mask_path = label_mask_dir / f"{base_filename}.txt"
-        if no_overwrite_flag and label_mask_path.exists():
-            stats_counters["skipped_existing_mask_labels"] += 1
+        label_path = label_dir / f"{base_filename}.txt"
+        if no_overwrite_flag and label_path.exists():
+            if label_type == "mask":
+                stats_counters["skipped_existing_mask_labels"] += 1
+            else:  # label_type == "bbox"
+                stats_counters["skipped_existing_bbox_labels"] += 1
         else:
-            annotation_lines = [
-                f"{ann['class_id']} {ann['annotation_str']}" for ann in mask_annotations
-            ]
+            annotation_lines = [f"{ann['class_id']} {ann['annotation_str']}" for ann in annotations]
             try:
-                with open(label_mask_path, "w", encoding="utf-8") as f:
+                with open(label_path, "w", encoding="utf-8") as f:
                     f.write("\n".join(annotation_lines) + "\n")
-                stats_counters["output_mask_labels"] += 1
+                if label_type == "mask":
+                    stats_counters["output_mask_labels"] += 1
+                else:  # label_type == "bbox"
+                    stats_counters["output_bbox_labels"] += 1
             except Exception as e:
-                logging.error(f"Failed to write mask label file {label_mask_path}: {e}")
-
-    if bbox_annotations:
-        label_bbox_path = label_bbox_dir / f"{base_filename}.txt"
-        if no_overwrite_flag and label_bbox_path.exists():
-            stats_counters["skipped_existing_bbox_labels"] += 1
-        else:
-            annotation_lines = [
-                f"{ann['class_id']} {ann['annotation_str']}" for ann in bbox_annotations
-            ]
-            try:
-                with open(label_bbox_path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(annotation_lines) + "\n")
-                stats_counters["output_bbox_labels"] += 1
-            except Exception as e:
-                logging.error(f"Failed to write bbox label file {label_bbox_path}: {e}")
+                logging.error(f"Failed to write label file {label_path}: {e}")
 
 
 def _process_samples(
     dataset: Dataset,
     phrase_map: Dict[str, Dict[str, Any]],
     image_dir: Path,
-    label_mask_dir: Path,
-    label_bbox_dir: Path,
+    label_dir: Path,
     args: argparse.Namespace,
 ):
     """Process samples using serialization, new label generation, and saving logic."""
@@ -653,18 +639,15 @@ def _process_samples(
             stats_counters["skipped_sample_load_error"] += 1
             continue
 
-        mask_data, bbox_data, image_obj_or_none = _generate_single_sample_labels(
-            sample, phrase_map, args
-        )
+        annotations, image_obj_or_none = _generate_single_sample_labels(sample, phrase_map, args)
         if image_obj_or_none:
             _save_sample_outputs(
                 sample.id,
                 image_obj_or_none,
-                mask_data,
-                bbox_data,
+                annotations,
                 image_dir,
-                label_mask_dir,
-                label_bbox_dir,
+                label_dir,
+                args.label_type,
                 args.no_overwrite,
             )
     logging.info(
@@ -673,7 +656,7 @@ def _process_samples(
     )
 
 
-def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
+def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str], label_type: str = "bbox"):
     """Logs the final conversion statistics."""
     logging.info("-" * 80)
     logging.info(f"{'CONVERSION SUMMARY':^40}")
@@ -695,67 +678,72 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
     logging.info(f"  Instances skipped (invalid masks): {counters['skipped_instance_invalid']}")
     logging.info("-" * 80)
 
-    logging.info(f"{'MASK ANNOTATION GENERATION:':^80}")
-    logging.info(f"  Mask annotations generated: {counters['mask_annotations_generated']}")
-    logging.info(
-        f"  Instances with failed polygon conversion: {counters['skipped_mask_no_polygon']}"
-    )
-    logging.info(f"  Mask annotations updated: {counters['mask_annotations_updated']}")
-    logging.info(f"  Mask annotations appended: {counters['mask_annotations_appended']}")
-    logging.info(f"  Mask annotations skipped: {counters['mask_annotations_skipped']}")
-
-    # MODIFIED: Added IoU statistics reporting (using updated key name)
-    iou_values = counters.get("mask_annotations_ious", [])
-    if iou_values:
-        logging.info(f"{'MASK CONVERSION IoU STATISTICS:':^80}")
-        iou_format_string = "{key:<18} {count:>5} {mean:>5.2f} {min:>5.2f} {p10:>5.2f} {p25:>5.2f} {p50:>5.2f} {p75:>5.2f} {p90:>5.2f}"
-        iou_stats_data = {"Mask Convert IoU": iou_values}
-        iou_table_lines = format_statistics_table(
-            data_dict=iou_stats_data, format_string=iou_format_string
+    if label_type == "mask":
+        logging.info(f"{'MASK ANNOTATION GENERATION:':^80}")
+        logging.info(f"  Mask annotations generated: {counters['mask_annotations_generated']}")
+        logging.info(
+            f"  Instances with failed polygon conversion: {counters['skipped_mask_no_polygon']}"
         )
-        for line in iou_table_lines:
-            logging.info(f"  {line}")
-    else:
-        logging.info("No mask conversion IoUs were recorded.")
+        logging.info(f"  Mask annotations updated: {counters['mask_annotations_updated']}")
+        logging.info(f"  Mask annotations appended: {counters['mask_annotations_appended']}")
+        logging.info(f"  Mask annotations skipped: {counters['mask_annotations_skipped']}")
 
-    # MODIFIED: Added Mask Polygon Vertex Count Statistics table
-    vertex_counts_list = counters.get("mask_annotations_vertices", [])
-    if vertex_counts_list:
-        logging.info(f"{'MASK POLYGON VERTEX COUNT STATISTICS:':^80}")
-        vertex_format_string = "{key:<18} {count:>5} {mean:>5.1f} {min:>5d} {p10:>5d} {p25:>5d} {p50:>5d} {p75:>5d} {p90:>5d} {max:>5d}"
-        vertex_stats_data = {"Vertex Counts": vertex_counts_list}
-        vertex_table_lines = format_statistics_table(
-            data_dict=vertex_stats_data, format_string=vertex_format_string
-        )
-        for line in vertex_table_lines:
-            logging.info(f"  {line}")
-    else:
-        logging.info("No mask polygon vertex counts were recorded.")
-    logging.info("-" * 80)
+        # MODIFIED: Added IoU statistics reporting (using updated key name)
+        iou_values = counters.get("mask_annotations_ious", [])
+        if iou_values:
+            logging.info(f"{'MASK CONVERSION IoU STATISTICS:':^80}")
+            iou_format_string = "{key:<18} {count:>5} {mean:>5.2f} {min:>5.2f} {p10:>5.2f} {p25:>5.2f} {p50:>5.2f} {p75:>5.2f} {p90:>5.2f}"
+            iou_stats_data = {"Mask Convert IoU": iou_values}
+            iou_table_lines = format_statistics_table(
+                data_dict=iou_stats_data, format_string=iou_format_string
+            )
+            for line in iou_table_lines:
+                logging.info(f"  {line}")
+        else:
+            logging.info("No mask conversion IoUs were recorded.")
 
-    logging.info(f"{'BBOX ANNOTATION GENERATION:':^80}")
-    logging.info(f"  Bbox annotations generated: {counters['bbox_annotations_generated']}")
-    logging.info(f"  Instances with failed bbox generation: {counters['skipped_bbox_no_bbox']}")
-    logging.info(f"  Bbox annotations updated: {counters['bbox_annotations_updated']}")
-    logging.info(f"  Bbox annotations appended: {counters['bbox_annotations_appended']}")
-    logging.info(f"  Bbox annotations skipped: {counters['bbox_annotations_skipped']}")
+        # MODIFIED: Added Mask Polygon Vertex Count Statistics table
+        vertex_counts_list = counters.get("mask_annotations_vertices", [])
+        if vertex_counts_list:
+            logging.info(f"{'MASK POLYGON VERTEX COUNT STATISTICS:':^80}")
+            vertex_format_string = "{key:<18} {count:>5} {mean:>5.1f} {min:>5d} {p10:>5d} {p25:>5d} {p50:>5d} {p75:>5d} {p90:>5d} {max:>5d}"
+            vertex_stats_data = {"Vertex Counts": vertex_counts_list}
+            vertex_table_lines = format_statistics_table(
+                data_dict=vertex_stats_data, format_string=vertex_format_string
+            )
+            for line in vertex_table_lines:
+                logging.info(f"  {line}")
+        else:
+            logging.info("No mask polygon vertex counts were recorded.")
+    else:  # label_type == "bbox"
+        logging.info(f"{'BBOX ANNOTATION GENERATION:':^80}")
+        logging.info(f"  Bbox annotations generated: {counters['bbox_annotations_generated']}")
+        logging.info(f"  Instances with failed bbox generation: {counters['skipped_bbox_no_bbox']}")
+        logging.info(f"  Bbox annotations updated: {counters['bbox_annotations_updated']}")
+        logging.info(f"  Bbox annotations appended: {counters['bbox_annotations_appended']}")
+        logging.info(f"  Bbox annotations skipped: {counters['bbox_annotations_skipped']}")
+
     logging.info("-" * 80)
 
     logging.info(f"{'FILE OUTPUT:':^80}")
     logging.info(f"  Samples with annotations: {len(counters['sample_with_annotations'])}")
-    logging.info(f"  Mask labels written: {counters['output_mask_labels']}")
-    logging.info(
-        f"  Mask labels skipped (already exist): {counters['skipped_existing_mask_labels']}"
-    )
-    logging.info(f"  Bbox labels written: {counters['output_bbox_labels']}")
-    logging.info(
-        f"  Bbox labels skipped (already exist): {counters['skipped_existing_bbox_labels']}"
-    )
+
+    if label_type == "mask":
+        logging.info(f"  Mask labels written: {counters['output_mask_labels']}")
+        logging.info(
+            f"  Mask labels skipped (already exist): {counters['skipped_existing_mask_labels']}"
+        )
+    else:  # label_type == "bbox"
+        logging.info(f"  Bbox labels written: {counters['output_bbox_labels']}")
+        logging.info(
+            f"  Bbox labels skipped (already exist): {counters['skipped_existing_bbox_labels']}"
+        )
+
     logging.info(f"  Images copied: {counters['copied_images']}")
     logging.info(f"  Images skipped (already exist): {counters['skipped_existing_images']}")
     logging.info("-" * 80)
 
-    if counters["mask_instances_per_class"]:
+    if label_type == "mask" and counters["mask_instances_per_class"]:
         logging.info(f"{'MASK ANNOTATIONS BY CLASS (Unique Samples per Class):':^80}")
         format_string = "{key:<18} {count:>5} {mean:>5.1f} {min:>5d} {p10:>5d} {p25:>5d} {p50:>5d} {p75:>5d} {p90:>5d} {max:>5d}"
         mask_cls_data = {}
@@ -770,7 +758,7 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
         for line in table_lines:
             logging.info(f"  {line}")
 
-    if counters["bbox_instances_per_class"]:
+    elif label_type == "bbox" and counters["bbox_instances_per_class"]:
         logging.info(f"{'BBOX ANNOTATIONS BY CLASS (Unique Samples per Class):':^80}")
         format_string = "{key:<18} {count:>5} {mean:>5.1f} {min:>5d} {p10:>5d} {p25:>5d} {p50:>5d} {p75:>5d} {p90:>5d} {max:>5d}"
         bbox_cls_data = {}
@@ -796,10 +784,10 @@ def main():
     args = parser.parse_args()
 
     try:
-        image_dir, label_mask_dir, label_bbox_dir = _configure_environment(args)
+        image_dir, label_dir = _configure_environment(args)
         dataset, phrase_map, class_names = _load_data(args)
-        _process_samples(dataset, phrase_map, image_dir, label_mask_dir, label_bbox_dir, args)
-        _log_summary(stats_counters, class_names)
+        _process_samples(dataset, phrase_map, image_dir, label_dir, args)
+        _log_summary(stats_counters, class_names, args.label_type)
         logging.info("Conversion completed successfully.")
         return 0
     except Exception as e:
