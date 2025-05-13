@@ -1,7 +1,7 @@
 yolo_class_id,yolo_class_name,yolo_class_pri,hf_phrase,sampling_ratio
-0,bin,1,bin,0.8
-1,object,0,object,0.7
-2,robot,2,robot,0.9
+0,bin,1,bin,0.5
+1,object,0,object,0.5
+2,robot,2,robot,1.0
 3,wrapped_object,3,object that is wrapped in a plastic loose bag,1.0
 4,complex_object,4,object with a complex shape,1.0
 5,boxy_object,5,object with a boxy shape,1.0
