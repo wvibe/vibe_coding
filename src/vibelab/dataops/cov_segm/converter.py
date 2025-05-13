@@ -27,8 +27,6 @@ from vibelab.utils.common.mask import (
 from vibelab.utils.common.stats import format_statistics_table
 
 ANNOTATION_OVERLAP_IOU_THRESH = 0.95
-POLYGON_MIN_CONTOUR_AREA = 10
-POLYGON_APPROX_TOLERANCE = 0.01  # 0 means disable polygon simplification
 
 # Global stats counters (initialized in main)
 stats_counters: Dict[str, Any] = {
@@ -102,7 +100,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mapping-config",
         type=str,
-        default="configs/dataops/cov_segm_yolo_mapping.csv",
+        default="configs/dataops/cov_segm_yolo_mapping_20cls.csv",
         help="Path to the CSV mapping file.",
     )
     parser.add_argument(
@@ -447,10 +445,7 @@ def _generate_single_sample_labels(
             current_v_mask_binary = v_mask.binary_mask
 
             polygons_yolo_lists, iou, err_msg = mask_to_yolo_polygons_verified(
-                binary_mask=current_v_mask_binary,
-                img_shape=(image_height, image_width),
-                min_contour_area=POLYGON_MIN_CONTOUR_AREA,
-                polygon_approx_tolerance=POLYGON_APPROX_TOLERANCE,
+                binary_mask=current_v_mask_binary, img_shape=(image_height, image_width)
             )
 
             if err_msg or not polygons_yolo_lists:
@@ -511,7 +506,7 @@ def _generate_single_sample_labels(
                     current_bbox_annotations_rich,
                     candidate_bbox_payload,
                     ANNOTATION_OVERLAP_IOU_THRESH,
-                    )
+                )
                 if update_stats == 0:
                     stats_counters["bbox_annotations_updated"] += 1
                 elif update_stats == 1:
@@ -689,7 +684,7 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str]):
     logging.info(f"  Successfully loaded and processed: {counters['processed_samples']}")
     logging.info(f"  Due to load/deserialization errors: {counters['skipped_sample_load_error']}")
     logging.info(f"  No class mapping for any segment: {counters['skipped_sample_no_mapping']}")
-    logging.info(f"  Due to sampling ratios: {counters['skipped_sample_sampling']}")
+    logging.info(f"  Due to mapping and sampling ratios: {counters['skipped_sample_sampling']}")
     logging.info("-" * 80)
 
     logging.info(f"{'SEGMENT & INSTANCE PROCESSING:':^40}")

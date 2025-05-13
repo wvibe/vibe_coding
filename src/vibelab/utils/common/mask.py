@@ -18,11 +18,11 @@ _debug_save_counter = 0
 DEBUG_MASK_DIR = "tmp/mask_debug"
 
 
-def _preprocess_binary_mask(binary_mask: np.ndarray, img_shape: Tuple[int, int]) -> np.ndarray:
+def _preprocess_mask(input_mask: np.ndarray, img_shape: Tuple[int, int] = None) -> np.ndarray:
     """Validate and preprocess binary mask for contour finding.
 
     Args:
-        binary_mask: Input mask to validate and preprocess
+        input_mask: Input mask to validate and preprocess
         img_shape: Target (height, width) for validation
 
     Returns:
@@ -31,34 +31,68 @@ def _preprocess_binary_mask(binary_mask: np.ndarray, img_shape: Tuple[int, int])
     Raises:
         ValueError: For invalid image shape or mask dimensions
     """
+    if img_shape is None:
+        img_shape = input_mask.shape
+
     # Check image shape validity
     h, w = img_shape
     if h <= 0 or w <= 0:
         raise ValueError(f"Invalid image shape: {img_shape}")
 
     # Check mask dimensions
-    if binary_mask.ndim != 2:
-        raise ValueError(f"Mask must be 2D, got {binary_mask.ndim}D")
+    if input_mask.ndim != 2:
+        raise ValueError(f"Mask must be 2D, got {input_mask.ndim}D")
 
-    if binary_mask.size == 0:
+    if input_mask.size == 0:
         return np.zeros((h, w), dtype=np.uint8)
 
     # Normalize to uint8 with values 0/255
-    if binary_mask.dtype != np.uint8:
-        max_val = binary_mask.max()
+    if input_mask.dtype != np.uint8:
+        max_val = input_mask.max()
         if max_val == 1:
-            mask_uint8 = (binary_mask * 255).astype(np.uint8)
+            mask_uint8 = (input_mask * 255).astype(np.uint8)
         elif max_val == 0:  # Empty mask
-            mask_uint8 = binary_mask.astype(np.uint8)
+            mask_uint8 = input_mask.astype(np.uint8)
         elif max_val == 255:
-            mask_uint8 = binary_mask.astype(np.uint8)  # Already uint8 0/255
+            mask_uint8 = input_mask.astype(np.uint8)  # Already uint8 0/255
         else:
             # Convert non-zero values to 255
-            mask_uint8 = np.where(binary_mask > 0, 255, 0).astype(np.uint8)
+            mask_uint8 = np.where(input_mask > 0, 255, 0).astype(np.uint8)
     else:
-        mask_uint8 = binary_mask
+        mask_uint8 = input_mask
 
     return mask_uint8
+
+
+def _compute_adaptive_epsilon(
+    contour: np.ndarray,
+    base_tolerance: float,
+    min_epsilon: float = 0.5,
+    min_approx_area: float = 20.0,
+) -> float:
+    """
+    Computes an adaptive epsilon value for contour simplification.
+
+    Args:
+        contour: The input contour (Nx1x2).
+        base_tolerance: Base factor (e.g. 0.01) multiplied with arc length.
+        min_epsilon: Absolute minimum epsilon to apply.
+        min_approx_area: Below this area, further reduce epsilon.
+
+    Returns:
+        A float epsilon value.
+    """
+    arc_len = cv2.arcLength(contour, closed=True)
+    epsilon = base_tolerance * arc_len
+
+    if min_approx_area > 0:
+        area = cv2.contourArea(contour)
+        if area < min_approx_area:
+            # Reduce epsilon if area is too small, to avoid oversimplification
+            scale_factor = max(0.25, area / (min_approx_area + 1e-6))
+            epsilon *= scale_factor
+
+    return max(epsilon, min_epsilon)
 
 
 def _find_and_simplify_contours(
@@ -105,8 +139,10 @@ def _find_and_simplify_contours(
 
         # Conditional Polygon Approximation (Simplification)
         if polygon_approx_tolerance > 0:
-            epsilon = polygon_approx_tolerance * cv2.arcLength(processed_contour, True)
-            processed_contour = cv2.approxPolyDP(processed_contour, epsilon, True)
+            epsilon = _compute_adaptive_epsilon(processed_contour, polygon_approx_tolerance)
+            approx_contour = cv2.approxPolyDP(processed_contour, epsilon, True)
+            if len(approx_contour) >= 3:
+                processed_contour = approx_contour
 
         # Need at least 3 points for a valid polygon
         if len(processed_contour) >= 3:
@@ -399,7 +435,7 @@ def mask_to_yolo_polygons(
     """
     try:
         # Preprocess and validate the mask
-        mask_uint8 = _preprocess_binary_mask(binary_mask, img_shape)
+        mask_uint8 = _preprocess_mask(binary_mask, img_shape)
     except ValueError as e:
         return [], str(e)
 
@@ -439,53 +475,11 @@ def mask_to_yolo_polygons(
         return [], str(e)
 
 
-def save_mask_and_polygon_debug_images(
-    original_binary_mask: np.ndarray,
-    yolo_polygon_normalized: List[float],  # Expecting a single polygon's flat coordinate list
-    img_shape: Tuple[int, int],
-) -> None:
-    """Saves the original binary mask and a mask reconstructed from a YOLO polygon for debugging."""
-    global _debug_save_counter
-    _debug_save_counter += 1
-
-    try:
-        if not os.path.exists(DEBUG_MASK_DIR):
-            os.makedirs(DEBUG_MASK_DIR)
-
-        # Save original mask
-        original_mask_to_save = (original_binary_mask.astype(np.uint8)) * 255
-        original_file_path = os.path.join(
-            DEBUG_MASK_DIR, f"{_debug_save_counter}_original_mask.png"
-        )
-        cv2.imwrite(original_file_path, original_mask_to_save)
-        logger.info(f"Saved debug original mask to: {original_file_path}")
-
-        # Reconstruct and save polygon mask
-        if yolo_polygon_normalized and len(yolo_polygon_normalized) >= 6:
-            # polygons_to_mask expects a list of polygons
-            reconstructed_mask = polygons_to_mask(
-                [yolo_polygon_normalized], img_shape, normalized=True
-            )
-            reconstructed_mask_to_save = (reconstructed_mask.astype(np.uint8)) * 255
-            polygon_file_path = os.path.join(
-                DEBUG_MASK_DIR, f"{_debug_save_counter}_polygon_mask.png"
-            )
-            cv2.imwrite(polygon_file_path, reconstructed_mask_to_save)
-            logger.info(f"Saved debug polygon mask to: {polygon_file_path}")
-        else:
-            logger.warning(
-                f"Debug save: Invalid or empty polygon for counter {_debug_save_counter}, not saving polygon mask."
-            )
-
-    except Exception as e:
-        logger.error(f"Failed to save debug masks for counter {_debug_save_counter}: {e}")
-
-
 def mask_to_yolo_polygons_verified(
     binary_mask: np.ndarray,
     img_shape: Tuple[int, int],
-    min_contour_area: float,  # Parameter passed from caller
-    polygon_approx_tolerance: float,  # Parameter passed from caller
+    min_contour_area: float = DEFAULT_MIN_CONTOUR_AREA,
+    polygon_approx_tolerance: float = DEFAULT_POLYGON_APPROX_TOLERANCE,
 ) -> Tuple[List[List[float]], float, Optional[str]]:
     """
     Convert a binary instance mask to normalized YOLO polygon coordinates.
@@ -505,7 +499,7 @@ def mask_to_yolo_polygons_verified(
         - Error code (string) or None if successful.
     """
     try:
-        mask_uint8 = _preprocess_binary_mask(binary_mask, img_shape)
+        mask_uint8 = _preprocess_mask(binary_mask, img_shape)
     except ValueError as e:
         return [], 0.0, str(e)
 
@@ -514,6 +508,10 @@ def mask_to_yolo_polygons_verified(
     )
 
     if not valid_contours:
+        save_mask_and_polygon_contour_images(binary_mask, valid_contours)
+        valid_contours = _find_and_simplify_contours(
+            mask_uint8, min_contour_area, polygon_approx_tolerance
+        )
         return [], 0.0, "no_contours" if mask_uint8.any() else None
 
     try:
@@ -536,6 +534,106 @@ def mask_to_yolo_polygons_verified(
 
     # Return polygons, IoU, and no error if successful up to this point
     return normalized_polygons, iou, None
+
+
+def count_mask_pixels(mask: np.ndarray) -> int:
+    """
+    Count the number of mask pixels in a given mask array.
+
+    Supports:
+    - Boolean masks (True == mask)
+    - uint8 masks where mask pixels are 1 or 255
+
+    Args:
+        mask (np.ndarray): The input mask array.
+
+    Returns:
+        int: Number of mask pixels.
+    """
+    if mask.dtype == bool:
+        return int(np.count_nonzero(mask))
+    elif mask.dtype == np.uint8:
+        # Assume 1 or 255 indicates mask
+        # If both exist, count all > 0
+        unique_vals = np.unique(mask)
+        if np.array_equal(unique_vals, [0, 255]) or np.array_equal(unique_vals, [0, 1]):
+            return int(np.count_nonzero(mask))
+        else:
+            raise ValueError(f"Unexpected uint8 mask values: {unique_vals}")
+    else:
+        raise TypeError(f"Unsupported mask dtype: {mask.dtype}")
+
+
+def _save_original_and_polygon_mask_images(
+    original_mask: np.ndarray,
+    polygon_mask: np.ndarray,
+) -> None:
+    """Saves the original binary mask and a mask reconstructed from a polygon for debugging."""
+    global _debug_save_counter
+    _debug_save_counter += 1
+
+    try:
+        if not os.path.exists(DEBUG_MASK_DIR):
+            os.makedirs(DEBUG_MASK_DIR)
+
+        img_shape = original_mask.shape
+        if img_shape is None:
+            raise ValueError("Image shape is None")
+
+        if original_mask is not None:
+            original_mask_uint8 = _preprocess_mask(original_mask, img_shape)
+            # Save original mask
+            original_file_path = os.path.join(
+                DEBUG_MASK_DIR, f"{_debug_save_counter}_original_mask.png"
+            )
+            cv2.imwrite(original_file_path, original_mask_uint8)
+            logger.info(f"Saved debug original mask to: {original_file_path}")
+            # Count the number of pixels in the original mask
+            num_original_pixels = count_mask_pixels(original_mask)
+            logger.info(f"Number of pixels in original mask: {num_original_pixels}")
+        else:
+            logger.warning(f"Debug save: No original mask for image save {_debug_save_counter}")
+
+        if polygon_mask is not None:
+            polygon_mask_uint8 = _preprocess_mask(polygon_mask, img_shape)
+            # Save polygon mask
+            polygon_file_path = os.path.join(
+                DEBUG_MASK_DIR, f"{_debug_save_counter}_polygon_mask.png"
+            )
+            cv2.imwrite(polygon_file_path, polygon_mask_uint8)
+            logger.info(f"Saved debug polygon mask to: {polygon_file_path}")
+            # Count the number of pixels in the polygon mask
+            num_polygon_pixels = count_mask_pixels(polygon_mask)
+            logger.info(f"Number of pixels in polygon mask: {num_polygon_pixels}")
+        else:
+            logger.warning(f"Debug save: No polygon mask for image save {_debug_save_counter}")
+    except Exception as e:
+        logger.error(f"Failed to save debug masks for counter {_debug_save_counter}: {e}")
+
+
+def save_mask_and_yolo_polygon_images(
+    original_mask: np.ndarray,
+    yolo_polygon_normalized: List[float],  # Expecting a single polygon's flat coordinate list
+) -> None:
+    reconstructed_mask = None
+    if yolo_polygon_normalized and len(yolo_polygon_normalized) >= 6:
+        # polygons_to_mask expects a list of polygons
+        reconstructed_mask = polygons_to_mask(
+            [yolo_polygon_normalized], original_mask.shape, normalized=True
+        )
+    _save_original_and_polygon_mask_images(original_mask, reconstructed_mask)
+
+
+def save_mask_and_polygon_contour_images(
+    original_mask: np.ndarray,
+    polygon_contours: List[np.ndarray],  # Expect a contour from cv2.findContours
+) -> None:
+    reconstructed_mask = None
+    if polygon_contours:
+        reconstructed_mask = polygons_to_mask(
+            polygon_contours, original_mask.shape, normalized=False
+        )
+    _save_original_and_polygon_mask_images(original_mask, reconstructed_mask)
 
 
 def calculate_mask_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
