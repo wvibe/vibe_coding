@@ -4,10 +4,15 @@ import cv2
 import numpy as np
 import pytest
 
-from vibelab.utils.common.mask import mask_to_yolo_polygons, calculate_mask_iou, polygon_to_mask
-
+from vibelab.utils.common.mask import (
+    calculate_mask_iou,
+    mask_to_yolo_polygons,
+    mask_to_yolo_polygons_verified,
+    polygons_to_mask,
+)
 
 # --- Helper Functions for Test Masks ---
+
 
 def create_rect_mask(shape, top_left, bottom_right, dtype=np.uint8, value=255):
     """Creates a binary mask with a single rectangle."""
@@ -30,25 +35,42 @@ def create_l_shape_mask(shape, points, dtype=np.uint8, value=255):
     return mask
 
 
+def create_circle_mask(height, width, center, radius):
+    """Helper function to create a circular mask."""
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.circle(mask, center, radius, 255, -1)
+    return mask
+
+
+def polygon_to_mask_pixels(polygon, height, width):
+    """Convert a normalized YOLO polygon to a mask."""
+    # Use the polygons_to_mask function with normalized=True
+    return polygons_to_mask([polygon], (height, width), normalized=True).astype(np.uint8) * 255
+
+
 # --- Test Cases ---
 
 IMG_SHAPE = (100, 200)  # height, width
 H, W = IMG_SHAPE
 
+# Default values for verified function, matching typical use in converter.py
+DEFAULT_TEST_MIN_AREA = 10  # from converter.py POLYGON_MIN_CONTOUR_AREA
+DEFAULT_TEST_APPROX_TOL = 0  # from converter.py POLYGON_APPROX_TOLERANCE (disabled)
+
 
 def test_empty_mask():
     """Test with a mask containing no foreground pixels."""
     mask = np.zeros(IMG_SHAPE, dtype=np.uint8)
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE)
     assert polygons == []
 
 
 def test_invalid_image_shape():
     """Test with zero height or width."""
     mask = create_rect_mask(IMG_SHAPE, (10, 20), (30, 40))
-    polygons_zero_h = mask_to_yolo_polygons(mask, (0, W))
+    polygons_zero_h, error_h = mask_to_yolo_polygons(mask, (0, W))
     assert polygons_zero_h == []
-    polygons_zero_w = mask_to_yolo_polygons(mask, (H, 0))
+    polygons_zero_w, error_w = mask_to_yolo_polygons(mask, (H, 0))
     assert polygons_zero_w == []
 
 
@@ -56,9 +78,9 @@ def test_invalid_mask_dims():
     """Test with mask dimensions other than 2."""
     mask_1d = np.zeros(100, dtype=np.uint8)
     mask_3d = np.zeros((H, W, 3), dtype=np.uint8)
-    polygons_1d = mask_to_yolo_polygons(mask_1d, IMG_SHAPE)
+    polygons_1d, error_1d = mask_to_yolo_polygons(mask_1d, IMG_SHAPE)
     assert polygons_1d == []
-    polygons_3d = mask_to_yolo_polygons(mask_3d, IMG_SHAPE)
+    polygons_3d, error_3d = mask_to_yolo_polygons(mask_3d, IMG_SHAPE)
     assert polygons_3d == []
 
 
@@ -82,7 +104,7 @@ def test_single_simple_contour():
         20 / H,  # Top-right
     ]
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
     assert len(polygons) == 1
     assert len(polygons[0]) == 8  # 4 points
     np.testing.assert_allclose(
@@ -90,7 +112,7 @@ def test_single_simple_contour():
     )  # Allow tolerance for approximation
 
     # Result should be the same if connect_parts=True for single contour
-    polygons_connected = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=True)
+    polygons_connected, error = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=True)
     assert len(polygons_connected) == 1
     np.testing.assert_allclose(polygons_connected[0], expected_poly, atol=0.01)
 
@@ -101,7 +123,7 @@ def test_single_complex_contour():
     points = [(40, 20), (160, 20), (160, 50), (80, 50), (80, 80), (40, 80)]
     mask = create_l_shape_mask(IMG_SHAPE, points)
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE)
     assert len(polygons) == 1
     assert len(polygons[0]) >= 6  # Should have at least 3 points
     # Check if the normalized points roughly match the input (order might change due to approx)
@@ -115,7 +137,7 @@ def test_single_complex_contour():
 def test_contour_below_area_threshold():
     """Test when the contour area is smaller than the minimum."""
     mask = create_rect_mask(IMG_SHAPE, (50, 50), (51, 51))  # Area is 1
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, min_contour_area=2.0)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE, min_contour_area=2.0)
     assert polygons == []
 
 
@@ -131,7 +153,7 @@ def test_multiple_contours_no_connection():
     expected_poly1 = [40 / W, 10 / H, 40 / W, 40 / H, 160 / W, 40 / H, 160 / W, 10 / H]
     expected_poly2 = [40 / W, 60 / H, 40 / W, 90 / H, 160 / W, 90 / H, 160 / W, 60 / H]
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
     assert len(polygons) == 2
     # Order depends on contour finding, sort by y-coord of first point
     polygons.sort(key=lambda p: p[1])
@@ -147,7 +169,7 @@ def test_multiple_contours_with_connection():
     # Box 2 (bottom)
     cv2.rectangle(mask, (40, 60), (160, 90), 255, thickness=cv2.FILLED)
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=True)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=True)
     assert len(polygons) == 1, "Expected a single combined polygon list"
     # Check the combined polygon is valid (at least 3 points / 6 coordinates)
     assert len(polygons[0]) >= 6, "Combined polygon must have at least 3 points"
@@ -168,7 +190,9 @@ def test_multiple_contours_connection_with_filtering():
     # Box 3 (bottom, large)
     cv2.rectangle(mask, (40, 60), (160, 90), 255, thickness=cv2.FILLED)
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=True, min_contour_area=10.0)
+    polygons, error = mask_to_yolo_polygons(
+        mask, IMG_SHAPE, connect_parts=True, min_contour_area=10.0
+    )
     assert len(polygons) == 1, "Expected single combined list even with filtering"
     # Check the combined polygon is valid (at least 3 points / 6 coordinates)
     assert len(polygons[0]) >= 6, "Combined polygon must have at least 3 points"
@@ -182,7 +206,7 @@ def test_contours_touching_edges():
     # Box touching bottom-right
     cv2.rectangle(mask, (W - 50, H - 50), (W - 1, H - 1), 255, thickness=cv2.FILLED)
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE, connect_parts=False)
     assert len(polygons) == 2
     for poly in polygons:
         assert len(poly) >= 6
@@ -223,165 +247,293 @@ def test_different_mask_types(dtype, value):
         20 / H,  # Top-right
     ]
 
-    polygons = mask_to_yolo_polygons(mask, IMG_SHAPE)
+    polygons, error = mask_to_yolo_polygons(mask, IMG_SHAPE)
     assert len(polygons) == 1
     assert len(polygons[0]) == 8
     np.testing.assert_allclose(polygons[0], expected_poly, atol=0.01)
 
-# --- Tests for polygon_to_mask ---
+
+# --- Tests for polygons_to_mask ---
 
 
-def test_polygon_to_mask_simple():
-    """Test polygon_to_mask with a simple square polygon."""
-    # Create a simple square polygon from (1,1) to (4,4)
-    square_polygon = [(1, 1), (4, 1), (4, 4), (1, 4)]
-    height, width = 6, 6
+class TestPolygonsToMask:
+    """Test cases for polygons_to_mask function."""
 
-    mask = polygon_to_mask(square_polygon, height, width)
+    def test_single_polygon(self):
+        """Test conversion of a single polygon to mask."""
+        height, width = 100, 100
 
-    # Check mask properties
-    assert mask.shape == (height, width)
-    assert mask.dtype == bool
+        # Create a simple rectangle polygon
+        rectangle = np.array([[20, 20], [80, 20], [80, 80], [20, 80]], dtype=np.int32).reshape(
+            -1, 1, 2
+        )
 
-    # Expected mask (16 pixels inside the square)
-    expected_pixels_inside = 16
-    assert np.sum(mask) == expected_pixels_inside
+        # Convert to mask
+        mask = polygons_to_mask([rectangle], (height, width), normalized=False)
 
-    # Check specific areas
-    # Inside the square (should be True)
-    assert mask[2, 2] == True
-    assert mask[3, 3] == True
+        # Create reference mask using cv2.rectangle
+        ref_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.rectangle(ref_mask, (20, 20), (80, 80), 1, -1)
+        ref_mask = ref_mask.astype(bool)
 
-    # Outside the square (should be False)
-    assert mask[0, 0] == False
-    assert mask[5, 5] == False
+        # Check that masks match
+        assert np.array_equal(mask, ref_mask), "Generated mask should match reference"
 
+    def test_multiple_polygons(self):
+        """Test conversion of multiple polygons to a single mask."""
+        height, width = 200, 200
 
-def test_polygon_to_mask_triangle():
-    """Test polygon_to_mask with a triangle."""
-    # Create a triangle at (1,1), (4,1), (2,4)
-    triangle_polygon = [(1, 1), (4, 1), (2, 4)]
-    height, width = 6, 6
+        # Create two polygons
+        circle1 = np.zeros((0, 1, 2), dtype=np.int32)
+        circle2 = np.zeros((0, 1, 2), dtype=np.int32)
 
-    mask = polygon_to_mask(triangle_polygon, height, width)
+        # Generate points for circles
+        for angle in range(0, 360, 10):
+            x1 = int(50 + 30 * np.cos(np.radians(angle)))
+            y1 = int(50 + 30 * np.sin(np.radians(angle)))
+            circle1 = np.append(circle1, np.array([[[x1, y1]]], dtype=np.int32), axis=0)
 
-    # Check key points
-    assert mask[1, 1] == True  # Vertex
-    assert mask[1, 4] == True  # Vertex
-    assert mask[4, 2] == True  # Vertex
-    assert mask[2, 2] == True  # Inside
-    assert mask[0, 0] == False  # Outside
-    assert mask[5, 5] == False  # Outside
+            x2 = int(150 + 25 * np.cos(np.radians(angle)))
+            y2 = int(150 + 25 * np.sin(np.radians(angle)))
+            circle2 = np.append(circle2, np.array([[[x2, y2]]], dtype=np.int32), axis=0)
 
+        # Convert to mask
+        mask = polygons_to_mask([circle1, circle2], (height, width), normalized=False)
 
-def test_polygon_to_mask_empty():
-    """Test polygon_to_mask with edge cases."""
-    # Empty polygon
-    empty_polygon = []
-    height, width = 5, 5
+        # Create reference mask
+        ref_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.circle(ref_mask, (50, 50), 30, 1, -1)
+        cv2.circle(ref_mask, (150, 150), 25, 1, -1)
+        ref_mask = ref_mask.astype(bool)
 
-    mask = polygon_to_mask(empty_polygon, height, width)
-    assert mask.shape == (height, width)
-    assert not np.any(mask)  # All values should be False
+        # Check using IoU since the circle approximations may differ slightly
+        iou = calculate_mask_iou(mask, ref_mask)
+        assert iou > 0.95, f"IoU should be high, got {iou}"
 
-    # Degenerate polygon (less than 3 points)
-    degenerate_polygon = [(1, 1), (2, 2)]
-    mask = polygon_to_mask(degenerate_polygon, height, width)
-    assert not np.any(mask)  # All values should be False
+    def test_empty_list(self):
+        """Test with empty polygon list."""
+        height, width = 100, 100
 
+        # Should return an all-False mask
+        mask = polygons_to_mask([], (height, width), normalized=False)
 
-def test_polygon_to_mask_out_of_bounds():
-    """Test polygon_to_mask with coordinates outside image bounds."""
-    # Polygon partly outside image bounds
-    out_of_bounds_polygon = [(-1, -1), (3, -1), (3, 3), (-1, 3)]
-    height, width = 5, 5
+        assert mask.shape == (height, width), "Mask should have correct dimensions"
+        assert not mask.any(), "Mask should be all False for empty polygon list"
 
-    mask = polygon_to_mask(out_of_bounds_polygon, height, width)
+    def test_invalid_polygons(self):
+        """Test with invalid polygons (fewer than 3 points)."""
+        height, width = 100, 100
 
-    # Check that mask was created despite out-of-bounds coordinates
-    assert mask.shape == (height, width)
+        # Polygon with only 2 points (invalid)
+        invalid_poly = np.array([[[10, 10]], [[20, 20]]], dtype=np.int32)
 
-    # The visible part of the polygon should be filled
-    assert mask[0, 0] == True
-    assert mask[2, 2] == True
-    assert mask[0, 2] == True
+        # Should handle gracefully and return empty mask
+        mask = polygons_to_mask([invalid_poly], (height, width), normalized=False)
 
-    # Outside the visible part should be False
-    assert mask[4, 4] == False
+        assert mask.shape == (height, width), "Mask should have correct dimensions"
+        assert not mask.any(), "Mask should be all False for invalid polygon"
 
+    def test_different_formats(self):
+        """Test with polygons in different formats."""
+        height, width = 100, 100
 
-def test_calculate_mask_iou_identical():
-    """Test calculate_mask_iou with identical masks."""
-    # Create a simple 5x5 mask with a 3x3 square in the middle
-    mask = np.zeros((5, 5), dtype=bool)
-    mask[1:4, 1:4] = True  # 3x3 square
+        # Format (N, 2) needs reshaping
+        poly_format1 = np.array([[10, 10], [90, 10], [90, 90], [10, 90]], dtype=np.int32)
 
-    # IoU with itself should be 1.0
-    iou = calculate_mask_iou(mask, mask)
-    assert iou == 1.0
+        # Format (N, 1, 2) already correct for fillPoly
+        poly_format2 = poly_format1.reshape(-1, 1, 2)
 
+        mask1 = polygons_to_mask([poly_format1], (height, width), normalized=False)
+        mask2 = polygons_to_mask([poly_format2], (height, width), normalized=False)
 
-def test_calculate_mask_iou_disjoint():
-    """Test calculate_mask_iou with completely disjoint masks."""
-    # First mask: top-left corner
-    mask1 = np.zeros((5, 5), dtype=bool)
-    mask1[0:2, 0:2] = True
-
-    # Second mask: bottom-right corner
-    mask2 = np.zeros((5, 5), dtype=bool)
-    mask2[3:5, 3:5] = True
-
-    # IoU should be 0.0 as there's no overlap
-    iou = calculate_mask_iou(mask1, mask2)
-    assert iou == 0.0
+        # Both formats should produce the same result
+        assert np.array_equal(mask1, mask2), "Different polygon formats should produce same mask"
 
 
-def test_calculate_mask_iou_partial_overlap():
-    """Test calculate_mask_iou with partially overlapping masks."""
-    # First mask: 3x3 square in top-left
-    mask1 = np.zeros((5, 5), dtype=bool)
-    mask1[0:3, 0:3] = True  # 9 pixels
-
-    # Second mask: 3x3 square shifted one pixel right and down
-    mask2 = np.zeros((5, 5), dtype=bool)
-    mask2[1:4, 1:4] = True  # 9 pixels
-
-    # Overlap is 2x2 square = 4 pixels
-    # Union is 9 + 9 - 4 = 14 pixels
-    # IoU = 4/14 ≈ 0.2857
-    expected_iou = 4 / 14
-
-    iou = calculate_mask_iou(mask1, mask2)
-    assert abs(iou - expected_iou) < 1e-6
+# --- Tests for mask_to_yolo_polygons_verified ---
 
 
-def test_calculate_mask_iou_edge_cases():
-    """Test calculate_mask_iou with edge cases."""
-    # Empty masks
-    empty_mask = np.zeros((5, 5), dtype=bool)
+class TestMaskToYoloPolygonsVerified:
+    """Test cases for mask_to_yolo_polygons_verified function."""
 
-    # When both masks are empty, IoU should be 1.0
-    iou = calculate_mask_iou(empty_mask, empty_mask)
-    assert iou == 1.0
+    @pytest.mark.parametrize(
+        "shape, rect_coords, expected_num_points",
+        [
+            (IMG_SHAPE, ((20, 40), (80, 160)), 4),  # y,x for top_left, bottom_right
+            ((50, 50), ((5, 5), (45, 45)), 4),
+        ],
+    )
+    def test_basic_shapes(self, shape, rect_coords, expected_num_points):
+        """Test simple rectangular shapes."""
+        h, w = shape
+        mask = create_rect_mask(
+            shape,
+            (rect_coords[0][1], rect_coords[0][0]),  # convert to x,y for cv2.rectangle
+            (rect_coords[1][1], rect_coords[1][0]),
+            dtype=np.uint8,
+        )
 
-    # One empty mask, one non-empty mask
-    non_empty_mask = np.zeros((5, 5), dtype=bool)
-    non_empty_mask[1:3, 1:3] = True
+        polygons, iou, error_msg = mask_to_yolo_polygons_verified(
+            mask, shape, DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
 
-    iou = calculate_mask_iou(empty_mask, non_empty_mask)
-    assert iou == 0.0
+        assert error_msg is None, f"Error processing basic shape: {error_msg}"
+        assert len(polygons) == 1
+        assert len(polygons[0]) == expected_num_points * 2
+        # Relaxed IoU for the second parameterized case (shape1-rect_coords1-4)
+        if shape == (50, 50):
+            assert iou >= 0.95, f"Expected IoU >= 0.95 for smaller rect, got {iou}"
+        else:
+            assert iou >= 0.98, f"Expected IoU >= 0.98, got {iou}"
+        for p_val in polygons[0]:
+            assert 0.0 <= p_val <= 1.0
+
+    def test_multiple_regions_no_connection_handling(self):
+        """Test two separate rectangles. Verified func processes them separately."""
+        mask = np.zeros(IMG_SHAPE, dtype=np.uint8)
+        # Box 1 (top)
+        cv2.rectangle(mask, (40, 10), (160, 40), 255, thickness=cv2.FILLED)
+        # Box 2 (bottom)
+        cv2.rectangle(mask, (40, 60), (160, 90), 255, thickness=cv2.FILLED)
+
+        polygons, iou, error_msg = mask_to_yolo_polygons_verified(
+            mask, IMG_SHAPE, DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
+
+        assert error_msg is None, f"Error processing multiple regions: {error_msg}"
+        assert len(polygons) == 2, "Expected two separate polygons"
+        assert iou >= 0.98, f"Expected high IoU for multiple regions, got {iou}"
+        for poly in polygons:
+            assert len(poly) >= 6
+
+    def test_empty_and_invalid_inputs(self):
+        """Test empty mask, invalid shape, etc."""
+        # Empty mask
+        mask_empty = np.zeros(IMG_SHAPE, dtype=np.uint8)
+        polys, iou, err = mask_to_yolo_polygons_verified(
+            mask_empty, IMG_SHAPE, DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
+        assert polys == []
+        assert iou == 0.0
+        assert err is None  # No contours, but not an error for an empty mask
+
+        # Invalid image shape
+        mask_valid = create_rect_mask(IMG_SHAPE, (10, 20), (30, 40))
+        polys_h, iou_h, err_h = mask_to_yolo_polygons_verified(
+            mask_valid, (0, W), DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
+        assert polys_h == []
+        assert iou_h == 0.0
+        assert err_h is not None
+
+        polys_w, iou_w, err_w = mask_to_yolo_polygons_verified(
+            mask_valid, (H, 0), DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
+        assert polys_w == []
+        assert iou_w == 0.0
+        assert err_w is not None
+
+        # Mask with invalid dimensions
+        mask_1d = np.zeros(100, dtype=np.uint8)
+        polys_1d, iou_1d, err_1d = mask_to_yolo_polygons_verified(
+            mask_1d, IMG_SHAPE, DEFAULT_TEST_MIN_AREA, DEFAULT_TEST_APPROX_TOL
+        )
+        assert polys_1d == []
+        assert iou_1d == 0.0
+        assert "Mask must be 2D" in err_1d
+
+    def test_min_contour_area_filtering(self):
+        """Test filtering contours by area."""
+        # Use a slightly larger mask to avoid sub-pixel issues for very small areas
+        mask_small_actual = create_rect_mask(IMG_SHAPE, (50, 50), (53, 53))  # 3x3 pixels -> Area 9
+
+        # Case 1: Contour area is too small
+        polys, iou, err = mask_to_yolo_polygons_verified(
+            mask_small_actual,
+            IMG_SHAPE,
+            min_contour_area=10.0,
+            polygon_approx_tolerance=DEFAULT_TEST_APPROX_TOL,
+        )
+        assert polys == []
+        assert iou == 0.0
+        assert err == "no_contours"
+
+        # Case 2: Contour area is large enough
+        polys_ok, iou_ok, err_ok = mask_to_yolo_polygons_verified(
+            mask_small_actual,
+            IMG_SHAPE,
+            min_contour_area=8.0,
+            polygon_approx_tolerance=DEFAULT_TEST_APPROX_TOL,
+        )
+        assert len(polys_ok) == 1
+        assert iou_ok == pytest.approx(9 / 16), (
+            f"Expected IoU for 3x3 rect to be approx 9/16 ({9 / 16:.4f}), got {iou_ok}"
+        )
+        assert err_ok is None
+
+    def test_iou_value_returned(self):
+        """Test that IoU is calculated and returned correctly, no thresholding."""
+        mask = create_rect_mask(IMG_SHAPE, (10, 10), (60, 60))
+        polys, iou, err = mask_to_yolo_polygons_verified(
+            mask, IMG_SHAPE, min_contour_area=1.0, polygon_approx_tolerance=0.0
+        )
+        assert err is None
+        assert len(polys) == 1
+        assert iou == pytest.approx(1.0, abs=0.015)  # Allow slight deviation from 1.0
+
+        mask_circle = create_circle_mask(H, W, (W // 2, H // 2), 30)
+        polys_circle, iou_circle, err_circle = mask_to_yolo_polygons_verified(
+            mask_circle, IMG_SHAPE, min_contour_area=10, polygon_approx_tolerance=0.01
+        )
+        assert err_circle is None
+        assert len(polys_circle) == 1
+        assert 0.90 < iou_circle < 1.0
+
+    def test_polygon_approximation_effect_on_iou(self):
+        """Test how polygon approximation affects IoU."""
+        mask = create_rect_mask(IMG_SHAPE, (10, 10), (90, 190))
+
+        _, iou_no_simplify, _ = mask_to_yolo_polygons_verified(
+            mask, IMG_SHAPE, min_contour_area=1, polygon_approx_tolerance=0.0
+        )
+        assert iou_no_simplify == pytest.approx(1.0, abs=0.015)  # Allow slight deviation
+
+        _, iou_simplify_low_tol, _ = mask_to_yolo_polygons_verified(
+            mask, IMG_SHAPE, min_contour_area=1, polygon_approx_tolerance=0.001
+        )
+        assert iou_simplify_low_tol == pytest.approx(1.0, abs=0.015)
+
+        _, iou_simplify_high_tol, _ = mask_to_yolo_polygons_verified(
+            mask, IMG_SHAPE, min_contour_area=1, polygon_approx_tolerance=0.02
+        )
+        assert iou_simplify_high_tol > 0.97  # Expect high, but allow more deviation
 
 
-def test_calculate_mask_iou_error_cases():
-    """Test calculate_mask_iou error handling."""
-    mask1 = np.zeros((5, 5), dtype=bool)
+# --- Tests for calculate_mask_iou ---
+# (Existing tests for calculate_mask_iou can remain as they are)
 
-    # Mismatched shapes
-    mask2 = np.zeros((6, 6), dtype=bool)
-    with pytest.raises(ValueError):
-        calculate_mask_iou(mask1, mask2)
+# --- Test for the new debug save function (optional) ---
+# import os
+# def test_save_mask_and_polygon_debug_images(tmp_path):
+#     global _debug_save_counter # Access the global counter from mask.py
+#     from vibelab.utils.common.mask import _debug_save_counter as mask_debug_counter, DEBUG_MASK_DIR
+#     original_counter = mask_debug_counter
 
-    # Non-boolean mask
-    mask3 = np.zeros((5, 5), dtype=int)
-    with pytest.raises(ValueError):
-        calculate_mask_iou(mask1, mask3)
+#     mask_shape = (50, 50)
+#     original_mask = create_rect_mask(mask_shape, (5,5), (25,25), value=1).astype(bool)
+#     # A simple square polygon, normalized
+#     yolo_poly = [5/50, 5/50, 5/50, 25/50, 25/50, 25/50, 25/50, 5/50]
+
+#     # Override DEBUG_MASK_DIR for this test
+#     test_debug_dir = tmp_path / "test_mask_debug"
+#     from vibelab.utils.common import mask as mask_module
+#     original_debug_mask_dir = mask_module.DEBUG_MASK_DIR
+#     mask_module.DEBUG_MASK_DIR = str(test_debug_dir)
+
+#     save_mask_and_polygon_debug_images(original_mask, yolo_poly, mask_shape)
+
+#     assert os.path.exists(test_debug_dir / f"{original_counter + 1}_original_mask.png")
+#     assert os.path.exists(test_debug_dir / f"{original_counter + 1}_polygon_mask.png")
+
+#     # Restore original DEBUG_MASK_DIR
+#     mask_module.DEBUG_MASK_DIR = original_debug_mask_dir

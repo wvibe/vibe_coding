@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.utils.metrics.detection import (
+from vibelab.utils.metrics.detection import (
     calculate_ap,
     calculate_iou,
     calculate_map,

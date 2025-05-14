@@ -14,29 +14,30 @@ This directory contains code and documentation related to experiments with YOLOv
 
 ## Source Code
 
-- Main scripts: [`src/models/ext/yolov11/`](../../src/models/ext/yolov11/)
+- Main scripts: [`src/vibelab/models/ext/yolov11/`](../../src/vibelab/models/ext/yolov11/)
 - Configurations: [`configs/yolov11/`](../../configs/yolov11/)
 - Tests:
   - Prediction: `tests/models/ext/yolov11/test_predict.py`
 
 ## Usage
 
-### Prediction (Detection)
+### Prediction (YOLOv11)
 
-The `predict_detect.py` script runs inference using a YOLOv11 model based on parameters defined in a YAML configuration file. It supports command-line arguments for dataset selection and limited overrides.
+The `predict_yolo.py` script runs inference using a YOLOv11 model (detection or segmentation) based on parameters defined in a YAML configuration file. It supports command-line arguments for dataset selection, task type, and limited overrides.
 
-**Configuration (`configs/yolov11/predict_detect.yaml`):**
+**Configuration (`configs/yolov11/predict_detect.yaml` or `configs/yolov11/predict_segment.yaml`):**
 
-- `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt`).
-- `project`: Base directory to save output runs (e.g., `runs/predict/detect`).
+- `model`: Path to the model (`.pt`) or Ultralytics model name (e.g., `yolo11n.pt` for detection, `yolo11n-seg.pt` for segmentation).
+- `project`: Base directory to save output runs (e.g., `runs/predict/detect` or `runs/segment`).
 - Other optional keys correspond to `ultralytics.YOLO.predict` arguments (e.g., `conf`, `imgsz`, `save`, `save_txt`, `save_conf`, `device`).
 
 **Command-Line:**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
-    --config configs/yolov11/predict_detect.yaml \
-    --dataset <dataset_id> \
+python -m vibelab.models.ext.yolov11.predict_yolo \
+    --config configs/yolov11/predict_<task>.yaml \
+    --dataset <dataset_src> \
+    --task <detect|segment> \
     --tag <split_tag> \
     --name <your_run_name> \
     [--device <device_id>] \
@@ -48,7 +49,10 @@ python -m src.models.ext.yolov11.predict_detect \
 **Arguments:**
 
 - `--config`: Path to the YAML configuration file. *Required.*
-- `--dataset`: Dataset identifier (e.g., `voc`). Must have a corresponding `*_DETECT` environment variable defined in `.env` (e.g., `VOC_DETECT`). Default: `voc`.
+- `--dataset`: Specifies the dataset source. Can be either:
+  - A direct path to the dataset base directory (e.g., `/path/to/voc/detect`)
+  - The name of an environment variable containing the base path (e.g., `VOC_DETECT`, `VOC_SEGMENT`). *Required.*
+- `--task`: Specifies the prediction task type (`detect` or `segment`). *Required.*
 - `--tag`: The specific split/tag for the dataset (e.g., `val2007`, `test2007`). The script looks for images in `${DATASET_BASE_PATH}/images/{tag}`. *Required.*
 - `--name`: The name for this specific prediction run. This will be the name of the output directory created under the `project` specified in the config file. *Required.*
 - `--device` (optional): Override the compute device specified in the config file. If omitted, the config value is used.
@@ -56,22 +60,35 @@ python -m src.models.ext.yolov11.predict_detect \
 - `--show` (optional): Override whether to display results in a window (True/False). If omitted, the config value is used.
 - `--sample_count` (optional): Randomly sample `N` images from the source directory. Processes all if omitted.
 
-**Example (using default config on VOC test2007):**
+**Example (Detection on VOC test2007):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
+python -m vibelab.models.ext.yolov11.predict_yolo \
     --config configs/yolov11/predict_detect.yaml \
-    --dataset voc \
+    --dataset VOC_DETECT \
+    --task detect \
     --tag test2007 \
     --name voc_test2007_detect_run1
 ```
 
-**Example (using specific device and random sampling):**
+**Example (Segmentation on VOC val2007):**
 
 ```bash
-python -m src.models.ext.yolov11.predict_detect \
+python -m vibelab.models.ext.yolov11.predict_yolo \
+    --config configs/yolov11/predict_segment.yaml \
+    --dataset VOC_SEGMENT \
+    --task segment \
+    --tag val2007 \
+    --name voc_val2007_segment_run1
+```
+
+**Example (Using specific device and random sampling):**
+
+```bash
+python -m vibelab.models.ext.yolov11.predict_yolo \
     --config configs/yolov11/predict_detect.yaml \
-    --dataset voc \
+    --dataset VOC_DETECT \
+    --task detect \
     --tag val2007 \
     --name voc_val2007_detect_run2 \
     --device cpu \
@@ -79,75 +96,21 @@ python -m src.models.ext.yolov11.predict_detect \
     --sample_count 10
 ```
 
-Results are saved to `<config.project>/<name>_<timestamp>/`.
-
-### Prediction (Segmentation)
-
-The `predict_segment.py` script runs instance segmentation inference using a YOLOv11 segmentation model.
-It requires a YAML configuration file for model and inference settings, and command-line arguments
-to specify the target dataset split and the output run name.
-
-**Configuration (`configs/yolov11/predict_segment.yaml`):**
-
-- Defines model and inference parameters.
-- `model`: Path to the segmentation model (`.pt`) or Ultralytics model name (e.g., `yolo11n-seg.pt`). *Required.*
-- `project`: Base directory to save output runs (e.g., `runs/segment`). *Required.*
-- Other optional keys correspond to `ultralytics.YOLO.predict` arguments for segmentation (e.g., `conf`, `iou`, `imgsz`, `max_det`, `device`, `save`, `save_txt`, `save_conf`, `save_crop`, `show`, `exist_ok`, `classes`, `agnostic_nms`, `retina_masks`, `boxes`). Refer to the YAML comments for defaults/details.
-- **Note:** `source` and `name` are *not* set here; they are provided via command-line arguments.
-
-**Command-Line:**
+**Example (Using a direct path to dataset):**
 
 ```bash
-# Activate environment if needed (e.g., conda activate vbl)
-# Ensure .env file is present at project root for dataset path resolution
-
-python -m src.models.ext.yolov11.predict_segment \
+python -m vibelab.models.ext.yolov11.predict_yolo \
     --config configs/yolov11/predict_segment.yaml \
-    --dataset <dataset_id> \
-    --tag <split_tag> \
-    --name <your_run_name> \
-    [--device <device_id>] \
-    [--save <True|False>] \
-    [--show <True|False>] \
-    [--sample_count <N>]
-```
-
-**Arguments:**
-
-- `--config`: Path to the YAML configuration file (e.g., `configs/yolov11/predict_segment.yaml`). *Required.*
-- `--dataset`: Dataset identifier (e.g., `voc`). Must have a corresponding `*_SEGMENT` environment variable defined in `.env` (e.g., `VOC_SEGMENT`). Default: `voc`.
-- `--tag`: The specific split/tag for the dataset (e.g., `val2007`, `test2007`). The script looks for images in `${DATASET_BASE_PATH}/images/{tag}`. *Required.*
-- `--name`: The name for this specific prediction run. This will be the name of the output directory created under the `project` specified in the config file. *Required.*
-- `--device` (optional): Override the compute device specified in the config file. If omitted, the config value is used.
-- `--save` (optional): Override whether to save annotated images (True/False). If omitted, the config value is used.
-- `--show` (optional): Override whether to display results in a window (True/False). If omitted, the config value is used.
-- `--sample_count` (optional): Randomly sample `N` images from the source directory. Processes all if omitted.
-
-**Example (using default config on VOC val2007):**
-
-```bash
-python -m src.models.ext.yolov11.predict_segment \
-    --config configs/yolov11/predict_segment.yaml \
-    --dataset voc \
+    --dataset /path/to/voc/segment \
+    --task segment \
     --tag val2007 \
-    --name voc_val2007_predict_run1
+    --name voc_val2007_segment_run2
 ```
 
-**Example (using specific device and disabling saving):**
-
-```bash
-python -m src.models.ext.yolov11.predict_segment \
-    --config configs/yolov11/predict_segment.yaml \
-    --dataset voc \
-    --tag test2007 \
-    --name voc_test2007_predict_run2 \
-    --device cpu \
-    --save False
-```
+Results are saved to `<config.project>/<name>_<timestamp>/`.
 
 **Output:**
 
-- Results are saved to `<config.project>/<name>_<timestamp>/` (e.g., `runs/segment/voc_val2007_predict_run1_<timestamp>/`).
 - The console output includes logs of the configuration, process, and prediction time statistics (total time, average time per image (wall clock), FPS (wall clock), and average preprocess/inference/postprocess times reported by Ultralytics).
 - Annotated images are saved if `save: True` (either in config or via `--save True`).
 
@@ -306,21 +269,5 @@ For detailed configuration options, refer to the specific comments within `evalu
 **Command-Line:**
 
 ```bash
-python -m src.models.ext.yolov11.evaluate_detect --config <path_to_config.yaml>
+python -m vibelab.models.ext.yolov11.evaluate_detect --config <path_to_config.yaml>
 ```
-
-**Example (using default config):**
-
-```bash
-python -m src.models.ext.yolov11.evaluate_detect \
-    --config src/models/ext/yolov11/configs/evaluate_default.yaml
-```
-
-Results (summary metrics JSON, plots, optional individual results) are saved to a timestamped directory within the project path defined in the configuration (e.g., `runs/evaluate/detect/expN`).
-
-## Documentation
-
-Detailed documentation is available in the following files:
-- [Design Notes](./design.md): Architecture and design decisions
-- [Evaluation Guide](./evaluate.md): Detailed evaluation metrics and configuration
-- [Todo List](./todo.md): Project roadmap and task tracking

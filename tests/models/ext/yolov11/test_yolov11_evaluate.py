@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 import yaml
 
-from src.models.ext.yolov11.evaluate_detect import calculate_all_metrics
+from vibelab.models.ext.yolov11.evaluate_detect import calculate_all_metrics
 
 # Import the functions to be tested from the utils file
 # Import more functions to test
-from src.models.ext.yolov11.evaluate_utils import (
+from vibelab.models.ext.yolov11.evaluate_utils import (
     _generate_text_summary,
     load_config,
     load_ground_truth,
@@ -134,7 +134,7 @@ def test_load_config_invalid_class_names(valid_config_dict):
 # --- Tests for setup_output_directory ---
 
 
-@patch("src.models.ext.yolov11.evaluate_utils.Path.mkdir")
+@patch("vibelab.models.ext.yolov11.evaluate_utils.Path.mkdir")
 def test_setup_output_directory_with_name(mock_mkdir, valid_config_dict):
     """Tests output directory creation when name is specified in config."""
     config = valid_config_dict
@@ -146,8 +146,8 @@ def test_setup_output_directory_with_name(mock_mkdir, valid_config_dict):
     mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
 
-@patch("src.models.ext.yolov11.evaluate_utils.Path.mkdir")
-@patch("src.models.ext.yolov11.evaluate_utils.datetime")
+@patch("vibelab.models.ext.yolov11.evaluate_utils.Path.mkdir")
+@patch("vibelab.models.ext.yolov11.evaluate_utils.datetime")
 def test_setup_output_directory_no_name(mock_dt, mock_mkdir, valid_config_dict):
     """Tests output directory creation when name is generated."""
     config = valid_config_dict.copy()
@@ -167,7 +167,7 @@ def test_setup_output_directory_no_name(mock_dt, mock_mkdir, valid_config_dict):
     mock_now.strftime.assert_called_once_with("%Y%m%d_%H%M%S")
 
 
-@patch("src.models.ext.yolov11.evaluate_utils.Path.mkdir")
+@patch("vibelab.models.ext.yolov11.evaluate_utils.Path.mkdir")
 def test_setup_output_directory_default_project(mock_mkdir, valid_config_dict):
     """Tests output directory creation using the default project path."""
     config = valid_config_dict.copy()
@@ -253,7 +253,7 @@ def specific_mock_is_file_for_zero_area(self):
 
 
 @patch("pathlib.Path.is_file", mock_path_is_file)  # Use the general mock
-@patch("src.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(1000, 1000))
+@patch("vibelab.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(1000, 1000))
 def test_load_ground_truth_success(mock_get_dims, mock_label_files):
     """Tests successful loading and conversion of YOLO labels."""
     label_dir = Path("labels")
@@ -294,7 +294,7 @@ def test_load_ground_truth_success(mock_get_dims, mock_label_files):
         np.testing.assert_allclose(res_gt["box"], exp_gt["box"], rtol=1e-5)
 
 
-@patch("src.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=None)
+@patch("vibelab.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=None)
 def test_load_ground_truth_image_read_error(mock_get_dims, caplog):
     """Tests error logging if image dimensions cannot be read or image not found."""
     label_dir = Path("labels")
@@ -331,7 +331,7 @@ def test_load_ground_truth_image_read_error(mock_get_dims, caplog):
 
 
 @patch("pathlib.Path.is_file", mock_path_is_file)  # Use general mock
-@patch("src.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(100, 100))
+@patch("vibelab.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(100, 100))
 def test_load_ground_truth_invalid_lines(mock_get_dims, mock_label_files, caplog):
     """Tests skipping of invalid lines in label files."""
     label_dir = Path("labels")
@@ -363,7 +363,7 @@ def test_load_ground_truth_invalid_lines(mock_get_dims, mock_label_files, caplog
                 np.testing.assert_allclose(res_gt["box"], exp_gt["box"], rtol=1e-5)
 
 
-@patch("src.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(100, 100))
+@patch("vibelab.models.ext.yolov11.evaluate_utils._get_image_dimensions", return_value=(100, 100))
 def test_load_ground_truth_zero_area_box(mock_get_dims, caplog):
     """Tests skipping of boxes that become zero area after conversion/clamping."""
     label_dir = Path("labels")
@@ -460,10 +460,12 @@ def test_generate_text_summary_missing_data(valid_config_dict):
 
 
 # Mocking the plot functions as we don't test plot output directly in unit tests
-@patch("src.models.ext.yolov11.evaluate_utils._plot_pr_curve")
-@patch("src.models.ext.yolov11.evaluate_utils._plot_confusion_matrix")
+@patch("vibelab.models.ext.yolov11.evaluate_utils._plot_pr_curve")
+@patch("vibelab.models.ext.yolov11.evaluate_utils._plot_confusion_matrix")
 @patch("builtins.open", new_callable=mock_open)  # Mock file writing
-@patch("src.models.ext.yolov11.evaluate_utils._generate_text_summary")  # Mock summary generation
+@patch(
+    "vibelab.models.ext.yolov11.evaluate_utils._generate_text_summary"
+)  # Mock summary generation
 def test_save_evaluation_results_calls(
     mock_generate_summary, mock_open_file, mock_plot_cm, mock_plot_pr, tmp_path, valid_config_dict
 ):
@@ -518,8 +520,8 @@ def test_save_evaluation_results_calls(
     assert summary_write_found, "Text summary was not written to file"
 
 
-@patch("src.models.ext.yolov11.evaluate_utils._plot_pr_curve")  # Still mock plots
-@patch("src.models.ext.yolov11.evaluate_utils._plot_confusion_matrix")
+@patch("vibelab.models.ext.yolov11.evaluate_utils._plot_pr_curve")  # Still mock plots
+@patch("vibelab.models.ext.yolov11.evaluate_utils._plot_confusion_matrix")
 @patch("builtins.open", new_callable=mock_open)
 @patch("json.dump")  # Mock json.dump directly
 def test_save_evaluation_results_json_error(
@@ -589,11 +591,11 @@ def sample_preds_gts():
     return preds, gts
 
 
-@patch("src.models.ext.yolov11.evaluate_detect.match_predictions")
-@patch("src.models.ext.yolov11.evaluate_detect.calculate_pr_data")
-@patch("src.models.ext.yolov11.evaluate_detect.calculate_ap")
-@patch("src.models.ext.yolov11.evaluate_detect.calculate_map")
-@patch("src.models.ext.yolov11.evaluate_detect.generate_confusion_matrix")
+@patch("vibelab.models.ext.yolov11.evaluate_detect.match_predictions")
+@patch("vibelab.models.ext.yolov11.evaluate_detect.calculate_pr_data")
+@patch("vibelab.models.ext.yolov11.evaluate_detect.calculate_ap")
+@patch("vibelab.models.ext.yolov11.evaluate_detect.calculate_map")
+@patch("vibelab.models.ext.yolov11.evaluate_detect.generate_confusion_matrix")
 def test_calculate_all_metrics_logic(
     mock_generate_cm, mock_calc_map, mock_calc_ap, mock_calc_pr, mock_match_preds, sample_preds_gts
 ):
@@ -723,11 +725,12 @@ def test_calculate_all_metrics_logic(
 
 
 @patch(
-    "src.models.ext.yolov11.evaluate_detect._calculate_confusion_matrix", return_value=(None, None)
+    "vibelab.models.ext.yolov11.evaluate_detect._calculate_confusion_matrix",
+    return_value=(None, None),
 )
-@patch("src.models.ext.yolov11.evaluate_detect._calculate_map_coco", return_value=0.0)
+@patch("vibelab.models.ext.yolov11.evaluate_detect._calculate_map_coco", return_value=0.0)
 @patch(
-    "src.models.ext.yolov11.evaluate_detect._calculate_map_at_iou", return_value=({}, {}, 0, {})
+    "vibelab.models.ext.yolov11.evaluate_detect._calculate_map_at_iou", return_value=({}, {}, 0, {})
 )  # Simulate no gts/preds processed for mAP @ 0.5
 def test_calculate_all_metrics_no_preds(
     mock_map_iou, mock_map_coco, mock_cm, caplog

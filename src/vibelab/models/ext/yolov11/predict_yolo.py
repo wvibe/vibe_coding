@@ -1,9 +1,9 @@
 """
-Runs YOLOv11 segmentation prediction based on a configuration YAML file
-and command-line arguments specifying the dataset and run name.
+Runs YOLOv11 prediction (detection or segmentation) based on a configuration YAML file
+and command-line arguments specifying the dataset, task, and run name.
 
 Configuration primarily defines model and inference parameters.
-Command-line arguments specify the dataset, split/tag, output name,
+Command-line arguments specify the dataset, task type, split/tag, output name,
 and limited runtime overrides (device, save, show).
 Calculates and reports prediction time statistics.
 """
@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Run YOLOv11 segmentation prediction with dataset/tag selection."
+        description="Run YOLOv11 prediction (detection or segmentation) with dataset/tag selection."
     )
 
-    # Required arguments (Config, Tag, Name remain required)
+    # Required arguments
     parser.add_argument(
         "--config",
         type=str,
@@ -54,11 +54,19 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="voc",  # Default dataset set to 'voc'
+        required=True,
         help=(
-            "Dataset identifier (e.g., 'voc'). Used to find base path via env vars. "
-            "Default: %(default)s"
+            "Specifies the dataset source. Can be the NAME of an environment variable "
+            "(e.g., 'VOC_DETECT') containing the base path, or the direct path "
+            "to the dataset's base directory."
         ),
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        required=True,
+        choices=["detect", "segment"],
+        help="Specifies the prediction task type ('detect' or 'segment').",
     )
     parser.add_argument(
         "--tag",
@@ -77,7 +85,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        default=None,  # Changed from 'cpu'
+        default=None,
         help=(
             "Override compute device (e.g., 'cpu', '0'). Defaults to config file or "
             "Ultralytics default if not specified here."
@@ -86,7 +94,7 @@ def parse_args():
     parser.add_argument(
         "--save",
         type=lambda x: str(x).lower() == "true",
-        default=None,  # Changed from True
+        default=None,
         help=(
             "Override save results (True/False). Defaults to config "
             "file setting if not specified here."
@@ -95,7 +103,7 @@ def parse_args():
     parser.add_argument(
         "--show",
         type=lambda x: str(x).lower() == "true",
-        default=None,  # Changed from False
+        default=None,
         help=(
             "Override display results in window (True/False). Defaults to config "
             "file setting if not specified here."
@@ -114,29 +122,46 @@ def parse_args():
 # --- Source Path Construction & Processing --- #
 
 
-def construct_source_path(dataset_id: str, tag: str) -> Path:
-    """Constructs the image source directory path based on dataset id and tag."""
-    env_var_map = {
-        "voc": "VOC_SEGMENT",
-        # Add other datasets here, e.g., "coco": "COCO_SEGMENT"
-    }
-    dataset_env_var = env_var_map.get(dataset_id.lower())
+def resolve_source_path(dataset_specifier: str, tag: str) -> Path:
+    """
+    Resolves the image source directory path based on dataset specifier and tag.
 
-    if not dataset_env_var:
-        logger.error(f"Error: Unknown dataset identifier '{dataset_id}'. Add mapping to env var.")
+    Args:
+        dataset_specifier: Either a direct path to the dataset base directory
+                          or the name of an environment variable containing the path.
+        tag: Dataset split/tag (e.g., 'val2007', 'test')
+
+    Returns:
+        Path object to the image source directory
+    """
+    # First, check if dataset_specifier is a direct path
+    direct_path = Path(dataset_specifier)
+    if direct_path.is_dir():
+        base_path = direct_path
+        logger.info(f"Using provided direct path: {base_path}")
+    else:
+        # Not a direct path, try as environment variable
+        base_path_str = os.getenv(dataset_specifier)
+        if not base_path_str:
+            logger.error(
+                f"Error: '{dataset_specifier}' is not a valid directory and environment "
+                f"variable '{dataset_specifier}' is not set."
+            )
+            sys.exit(1)
+
+        base_path = Path(base_path_str)
+        logger.info(f"Using path from environment variable '{dataset_specifier}': {base_path}")
+
+    # Check if base_path exists
+    if not base_path.is_dir():
+        logger.error(f"Error: Base path is not a valid directory: {base_path}")
         sys.exit(1)
 
-    base_path_str = os.getenv(dataset_env_var)
-    if not base_path_str:
-        logger.error(
-            f"Error: Environment variable '{dataset_env_var}' for dataset "
-            f"'{dataset_id}' is not set."
-        )
-        sys.exit(1)
-
-    source_dir = Path(base_path_str) / "images" / tag
+    # Construct final source path
+    source_dir = base_path / "images" / tag
     logger.info(f"Constructed source path: {source_dir}")
 
+    # Validate final source path
     if not source_dir.is_dir():
         logger.error(f"Error: Constructed source path is not a valid directory: {source_dir}")
         sys.exit(1)
@@ -277,7 +302,7 @@ def _calculate_and_log_stats(
 
 
 def predict_pipeline(cli_args: argparse.Namespace):
-    """Orchestrates the segmentation prediction pipeline."""
+    """Orchestrates the prediction pipeline for detection or segmentation."""
     start_time_total = time.time()
 
     # 1. Load base config, expand env vars (utils handles .env loading)
@@ -288,7 +313,7 @@ def predict_pipeline(cli_args: argparse.Namespace):
     _validate_final_config(base_config, config_path)  # Utils func validates model/project
 
     # 3. Construct source path from args
-    source_path_dir = construct_source_path(cli_args.dataset, cli_args.tag)
+    source_path_dir = resolve_source_path(cli_args.dataset, cli_args.tag)
 
     # 4. Process source (apply sampling if needed)
     processed_source = process_source(source_path_dir, cli_args.sample_count)
@@ -318,14 +343,14 @@ def predict_pipeline(cli_args: argparse.Namespace):
     # 6. Prepare output directory info using name from args
     project_dir, exp_name_ts = _prepare_output_directory(final_config["project"], cli_args.name)
 
-    # 7. Run YOLO segmentation prediction
+    # 7. Run YOLO prediction
     start_time_predict = time.time()
     results = _run_yolo_prediction(
         config=final_config,
         source=processed_source,
         project_dir_str=project_dir,
         exp_name=exp_name_ts,
-        task_type="segment",
+        task_type=cli_args.task,  # Using the task argument from CLI
     )
     end_time_predict = time.time()
     predict_duration = end_time_predict - start_time_predict

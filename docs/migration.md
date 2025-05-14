@@ -4,7 +4,54 @@ This document explains **how to migrate** all importable code that currently liv
 
 > **Goal:** after migration every runtime import will be `from vibelab.…`, and no top‑level module named `src` will be required in production or in tests.
 
+# Detailed Migration Tasks (2024-05)
+
+## Overview
+
+This section tracks the step-by-step plan for the migration of `src/models/ext/yolov11` to the `vibelab` namespace, and the prerequisite migration of `src/utils/metrics`. The goal is to ensure a clean, DRY, and robust codebase with minimal disruption.
+
 ---
+
+## Pre-Migration Tasks
+
+### 1. Migrate `src/utils/metrics` to `src/vibelab/utils/metrics`
+- [x] Move only the source code (not tests or docs) using `git mv`.
+- [x] Update all codebase imports from `src.utils.metrics` to `vibelab.utils.metrics`.
+- [x] Update all test and doc references to point to the new source location, but keep the test/docs files in their current place for now.
+- [x] Run tests to confirm nothing is broken.
+- [x] Update documentation in `docs/utils/metrics_compute.md` and `docs/utils/metrics_detection.md` to reflect the new source location and migration status.
+- [x] **Result:** All tests passed and documentation updated as of 2024-05.
+
+### 2. Refactor/Merge yolov11 Training Scripts
+- Compare `train_detect.py` and `train_segment.py` in detail.
+- If possible, merge into a single script (with a `--task` argument or config-based task detection); otherwise, refactor to maximize shared logic.
+- Ensure robust, DRY, and maintainable training orchestration.
+- Update CLI usage and documentation as needed.
+- Test both detection and segmentation training.
+
+---
+
+## Main yolov11 Migration
+
+### 3. Migrate yolov11 to vibelab
+- Move the entire `src/models/ext/yolov11` folder to `src/vibelab/models/ext/yolov11` using `git mv`.
+- Update all imports in the moved files and elsewhere in the codebase from `src.models.ext.yolov11` to `vibelab.models.ext.yolov11`.
+- Ensure all parent directories have `__init__.py`.
+- Update any project root detection logic as needed.
+- Run tests and linting to confirm the migration is successful.
+- Update documentation and migration notes.
+- Remove the old folder after confirming success.
+
+---
+
+## Special Notes
+
+- All moves should use `git mv` to preserve history.
+- Each step should be tested before proceeding to the next.
+- Document any issues or deviations from this plan in this file.
+
+---
+
 ## 1. Why change?
 
 | Issue with `src.*` | Benefit of `vibelab.*` |
@@ -30,9 +77,10 @@ This document explains **how to migrate** all importable code that currently liv
 | `dataops.cov_segm`    | ✅     | Migrated with all submodules |
 | `utils.data_converter` | ⬜     | |
 | `utils.data_loaders`  | ⬜     | |
-| `utils.metrics`       | ⬜     | |
+| `utils.metrics`       | ✅     | Migrated, tests/docs updated |
 | `utils.visualization` | ⬜     | |
 | `models.ext`          | ⬜     | |
+| `models.ext.yolov11`  | ✅     | Migrated, train_segment.py and train_detect.py merged into train_yolo.py |
 | `models.py`           | ⬜     | |
 
 ### Remaining Tasks

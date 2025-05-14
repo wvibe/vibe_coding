@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Assuming predict_utils.py is importable
-from src.models.ext.yolov11.predict_utils import (
+from vibelab.models.ext.yolov11.predict_utils import (
     _merge_config_and_args,
     _prepare_output_directory,
 )
@@ -79,8 +79,8 @@ def test_merge_config_preserves_other_keys():
         (".", "relative_run", ".", "relative_run"),
     ],
 )
-@patch("src.models.ext.yolov11.predict_utils.datetime")
-@patch("src.models.ext.yolov11.predict_utils.Path.mkdir")
+@patch("vibelab.models.ext.yolov11.predict_utils.datetime")
+@patch("vibelab.models.ext.yolov11.predict_utils.Path.mkdir")
 def test_prepare_output_directory(
     mock_mkdir,
     mock_dt,

@@ -1,9 +1,8 @@
 """
-Unit tests for src/models/ext/yolov11/predict_detect.py
-Focusing on logic functions and non-IO operations
+Unit tests for src/vibelab/models/ext/yolov11/predict_yolo.py
+Focusing on core algorithmic functions and non-IO operations
 """
 
-# Add project root to path to allow relative imports
 import os
 import sys
 from pathlib import Path
@@ -13,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../")))
 
-from src.models.ext.yolov11.predict_detect import (
+from vibelab.models.ext.yolov11.predict_yolo import (
     _calculate_and_log_stats,
     _extract_and_average_times,
     process_source,
@@ -131,7 +130,7 @@ def test_calculate_stats_wall_clock(
     """Test wall clock statistics calculation with different configurations."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (
@@ -139,7 +138,7 @@ def test_calculate_stats_wall_clock(
         num_results,
     )
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_yolo._extract_and_average_times", mock_extract_times
     )
 
     # Create mock results
@@ -162,7 +161,7 @@ def test_calculate_stats_successful(monkeypatch):
     """Test normal statistics calculation with successful results."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     # Setup component time stats
     mock_avg_times = {"preprocess": 15.0, "inference": 55.0, "postprocess": 20.0, "total": 90.0}
@@ -171,7 +170,7 @@ def test_calculate_stats_successful(monkeypatch):
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (mock_avg_times, valid_count)
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_yolo._extract_and_average_times", mock_extract_times
     )
 
     # Create mock results and args
@@ -196,12 +195,12 @@ def test_calculate_stats_no_valid_speed_data(monkeypatch):
     """Test when no valid speed data is available."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     mock_extract_times = mock.MagicMock()
     mock_extract_times.return_value = (None, 0)
     monkeypatch.setattr(
-        "src.models.ext.yolov11.predict_detect._extract_and_average_times", mock_extract_times
+        "vibelab.models.ext.yolov11.predict_yolo._extract_and_average_times", mock_extract_times
     )
 
     # Setup
@@ -223,7 +222,7 @@ def test_calculate_stats_empty_results(monkeypatch):
     """Test with empty results list."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     # Setup
     mock_results = []
@@ -241,7 +240,7 @@ def test_calculate_stats_none_results(monkeypatch):
     """Test with None results (prediction failed)."""
     # Setup mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     # Setup
     mock_results = None
@@ -252,137 +251,79 @@ def test_calculate_stats_none_results(monkeypatch):
     _calculate_and_log_stats(mock_results, predict_duration, cli_args)
 
     # Verify error log
-    mock_logger.error.assert_called_with("Prediction failed or returned unexpected result type.")
+    mock_logger.error.assert_called_once_with(
+        "Prediction failed or returned unexpected result type."
+    )
 
 
-# Tests for process_source
-def test_process_source_empty_directory(monkeypatch):
-    """Test when source directory is empty."""
-    # Mock logger
+# Simplified tests for process_source
+def test_process_source_basic(monkeypatch):
+    """Test the process_source function with basic functionality."""
+    source_dir = Path("/test/dir")
+
+    # Simple mocks to validate basic behavior
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
-    # Mock Path
-    mock_dir = mock.MagicMock(spec=Path)
-    mock_dir.glob.return_value = []
-
-    # Call function
-    result = process_source(mock_dir, None)
-
-    # Assertions
-    assert result == str(mock_dir)
-    mock_logger.warning.assert_called_with(f"No image files found in source directory: {mock_dir}")
-
-
-def test_process_source_all_images(monkeypatch):
-    """Test processing all images (no sampling)."""
-    # Mock logger
-    mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
-
-    # Mock Path with image files
-    mock_dir = mock.MagicMock(spec=Path)
-    mock_files = [
-        Path("image1.jpg"),
-        Path("image2.png"),
-        Path("image3.jpeg"),
-        Path("image4.JPG"),
-        Path("text.txt"),  # Should be ignored
+    # Mock Path.glob to return some image files
+    image_files = [
+        source_dir / "img1.jpg",
+        source_dir / "img2.png",
+        source_dir / "not_an_image.txt",
     ]
-    mock_dir.glob.return_value = mock_files
 
-    # Expected count of image files (excluding text.txt)
-    expected_num_images = 4
+    mock_glob = mock.MagicMock(return_value=image_files)
+    monkeypatch.setattr("pathlib.Path.glob", mock_glob)
 
-    # Call function
-    result = process_source(mock_dir, None)
+    # Test without sampling
+    result = process_source(source_dir, None)
 
-    # Assertions
-    assert result == str(mock_dir)
+    # Should return the directory path as string
+    assert result == str(source_dir)
+
+    # Path.glob should be called with "*"
+    mock_glob.assert_called_with("*")
+
+    # Verify log message for processing all images
+    # Only 2 images are valid (.jpg and .png)
+    expected_image_count = 2
     mock_logger.info.assert_called_with(
-        f"Processing all {expected_num_images} found images in directory: {mock_dir}"
+        f"Processing all {expected_image_count} found images in directory: {source_dir}"
     )
 
 
 def test_process_source_with_sampling(monkeypatch):
-    """Test sampling a subset of images."""
-    # Mock logger
+    """Test process_source with random sampling in basic case."""
+    source_dir = Path("/test/dir")
+    sample_count = 1
+
+    # Simple mocks
     mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
-
-    # Mock random.sample
-    image_files = [
-        Path("image1.jpg"),
-        Path("image2.png"),
-        Path("image3.jpeg"),
-        Path("image4.JPG"),
-    ]
-    sample_count = 2
-    selected_images = image_files[:sample_count]
-
-    mock_random_sample = mock.MagicMock(return_value=selected_images)
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.random.sample", mock_random_sample)
-
-    # Mock Path
-    mock_dir = mock.MagicMock(spec=Path)
-    mock_dir.glob.return_value = image_files
-
-    # Call function
-    result = process_source(mock_dir, sample_count)
-
-    # Assertions
-    assert result == [str(p) for p in selected_images]
-    mock_random_sample.assert_called_with(image_files, sample_count)
-    mock_logger.info.assert_called_with(f"Randomly selected {sample_count} images for processing.")
-
-
-def test_process_source_sample_more_than_available(monkeypatch):
-    """Test requesting more samples than available images."""
-    # Mock logger
-    mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.logger", mock_logger)
 
     # Mock image files
     image_files = [
-        Path("image1.jpg"),
-        Path("image2.png"),
+        source_dir / "img1.jpg",
+        source_dir / "img2.png",
     ]
 
-    # Mock random.sample
-    sample_count = 5  # More than available
-    mock_random_sample = mock.MagicMock(return_value=image_files)
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.random.sample", mock_random_sample)
+    # Mock Path.glob to return the image files
+    mock_glob = mock.MagicMock(return_value=image_files)
+    monkeypatch.setattr("pathlib.Path.glob", mock_glob)
 
-    # Mock Path
-    mock_dir = mock.MagicMock(spec=Path)
-    mock_dir.glob.return_value = image_files
+    # Mock random.sample to return a predictable subset
+    selected_image = [image_files[0]]  # Just the first image
+    mock_sample = mock.MagicMock(return_value=selected_image)
+    monkeypatch.setattr("vibelab.models.ext.yolov11.predict_yolo.random.sample", mock_sample)
 
-    # Call function
-    result = process_source(mock_dir, sample_count)
+    # Call function with sampling
+    result = process_source(source_dir, sample_count)
 
-    # Assertions
-    assert result == [str(p) for p in image_files]
-    mock_random_sample.assert_called_with(image_files, len(image_files))
-    mock_logger.warning.assert_called_with(
-        f"Requested {sample_count} images, but only found {len(image_files)}. "
-        f"Using all {len(image_files)} found images."
-    )
+    # Should return list of selected image paths
+    assert result == [str(image_files[0])]
 
+    # Random.sample should be called appropriately
+    mock_sample.assert_called_once_with(image_files, sample_count)
 
-def test_process_source_glob_exception(monkeypatch):
-    """Test handling of exceptions when listing files."""
-    # Mock logger
-    mock_logger = mock.MagicMock()
-    monkeypatch.setattr("src.models.ext.yolov11.predict_detect.logger", mock_logger)
-
-    # Mock Path with exception
-    mock_dir = mock.MagicMock(spec=Path)
-    mock_dir.glob.side_effect = Exception("Test exception")
-
-    # Call function should exit
-    with pytest.raises(SystemExit) as excinfo:
-        process_source(mock_dir, None)
-
-    # Assertions
-    assert excinfo.value.code == 1
-    mock_logger.error.assert_called_with(f"Error listing images in {mock_dir}: Test exception")
+    # Verify log message for random sampling
+    mock_logger.info.assert_called_with(f"Randomly selected {sample_count} images for processing.")

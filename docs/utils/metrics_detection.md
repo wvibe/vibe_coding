@@ -1,6 +1,8 @@
+> **[2024-05 MIGRATION]** Source code for these utilities has moved to `src/vibelab/utils/metrics/detection.py` as part of the vibelab migration. All tests and references have been updated.
+
 # Detection Metrics Utilities Design Notes
 
-This document outlines the design choices and rationale behind the functions in `src/utils/metrics/detection.py`.
+This document outlines the design choices and rationale behind the functions in `src/vibelab/utils/metrics/detection.py`.
 
 ## `match_predictions(predictions, ground_truths, iou_threshold)`
 

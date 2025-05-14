@@ -1,8 +1,21 @@
 """
-Main script for initiating YOLOv11 SEGMENTATION model training (finetuning or from scratch)
-based on a YAML configuration file.
+Unified YOLO training script for both detection and segmentation tasks. This script replaces the
+previous train_segment.py and train_detect.py, and determines the task based on the provided
+config/model. All logic is generic; any differences between detection and segmentation are handled
+by the config/model/project naming convention.
 
-Mirrors the structure and capabilities of the YOLOv11 detection training script.
+Usage:
+    python train_yolo.py --config <config.yaml> --name <run_name> [--wandb-dir <dir>] \
+      [--model <model.pt>] [--auto-resume]
+
+Arguments:
+    --config      Path to the main training configuration YAML file (required).
+    --name        Base name for the training run (required).
+    --wandb-dir   Path to the root WandB directory (optional).
+    --model       Path to a model file to use for a new training job (optional, overrides config).
+    --auto-resume Enable auto-resume using last_run.log (optional, default: off).
+
+This script uses robust auto-resume logic and relies on Ultralytics for WandB integration.
 """
 
 import argparse
@@ -134,26 +147,21 @@ def _parse_tracker_log(tracker_file: Path) -> dict | None:
 
 
 def log_run_tracker(tracker_file_path: Path, base_name: str, train_kwargs: dict) -> None:
-    """Write run information to the tracker file for potential future resuming.
-
-    Args:
-        tracker_file_path (Path): Path to the tracker log file.
-        base_name (str): Base name of the run (from args.name).
-        train_kwargs (dict): Training arguments dictionary for model.train().
-    """
+    """Write run information to the tracker file for potential future resuming."""
     try:
-        # Extract required information from train_kwargs
         project_path = train_kwargs["project"]
         actual_run_name = train_kwargs["name"]
         config_epochs = train_kwargs["epochs"]
+        model_path = train_kwargs.get("model")
+        data_config_path = train_kwargs["data"]
         timestamp = datetime.now().isoformat()
-
-        # Define columns and data
         columns = [
             "project_path",
             "base_name",
             "actual_run_name",
             "config_epochs",
+            "model_path",
+            "data_config_path",
             "log_timestamp",
         ]
         data = [
@@ -161,15 +169,14 @@ def log_run_tracker(tracker_file_path: Path, base_name: str, train_kwargs: dict)
             base_name,
             actual_run_name,
             config_epochs,
+            model_path,
+            data_config_path,
             timestamp,
         ]
-
-        # Write to tracker file (overwrite)
         with open(tracker_file_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(columns)
             writer.writerow(data)
-
         logging.info(f"Run tracker information logged to {tracker_file_path}")
     except Exception as e:
         logging.error(f"Failed to write run tracker log to {tracker_file_path}: {e}")
@@ -246,7 +253,6 @@ def prepare_train_kwargs(
         "overlap_mask",
         "patience",
         "perspective",
-        "pretrained",
         "save_period",
         "scale",
         "seed",
@@ -292,14 +298,14 @@ def execute_training(
     Returns:
         tuple[Path | None, bool]: Final output directory (if available) and training success flag.
     """
-    logging.info("Starting segmentation training...")
+    logging.info("Starting YOLO training...")
     final_output_dir = None
     training_successful = False
 
     try:
         # The train method should work for segmentation task type based on the loaded model
         model.train(**train_kwargs)
-        logging.info("Segmentation training finished successfully.")
+        logging.info("YOLO training finished successfully.")
         training_successful = True
 
         # Capture the actual save directory after training
@@ -309,10 +315,10 @@ def execute_training(
         else:
             logging.warning("Could not determine final save directory from trainer.")
     except Exception as e:
-        logging.error(f"Error during segmentation training: {e}", exc_info=True)
+        logging.error(f"Error during YOLO training: {e}", exc_info=True)
 
     if not training_successful:
-        logging.error("Segmentation training did not complete successfully.")
+        logging.error("YOLO training did not complete successfully.")
 
     return final_output_dir, training_successful
 
@@ -331,51 +337,52 @@ def _determine_run_parameters(
     Returns:
         tuple[bool, str | None, str]: (resume_flag, model_to_load, run_name)
     """
-    # Initialize default values for a new run
     resume_flag = False
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{args.name}_{timestamp}"
-
-    # Default model path is always from the config unless overridden by --model
     if args.model:
         logging.info(
             f"Model specified via --model={args.model}, starting new training (auto-resume disabled)"
         )
         model_to_load = args.model
         return resume_flag, model_to_load, run_name
-
     model_to_load = train_config.get("model")
     if not model_to_load:
         raise ValueError(
             "Missing 'model' key in configuration for new run or not provided via --model."
         )
-
-    # Only attempt to resume if auto-resume is enabled and no model override
+    data_config_path = train_config.get("data")
     if args.auto_resume:
         logging.info(f"Auto-resume enabled, checking for previous run with name '{args.name}'")
         log_data = _parse_tracker_log(tracker_file)
-
         if log_data:
             logged_project = log_data.get("project_path")
             logged_base_name = log_data.get("base_name")
-
+            logged_model_path = log_data.get("model_path")
+            logged_data_config_path = log_data.get("data_config_path")
             if logged_project == str(project_dir) and logged_base_name == args.name:
-                logging.info("Found matching run in log, will attempt to resume training")
-                resume_flag = True
-                run_name = log_data.get("actual_run_name")
-
-                # Verify the run directory exists
-                run_dir = project_dir / run_name
-                if not run_dir.exists():
-                    logging.warning(
-                        f"Run directory {run_dir} from tracker log does not exist. Starting new run."
-                    )
+                # Validate model and data config match
+                if (str(model_to_load) != str(logged_model_path)) or (
+                    str(data_config_path) != str(logged_data_config_path)
+                ):
+                    logging.info("Starting new run instead of resuming due to model/data mismatch")
                     resume_flag = False
                     run_name = f"{args.name}_{timestamp}"
                 else:
-                    logging.info(f"Verified run directory exists: {run_dir}")
-                    # Still use model from config, trainer will handle loading last.pt with resume=True
-                    return resume_flag, model_to_load, run_name
+                    logging.info("Found matching run in log, will attempt to resume training")
+                    resume_flag = True
+                    run_name = log_data.get("actual_run_name")
+                    run_dir = project_dir / run_name
+                    if not run_dir.exists():
+                        logging.warning(
+                            f"Run directory {run_dir} from tracker log does not exist. "
+                            f"Starting new run."
+                        )
+                        resume_flag = False
+                        run_name = f"{args.name}_{timestamp}"
+                    else:
+                        logging.info(f"Verified run directory exists: {run_dir}")
+                        return resume_flag, model_to_load, run_name
             else:
                 logging.info(
                     "Last run log exists but doesn't match current project/name. Starting new run."
@@ -384,8 +391,6 @@ def _determine_run_parameters(
             logging.info("No last run log found or couldn't parse it. Starting new run.")
     else:
         logging.info("Auto-resume disabled. Starting new run.")
-
-    # At this point, we're doing a new run with the model from config
     return resume_flag, model_to_load, run_name
 
 
@@ -407,7 +412,7 @@ def setup_environment(project_root: Path) -> None:
 
 
 def run_training_pipeline(args: argparse.Namespace):
-    """Orchestrate the steps for loading config and running training.
+    """Orchestrate the steps for loading config and running YOLO training.
 
     Args:
         args (argparse.Namespace): Command-line arguments.
@@ -481,17 +486,17 @@ def run_training_pipeline(args: argparse.Namespace):
 
 
 def main():
-    """Parse command-line arguments and initiate the training pipeline."""
+    """Parse command-line arguments and initiate the YOLO training pipeline."""
     parser = argparse.ArgumentParser(
-        description="Train YOLOv11 segmentation models using configuration files."
+        description="Train YOLO detection or segmentation models using configuration files."
     )
     parser.add_argument(
         "--config",
         type=str,
         required=True,
         help=(
-            "Path to the main segmentation training configuration YAML file "
-            "(relative to project root). It must contain 'project' and 'data' keys."
+            "Path to the main training configuration YAML file (relative to project root). "
+            "It must contain 'project' and 'data' keys."
         ),
     )
     parser.add_argument(
@@ -535,12 +540,13 @@ def main():
 
 if __name__ == "__main__":
     # Example Usage (New training):
-    # python src/models/ext/yolov11/train_segment.py \
-    #     --config configs/yolov11/finetune_segment_voc.yaml \
-    #     --name voc11_seg_finetune_run1
+    # python -m src.models.ext.yolov11.train_yolo \
+    #     --config configs/yolov11/finetune_detect_voc.yaml \
+    #     --name voc11_det_finetune_run1 \
+    #     --auto-resume True
     #
     # Example Usage (With custom model weights):
-    # python src/models/ext/yolov11/train_segment.py \
+    # python -m src.models.ext.yolov11.train_yolo \
     #     --config configs/yolov11/finetune_segment_voc.yaml \
     #     --name voc11_seg_finetune_run1 \
     #     --model path/to/custom/weights.pt

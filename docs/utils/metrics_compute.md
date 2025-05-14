@@ -1,6 +1,8 @@
+> **[2024-05 MIGRATION]** Source code for these utilities has moved to `src/vibelab/utils/metrics/compute.py` as part of the vibelab migration. All tests and references have been updated.
+
 # Computational Metrics Utilities Design Notes
 
-This document outlines the design choices and rationale behind the functions in `src/utils/metrics/compute.py`.
+This document outlines the design choices and rationale behind the functions in `src/vibelab/utils/metrics/compute.py`.
 
 ## `get_model_params(model)`
 

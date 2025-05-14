@@ -86,7 +86,7 @@ def _setup_argparse() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mapping-config",
         type=str,
-        default="configs/dataops/cov_segm_yolo_mapping.csv",
+        default="configs/dataops/cov_segm_yolo_mapping_20cls.csv",
         help="Path to the CSV mapping file.",
     )
     parser.add_argument(

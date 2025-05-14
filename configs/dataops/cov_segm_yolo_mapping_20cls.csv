@@ -1,21 +1,21 @@
-yolo_class_id,yolo_class_name,hf_phrase,sampling_ratio
-0,bin,bin,0.67
-1,object,object,0.75
-2,robot,robot,0.8
-3,wrapped_object,object that is wrapped in a plastic loose bag,1.0
-4,complex_object,object with a complex shape,1.0
-5,boxy_object,object with a boxy shape,1.0
-6,object_held,object held by a robot,1.0
-7,cylinder_object,object with a cylindrical shape,1.0
-8,wallflower,wallflower refill single,1.0
-9,open_package,object that has the packaging open,1.0
-10,flat_object,object with a flat shape,1.0
-11,human,human,1.0
-12,barcode,detached barcode,1.0
-13,pallet,pallet,1.0
-14,wallflower_held,wallflower refill single held by a robot,1.0
-15,detached_cap,detached cap,1.0
-16,wallflower_heater,wallflower heater,1.0
-17,compartment_wall,compartment wall,1.0
-18,detached_tag,detached tag,1.0
-19,spherical_object,object with a spherical shape,1.0
+yolo_class_id,yolo_class_name,yolo_class_pri,hf_phrase,sampling_ratio
+0,bin,1,bin,0.5
+1,object,0,object,0.5
+2,robot,2,robot,1.0
+3,wrapped_object,3,object that is wrapped in a plastic loose bag,1.0
+4,complex_object,4,object with a complex shape,1.0
+5,boxy_object,5,object with a boxy shape,1.0
+6,object_held,6,object held by a robot,1.0
+7,cylinder_object,7,object with a cylindrical shape,1.0
+8,wallflower,8,wallflower refill single,1.0
+9,open_package,9,object that has the packaging open,1.0
+10,flat_object,10,object with a flat shape,1.0
+11,human,11,human,1.0
+12,barcode,12,detached barcode,1.0
+13,pallet,13,pallet,1.0
+14,wallflower_held,14,wallflower refill single held by a robot,1.0
+15,detached_cap,15,detached cap,1.0
+16,wallflower_heater,16,wallflower heater,1.0
+17,compartment_wall,17,compartment wall,1.0
+18,detached_tag,18,detached tag,1.0
+19,spherical_object,19,object with a spherical shape,1.0

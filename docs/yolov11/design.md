@@ -1,19 +1,72 @@
-# YOLOv11 Design Notes
+# YOLOv11 Integration Design
 
-## Core Library
+This document outlines the design choices for integrating YOLOv11 models into the `vibelab` project, focusing on training, prediction, and evaluation workflows.
 
-- This module relies heavily on the `ultralytics` Python package.
-- We will leverage its `YOLO` class for loading models, running inference (`predict`), and training/finetuning (`train`).
+## Core Principles
+
+- **Leverage Ultralytics:** Utilize the `ultralytics` library for core model loading, training (`model.train()`), and prediction (`model.predict()`).
+- **Configuration Driven:** Use YAML files for managing parameters for training, prediction, and evaluation to ensure reproducibility and ease of modification.
+- **Clear Separation:** Maintain separate scripts for distinct tasks (training, prediction, evaluation), although training is now unified.
+- **Standardized Output:** Define consistent output directory structures for runs.
+- **Namespace:** All code resides under the `vibelab.models.ext.yolov11` namespace.
+
+## Key Components
+
+1.  **Unified Training Script (`train_yolo.py`)**
+    -   **Purpose:** Handles both detection and segmentation model training/fine-tuning.
+    -   **Inputs:** `--config` (path to main training YAML), `--name` (base run name), optional `--resume-with` (path to previous run dir), optional `--model` (override model in config).
+    -   **Configuration (`<task>_config.yaml`):** Contains hyperparameters (`epochs`, `batch`, `lr0`, etc.), model path (`model`), data configuration path (`data`), output project directory (`project`).
+    -   **Data Configuration (`<dataset>_<task>.yaml`):** Standard Ultralytics data YAML specifying `path`, `train`, `val`, `test` splits, and `names`.
+    -   **Logic:**
+        -   Parses args and loads main config.
+        -   Validates data config path.
+        -   Determines run parameters (model path, run name, resume status, WandB ID) based on args and potential resume path.
+        -   Sets up WandB environment variables if resuming with a known ID.
+        -   Loads the YOLO model (using `YOLO(model_path)`).
+        -   Prepares keyword arguments for `model.train()` by filtering the main config.
+        -   Calls `model.train(**kwargs)`.
+        -   Logs run information for potential future auto-resuming.
+    -   **Output:** Standard Ultralytics run directory structure under `<config.project>/<run_name>_<timestamp>`.
+
+2.  **Unified Prediction Script (`predict_yolo.py`)**
+    -   **Purpose:** Run inference using a trained YOLOv11 model for detection or segmentation tasks.
+    -   **Inputs:** `--config` (path to prediction YAML), `--dataset` (source path or env var name), `--task` (`detect` or `segment`), `--tag`, `--name`, optional `--device`, `--save`, `--show`, `--sample_count`.
+    -   **Configuration (`predict_<task>.yaml`):** Specifies `model`, `project`, and YOLO prediction parameters (e.g., `conf`, `imgsz`, `save`, `save_txt`).
+    -   **Logic:**
+        -   Load config and merge CLI overrides (`device`, `save`, `show`).
+        -   Resolve the source path (either directly from a provided path or via an environment variable).
+        -   Process source directory (list images, optionally sample).
+        -   Prepare output directory (`<config.project>/<name>_<timestamp>`).
+        -   Call `_run_yolo_prediction` with appropriate parameters, passing the `task_type` from the CLI argument.
+        -   Calculate and log performance stats (FPS, component times).
+    -   **Output:** Predictions saved (if `save=True`) in the output directory.
+
+3.  **Evaluation Script (`evaluate_detect.py`)**
+    -   **Purpose:** Evaluate a trained detection model against a ground truth dataset.
+    -   **Inputs:** `--config` (path to evaluation YAML).
+    -   **Configuration (`evaluate_detect.yaml`):** Specifies `model`, dataset details (`image_dir`, `label_dir`, `class_names`), evaluation parameters (`conf_thres`, `iou_thres`, `device`), metric parameters (`map_iou_threshold`, `conf_threshold_cm`, etc.), output settings (`project`, `name`).
+    -   **Logic:**
+        -   Load config.
+        -   Setup output directory.
+        -   Load model and count parameters.
+        -   Run inference on the dataset images, measure time/memory.
+        -   Load ground truth labels.
+        -   Calculate detection metrics (mAP, AP per class, confusion matrix) using `vibelab.utils.metrics.detection`.
+        -   Save results (JSON, summary text) and generate plots (PR curves, confusion matrix).
+    -   **Output:** Evaluation results, plots, and summary saved in the output directory.
+
+4.  **Utilities (`predict_utils.py`, `evaluate_utils.py`, `vibelab.utils.metrics.*`)**
+    -   Contain helper functions for common tasks like path construction, config merging, statistics calculation, metric computations, output directory setup, ground truth loading, result saving, etc., promoting DRY principles.
 
 ## Initial Scope: Detection
 
 - **Configuration:**
   - Dataset configurations (e.g., `voc_detect.yaml`) follow the Ultralytics format for training/finetuning.
   - Prediction uses separate YAML configs (e.g., `predict_detect.yaml`) specifying model, output project dir, and Ultralytics prediction args (`conf`, `imgsz`, `save_txt`, `save`, etc.).
-- **Prediction Scripts:** The scripts (`predict_detect.py`, `predict_segment.py`) provide a command-line interface to run pre-trained YOLOv11 models.
-  - Takes `--config <yaml_path>`, `--dataset <dataset_id>`, `--tag <split_tag>`, and `--name <run_name>` as input.
+- **Prediction Script:** The unified `predict_yolo.py` script provides a command-line interface to run pre-trained YOLOv11 models for either detection or segmentation tasks.
+  - Takes `--config <yaml_path>`, `--dataset <env_var_or_path>`, `--task <detect|segment>`, `--tag <split_tag>`, and `--name <run_name>` as input.
   - Reads parameters from the specified YAML config.
-  - Constructs the source path from dataset and tag (`${DATASET_BASE_PATH}/images/{tag}`).
+  - Resolves the source path either directly from the provided path or via an environment variable, then appends `/images/{tag}`.
   - Supports random selection of N images if `--sample_count N` is specified.
   - Saves results to `<config.project>/<name>_<timestamp>/`.
   - Calculates and reports prediction time statistics (wall clock time, FPS, component times).
