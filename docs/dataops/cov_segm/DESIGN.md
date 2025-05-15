@@ -150,6 +150,7 @@ This module is responsible for converting the `lab42/cov-segm-v3` dataset, loade
     - `hf_phrase`: Phrase text to match in conversation items.
     - `sampling_ratio`: Probability (0.0-1.0) for including matches of this phrase.
 - **Mask Selection:** Processes either 'visible' or 'full' masks based on the `--mask-tag` argument. Optionally skips segments with zero masks of the selected type (`--skip-zero`).
+- **Label Type Selection:** The `--label-type` argument (choices: `bbox`, `mask`, default: `bbox`) controls which type of annotation is generated. Only one type of label is generated per run, and only statistics relevant to that type are reported.
 - **Parallel Processing:** Uses Hugging Face's `datasets.map()` with the specified number of processes (`--num-proc`) to load samples in parallel from the dataset. Uses `load_from_cache_file=False` and `writer_batch_size=100` for better resource management.
 - **Mask Conversion:** Uses `vibelab.utils.common.geometry.mask_to_yolo_polygons` to convert binary masks (NumPy arrays) from `SegmMask.binary_mask` into normalized polygon coordinates required by YOLO.
 - **Polygon Handling:** For masks that generate multiple polygons, the converter tracks this in statistics but only processes the first polygon to maintain one annotation per mask.
@@ -158,33 +159,36 @@ This module is responsible for converting the `lab42/cov-segm-v3` dataset, loade
     - The effective ratio for a class becomes `global_ratio * local_ratio`.
 - **File Handling:** With the `--no-overwrite` flag, skips writing image and label files that already exist, tracking these skips in statistics.
 - **Output Structure:** Generates the standard YOLO dataset structure within a specific subfolder (`--output-name` or derived from `--mask-tag`) under the main output directory (`--output-dir` or `COV_SEGM_ROOT`):
-    - `{output_dir}/{dataset_name}/images/{split_name}/{image_id}.jpg`: Copied source images (only if annotations exist).
-    - `{output_dir}/{dataset_name}/labels/{split_name}/{image_id}.txt`: Text files containing annotations (`<class_id> <norm_x1> ...`).
+    - `{output_dir}/{dataset_name}/{label_type}/images/{split_name}/{image_id}.jpg`: Copied source images (only if annotations exist).
+    - `{output_dir}/{dataset_name}/{label_type}/labels/{split_name}/{image_id}.txt`: Text files containing annotations (`<class_id> <norm_x1> ...`).
 - **Dataset YAML:** Generates a `dataset.yaml` file (e.g., `configs/yolov11/cov_segm_segment_{dataset_name}.yaml`) containing the absolute dataset path and class names, suitable for training frameworks.
 - **Split Handling:** Processes only one dataset split (`--train-split`) per execution.
 
+### Arguments
+
+- `--mapping-config` (str): Path to mapping/sampling CSV. Default: `'configs/dataops/cov_segm_yolo_mapping.csv'`.
+- `--output-dir` (str): Output root directory. Default: uses `COV_SEGM_ROOT` env var.
+- `--output-name` (str): Dataset subfolder name. Default: uses `--mask-tag`.
+- `--mask-tag` (str): Mask type to process ('visible' or 'full'). Required.
+- `--label-type` (str): **New.** Type of label to generate ('bbox' or 'mask'). Default: 'bbox'.
+- `--train-split` (str): Dataset split to process (e.g., 'train', 'validation').
+- `--hf-dataset-path` (str): HF dataset name. Default: 'lab42/cov-segm-v3'.
+- `--sample-slice` (str): Slice of the dataset to process (e.g., '[:100]').
+- `--sample-ratio` (float): Global sampling ratio (0.0-1.0).
+- `--skip-zero` (bool): Skip segments with zero masks of the specified tag. Default: True.
+- `--num-proc` (int): Number of parallel processes. Default: 1.
+- `--seed` (int): Random seed for reproducibility.
+- `--no-overwrite` (bool): Skip writing files if they already exist. Default: False.
+
 ### Statistics Tracking
 
-The converter tracks comprehensive statistics during processing:
-- **Sample-level stats:** Total samples (in slice or full), processed samples, samples with errors, unique samples with annotations.
-- **Segment-level stats:** Segments skipped due to no mapping, sampling, or zero masks.
-- **Mask-level stats:** Masks producing no polygons or multiple polygons.
-- **File-level stats:** Files skipped due to existing (when `--no-overwrite` is used), labels written, images copied.
-- **Annotation-level stats:** Total annotations generated, class distribution (including per-segment mask counts).
+The converter tracks comprehensive statistics during processing, but only for the selected label type (`bbox` or `mask`).
 
 ### Statistics Reporting
 
-- **Basic Reporting:** At the end of conversion, logs summary statistics about the processing run.
+- **Basic Reporting:** At the end of conversion, logs summary statistics about the processing run, filtered to only the relevant label type.
 - **Class-based Statistics:** Generates a table with statistics per class using the common `stats.format_statistics_table` utility.
 - **Metrics:** Reports count, sum, mean, percentiles (p25, p50, p75), and maximum valid masks per segment for each class.
-
-### Implementation Details
-
-- **Main Script:** Provides a command-line interface using `argparse` to specify configurations (mapping, output, mask tag, split, slicing, sampling, etc.).
-- **Parallel Processing:** Leverages the OOP data model to support parallel loading with HF `datasets.map()` while showing progress with tqdm.
-- **Dependencies:** Requires `opencv-python-headless`, `datasets`, `pillow`, `numpy`, `python-dotenv`, `tqdm`.
-- **Error Handling:** Includes checks for file/directory existence, graceful handling of sample loading errors, mapping errors, and mask conversion issues.
-- **Reproducibility:** Uses `random.seed()` to ensure consistent sampling results with the same seed value.
 
 ## Conversion Verification (`vibelab/dataops/cov_segm/convert_verifier.py`)
 

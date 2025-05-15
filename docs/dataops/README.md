@@ -21,7 +21,7 @@ Modules are primarily organized **by dataset**. Each dataset has its own subdire
 *   **`loader.py`**: Handles loading the raw dataset (e.g., from Hugging Face `datasets`, local files, S3, etc.) and orchestrates parsing and data fetching to return processed samples.
 *   **`datamodel.py`**: Defines data classes or Pydantic models representing the structure of the parsed data for clarity and validation.
 *   **`visualizer.py`**: Provides functions to visualize samples or specific aspects of the dataset.
-*   **`converter.py`**: Includes logic to convert the dataset format for specific downstream tasks (e.g., to YOLO or COCO format).
+*   **`converter.py`**: Includes logic to convert the dataset format for specific downstream tasks (e.g., to YOLO or COCO format). Supports a `--label-type` argument (choices: `bbox`, `mask`) to control which type of annotation is generated. The output directory structure includes a label-type subfolder, e.g., `{output_root}/{dataset_name}/{label_type}/{images|labels}/{split}/`.
 *   **`analyzer.py`**: Provides tools for analyzing dataset statistics and characteristics.
 
 Shared utilities that are applicable across multiple datasets reside in the `common/` directory:

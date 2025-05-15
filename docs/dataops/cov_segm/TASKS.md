@@ -66,6 +66,7 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
     *   **Configuration:**
         *   `--mapping-config` (str): Path to mapping/sampling CSV. Default: `'configs/dataops/cov_segm_yolo_mapping.csv'`.
         *   `--mask-tag` (str): Mask type to process ('visible' or 'full'). Required.
+        *   `--label-type` (str): **New.** Type of label to generate ('bbox' or 'mask'). Default: 'bbox'. Only one label type is generated per run.
         *   `--skip-zero` (bool): Skip samples with no masks of the specified tag. Default: True.
         *   `--no-overwrite` (bool): Skip writing files if they already exist. Default: False.
     *   **Core Logic:**
@@ -82,10 +83,10 @@ This document tracks the completed development tasks for the `lab42/cov-segm-v3`
     *   **Output:**
         *   Determine output root from `--output-dir` arg or `COV_SEGM_ROOT` env var.
         *   Determine dataset subfolder name from `--output-name` arg or `--mask-tag`.
-        *   Save images/labels to `{output_root}/{dataset_name}/{images|labels}/{train_split}/`.
+        *   Save images/labels to `{output_root}/{dataset_name}/{label_type}/{images|labels}/{train_split}/`.
         *   Generate `dataset.yaml` in `configs/yolov11/cov_segm_segment_{dataset_name}.yaml` with absolute path and class names.
-    *   **Arguments:** `--mapping-config`, `--output-dir`, `--output-name`, `--mask-tag`, `--train-split`, `--hf-dataset-path`, `--sample-count`, `--seed`, `--skip-zero`, `--no-overwrite`.
-    *   **Statistics:** Implemented statistics tracking and reporting, including count, mean, percentiles by class ID.
+    *   **Arguments:** `--mapping-config`, `--output-dir`, `--output-name`, `--mask-tag`, `--label-type`, `--train-split`, `--hf-dataset-path`, `--sample-count`, `--seed`, `--skip-zero`, `--no-overwrite`.
+    *   **Statistics:** Implemented statistics tracking and reporting, including count, mean, percentiles by class ID. Only statistics for the selected label type are reported.
     *   **Verification:** Perform test run for each required split using `--sample-count`. Check output structure, format, and `dataset.yaml`.
 *   **[X] Implement Parallel Processing for Analyzer/Converter:**
     *   **Goal:** Significantly speed up `analyzer.py` and `converter.py` execution on large datasets (like `cov-segm-v3`) by leveraging multiprocessing.

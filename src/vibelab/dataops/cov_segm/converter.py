@@ -783,6 +783,14 @@ def main():
     parser = _setup_argparse()
     args = parser.parse_args()
 
+    # Log all arguments
+    logging.info("-" * 80)
+    logging.info(f"{'PROGRAM ARGUMENTS':^40}")
+    logging.info("-" * 80)
+    for arg_name, arg_value in sorted(vars(args).items()):
+        logging.info(f"  {arg_name:<20}: {arg_value}")
+    logging.info("-" * 80)
+
     try:
         image_dir, label_dir = _configure_environment(args)
         dataset, phrase_map, class_names = _load_data(args)
