@@ -776,6 +776,23 @@ def _log_summary(counters: Dict[str, Any], class_names: Dict[int, str], label_ty
     logging.info("-" * 80)
 
 
+def log_phrase_map_summary(phrase_map, sample_ratio, class_names=None):
+    logging.info(f"{'PHRASE MAPPING SUMMARY':^80}")
+    logging.info(f"{'Phrase':<25} | {'Class Name':<20} | {'Class ID':<8} | {'Sampling Ratio':<14}")
+    logging.info("-" * 80)
+    for phrase, mapping in sorted(phrase_map.items()):
+        class_name = mapping.get("class_name", "N/A")
+        class_id = mapping.get("class_id", "N/A")
+        if class_names is not None:
+            class_name = class_names.get(class_id, class_name)
+        if sample_ratio > 0.0:
+            ratio = mapping.get("sampling_ratio", "N/A")
+        else:
+            ratio = "N/A"
+        logging.info(f"{phrase:<25} | {class_name:<20} | {class_id!s:<8} | {ratio!s:<14}")
+    logging.info("-" * 80)
+
+
 def main():
     """Main function to orchestrate the dataset conversion."""
     global stats_counters
@@ -793,7 +810,10 @@ def main():
 
     try:
         image_dir, label_dir = _configure_environment(args)
+
         dataset, phrase_map, class_names = _load_data(args)
+        log_phrase_map_summary(phrase_map, args.sample_ratio, class_names)
+
         _process_samples(dataset, phrase_map, image_dir, label_dir, args)
         _log_summary(stats_counters, class_names, args.label_type)
         logging.info("Conversion completed successfully.")
