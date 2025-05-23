@@ -1,7 +1,6 @@
-```markdown
 # 🧪 VibeLab Coding Playground (`vibelab`)
 
-Welcome to **VibeLab’s** playground!
+Welcome to **VibeLab's** playground!
 This repository is a sandbox for experimenting with ideas, learning new tech, and storing useful code snippets.
 
 ---
@@ -39,6 +38,7 @@ pip install -r requirements.txt
 ```
 -e .                   # editable install of src/vibelab
 -e ./ext/ultralytics   # editable install of our forked Ultralytics submodule
+-e ./ext/qwen2.5-vl/qwen-vl-utils  # editable install of Qwen VL utilities
 <all third-party packages>
 ```
 
@@ -50,8 +50,11 @@ pip install -r requirements.txt
 vibe_coding/
 ├─ configs/            # dataset / training / model YAML
 ├─ docs/               # design docs & guides
-├─ ext/ultralytics/    # the single submodule (fork)
+├─ ext/
+│   ├─ ultralytics/    # YOLO models (fork)
+│   └─ qwen2.5-vl/     # Qwen VLM repository (submodule)
 ├─ notebooks/          # Jupyter experiments
+│   └─ vlm/            # Vision Language Model experiments
 ├─ ref/                # read-only reference code
 ├─ scripts/            # CLI utilities (not part of the package)
 ├─ src/
@@ -83,6 +86,40 @@ VIBE_ROOT=/abs/path/to/vibe
 VHUB_ROOT=${VIBE_ROOT}/vhub
 DATA_ROOT=${VHUB_ROOT}/data
 ```
+
+---
+
+## 🤖 Vision Language Models (VLM)
+
+This repository includes support for Vision Language Models, particularly Qwen2.5-VL:
+
+### Features
+- **Multi-modal understanding**: Process images, videos, and text together
+- **Fine-tuning capabilities**: Train VLMs on custom datasets using TRL/PEFT
+- **Video processing**: Support for long videos with temporal understanding
+- **Document parsing**: Advanced OCR and document understanding
+
+### Quick Start
+```python
+from qwen_vl_utils import process_vision_info
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
+# Load model and processor
+model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
+processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
+
+# Process multimodal input
+messages = [{"role": "user", "content": [
+    {"type": "image", "image": "path/to/image.jpg"},
+    {"type": "text", "text": "Describe this image."}
+]}]
+```
+
+### Notebooks
+Check out `notebooks/vlm/` for example notebooks including:
+- Fine-tuning VLMs with TRL
+- Multi-modal data processing
+- Video understanding examples
 
 ---
 
@@ -123,4 +160,3 @@ python src/vibelab/models/ext/yolov8/train_yolov8.py \
 This is an experimental playground—break things, fix them, and learn!
 
 Happy coding! ✨
-```

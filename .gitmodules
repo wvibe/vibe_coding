@@ -2,3 +2,6 @@
 	path = ext/ultralytics
 	url = git@gh-vibe:wvibe/ext-ultralytics.git
     branch = dev/wmu/main
+[submodule "ext/qwen2.5-vl"]
+	path = ext/qwen2.5-vl
+	url = git@gh-vibe:QwenLM/Qwen2.5-VL.git
