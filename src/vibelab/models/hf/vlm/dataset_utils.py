@@ -15,23 +15,26 @@ DATASET_COLUMN_MAPPINGS = {
         "test": {
             "image_column": "image",
             "question_column": "query",
-            "id_column": "sample_idx",
+            "id_column": None,  # ChartQA doesn't have an ID column, will use index
+            "answer_column": "label",  # Ground truth answers
         },
         "train": {
             "image_column": "image",
             "question_column": "query",
-            "id_column": "sample_idx",
+            "id_column": None,  # ChartQA doesn't have an ID column, will use index
+            "answer_column": "label",  # Ground truth answers
         },
         "val": {
             "image_column": "image",
             "question_column": "query",
-            "id_column": "sample_idx",
+            "id_column": None,  # ChartQA doesn't have an ID column, will use index
+            "answer_column": "label",  # Ground truth answers
         },
     }
 }
 
 # Default column mapping for unknown datasets
-DEFAULT_COLUMNS = {"image_column": "image", "question_column": "question", "id_column": "id"}
+DEFAULT_COLUMNS = {"image_column": "image", "question_column": "question", "id_column": "id", "answer_column": "answer"}
 
 
 def get_dataset_columns(dataset_name: str, dataset_split: str) -> Dict[str, str]:

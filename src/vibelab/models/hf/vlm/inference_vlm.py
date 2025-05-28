@@ -83,6 +83,10 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--temperature", type=float, default=1.0, help="Temperature for text generation (default: 1.0)"
+    )
+
+    parser.add_argument(
         "--log_level",
         type=str,
         default="INFO",
@@ -110,6 +114,7 @@ def save_sample_outputs(
     image_object=None,
     model_id: str = "",
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    ground_truth=None,
 ) -> None:
     """
     Save the input, image, and output files for a single sample.
@@ -125,6 +130,7 @@ def save_sample_outputs(
         image_object: PIL Image object (if available)
         model_id: Model identifier
         system_prompt: System prompt used
+        ground_truth: Ground truth answer (if available)
     """
     base_filename = f"{sample_id}"
 
@@ -154,6 +160,10 @@ def save_sample_outputs(
         "max_new_tokens_used": len(generated_text.split()),  # Rough estimate
     }
 
+    # Add ground truth if available
+    if ground_truth is not None:
+        output_data["ground_truth"] = ground_truth
+
     output_path = os.path.join(output_dir, f"{base_filename}_out.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2, ensure_ascii=False)
@@ -167,6 +177,7 @@ def process_single_sample(
     processor,
     columns: Dict[str, str],
     args: argparse.Namespace,
+    sample_index: int = 0,
 ) -> None:
     """
     Process a single dataset sample.
@@ -177,12 +188,19 @@ def process_single_sample(
         processor: Loaded VLM processor
         columns: Column name mappings
         args: Command line arguments
+        sample_index: Index of the sample
     """
     try:
         # Extract sample data
-        sample_id = str(sample[columns["id_column"]])
+        sample_id = str(sample[columns["id_column"]]) if columns["id_column"] is not None else str(sample_index)
         question = sample[columns["question_column"]]
         image_ref = sample[columns["image_column"]]
+
+        # Extract ground truth answer if available
+        ground_truth = None
+        if "answer_column" in columns and columns["answer_column"] is not None:
+            if columns["answer_column"] in sample:
+                ground_truth = sample[columns["answer_column"]]
 
         logging.info(f"Processing sample {sample_id}: {question[:50]}...")
 
@@ -205,6 +223,7 @@ def process_single_sample(
             system_prompt=DEFAULT_SYSTEM_PROMPT,
             max_new_tokens=args.max_new_tokens,
             do_sample=False,
+            temperature=args.temperature,
         )
         generation_time = time.time() - start_time
 
@@ -220,12 +239,14 @@ def process_single_sample(
             image_object=image_object,
             model_id=args.model_id,
             system_prompt=DEFAULT_SYSTEM_PROMPT,
+            ground_truth=ground_truth,
         )
 
         logging.info(f"Completed sample {sample_id} in {generation_time:.2f}s")
 
     except Exception as e:
-        logging.error(f"Error processing sample {sample.get(columns['id_column'], 'unknown')}: {e}")
+        sample_id_for_error = sample.get(columns["id_column"], sample_index) if columns["id_column"] is not None else sample_index
+        logging.error(f"Error processing sample {sample_id_for_error}: {e}")
 
 
 def main():
@@ -258,17 +279,23 @@ def main():
     selected_samples = dataset[sample_slice]
 
     # Convert to list if it's a single sample
-    if not isinstance(selected_samples[columns["id_column"]], list):
+    # Use any available column to check if we have multiple samples
+    first_column = next(iter(selected_samples.keys()))
+    if not isinstance(selected_samples[first_column], list):
         # Single sample case
         selected_samples = {k: [v] for k, v in selected_samples.items()}
 
-    num_samples = len(selected_samples[columns["id_column"]])
+    num_samples = len(selected_samples[first_column])
     logging.info(f"Processing {num_samples} samples")
+
+    # Calculate the starting index from the slice
+    slice_start = sample_slice.start if sample_slice.start is not None else 0
 
     # Process each sample
     for i in range(num_samples):
         sample = {k: v[i] for k, v in selected_samples.items()}
-        process_single_sample(sample, model, processor, columns, args)
+        original_index = slice_start + i  # Calculate original dataset index
+        process_single_sample(sample, model, processor, columns, args, original_index)
 
         # Log progress
         if (i + 1) % 5 == 0 or (i + 1) == num_samples:

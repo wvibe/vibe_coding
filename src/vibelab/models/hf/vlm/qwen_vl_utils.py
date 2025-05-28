@@ -10,13 +10,19 @@ from typing import Dict, List, Optional, Tuple, Union
 import requests
 import torch
 from PIL import Image
-from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
+from transformers import AutoProcessor
+from transformers import AutoModelForVision2Seq
 
 # Default model ID
 DEFAULT_QWEN_VL_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 # Default system prompt
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+DEFAULT_SYSTEM_PROMPT = """You are a Vision Language Model specialized in interpreting visual data
+from chart images. Your task is to analyze the provided chart image and respond to queries with
+concise answers, usually a single word, number, or short phrase. The charts include a variety of
+types (e.g., line charts, bar charts) and contain colors, labels, and text. Focus on delivering
+accurate, succinct answers based on the visual information. Avoid additional explanation unless
+absolutely necessary."""
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +34,7 @@ def load_qwen_vl_model_and_processor(
     trust_remote_code: bool = True,
     model_kwargs: Optional[Dict] = None,
     processor_kwargs: Optional[Dict] = None,
-) -> Tuple[Qwen2VLForConditionalGeneration, Qwen2VLProcessor]:
+) -> Tuple[AutoModelForVision2Seq, AutoProcessor]:
     """
     Load a Qwen2.5-VL model and its processor from Hugging Face.
 
@@ -51,7 +57,7 @@ def load_qwen_vl_model_and_processor(
     logger.info(f"Loading Qwen2.5-VL model: {model_id}")
 
     # Load processor
-    processor = Qwen2VLProcessor.from_pretrained(
+    processor = AutoProcessor.from_pretrained(
         model_id, trust_remote_code=trust_remote_code, **processor_kwargs
     )
 
@@ -63,7 +69,7 @@ def load_qwen_vl_model_and_processor(
         **model_kwargs,
     }
 
-    model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_load_params)
+    model = AutoModelForVision2Seq.from_pretrained(model_id, **model_load_params)
 
     model.eval()  # Set to evaluation mode
     logger.info("Model and processor loaded successfully")
@@ -143,13 +149,14 @@ def format_qwen_vl_messages(
 
 
 def generate_text_from_sample(
-    model: Qwen2VLForConditionalGeneration,
-    processor: Qwen2VLProcessor,
+    model: AutoModelForVision2Seq,
+    processor: AutoProcessor,
     question: str,
     image_input: Optional[Union[str, Image.Image]] = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     max_new_tokens: int = 512,
     do_sample: bool = False,
+    temperature: float = 1.0,
 ) -> Tuple[str, str]:
     """
     Generate text response from a Qwen2.5-VL model for a given question and optional image.
@@ -162,6 +169,7 @@ def generate_text_from_sample(
         system_prompt: System prompt.
         max_new_tokens: Maximum number of new tokens to generate.
         do_sample: Whether to use sampling for generation.
+        temperature: Temperature for generation.
 
     Returns:
         Tuple of (generated_text, formatted_prompt_string)
@@ -198,6 +206,7 @@ def generate_text_from_sample(
             max_new_tokens=max_new_tokens,
             do_sample=do_sample,
             pad_token_id=processor.tokenizer.eos_token_id,
+            temperature=temperature,
         )
 
     # Decode only the new tokens (exclude input tokens)
