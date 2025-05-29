@@ -1,0 +1,45 @@
+# Training configuration for AGGRESSIVE fine-tuning of YOLOv11 DETECTION
+# on FULL COV_SEGM dataset, optimized for faster convergence and longer training.
+
+# --- Base Model & Dataset ---
+model: yolo11l.pt  # Base model weights file (YOLOv11 Large Detection)
+data: configs/yolov11/cov_segm_detect_visible.yaml # Path to the dataset definition yaml.
+
+# --- Training Hyperparameters (Aggressive for Faster Convergence) ---
+epochs: 120           # Extended training time
+imgsz: 640            # Training image size
+batch: 256            # Increased batch size for better gradient estimates (32/GPU)
+workers: 64           # Number of dataloader workers
+optimizer: AdamW      # Switch to AdamW for potentially faster convergence
+lr0: 0.001            # Higher learning rate for AdamW
+lrf: 0.1              # Higher final LR factor to maintain learning longer
+warmup_epochs: 5      # Longer warmup for stability with higher LR
+cos_lr: False         # Disable cosine annealing to maintain higher LR longer
+fraction: 1.0         # Use 100% of the training dataset per epoch
+close_mosaic: 20      # Disable mosaic later for more stable final training
+
+# --- Minimal Regularization for Faster Convergence ---
+mixup: 0.05           # Minimal MixUp
+copy_paste: 0.05      # Minimal Copy-Paste
+weight_decay: 0.0001  # Minimal weight decay
+patience: 50          # Very high patience - let it train longer
+dropout: 0.0          # Disable dropout for faster convergence
+
+# --- Learning Rate Schedule Alternative ---
+# If you want to try linear decay instead:
+# cos_lr: False
+# lrf: 0.01
+
+# --- Execution Settings ---
+device: '0,1,2,3,4,5,6,7'     # Use all 8 A10G GPUs
+pretrained: True      # Start from pretrained weights
+exist_ok: True        # Allow overwriting existing runs
+amp: True             # Enable Automatic Mixed Precision
+save_period: 5        # Save checkpoint every 5 epochs
+
+# --- Output Settings ---
+project: runs/detect/cov_segm # wandb project
+csv_root: logs
+
+# --- Wandb Logging ---
+enable_wandb: True

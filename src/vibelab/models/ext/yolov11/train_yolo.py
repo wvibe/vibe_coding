@@ -41,7 +41,7 @@ def _setup_project_environment() -> Path:
         Path: Project root directory path.
     """
     # Inline get_project_root()
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = Path(__file__).resolve().parents[5]
     logging.info(f"Project Root: {project_root}")
 
     # Inline setup_environment()
