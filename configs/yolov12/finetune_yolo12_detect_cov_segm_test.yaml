@@ -1,0 +1,45 @@
+# Training configuration for YOLOv12 DETECTION (TEST RUN)
+# Based on yolov11/finetune_detect_cov_segm.yaml, adapted for YOLOv12
+# and using a fraction of COV_SEGM dataset for initial testing.
+
+# --- Base Model & Dataset ---
+model: yolo12l.pt  # Base model weights file (YOLOv12 Large Detection)
+data: configs/yolov12/cov_segm_detect_visible_test.yaml # Path to the dataset definition yaml for the test run.
+
+# --- Training Hyperparameters ---
+epochs: 100           # Increased maximum epochs to allow more training time.
+imgsz: 640            # Training image size.
+batch: 192            # Batch size for 8x A10G (24GB VRAM). 192/8 = 24 images/GPU.
+                      # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
+workers: 64           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
+optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
+lr0: 0.01             # Reduced initial learning rate for more stable training.
+lrf: 0.01             # Lower final learning rate factor for better fine-tuning.
+warmup_epochs: 3      # Reduced warmup epochs since we're fine-tuning.
+cos_lr: True          # Use cosine learning rate annealing schedule (Recommended).
+fraction: 0.2         # Use 20% of the training dataset per epoch for this test run.
+close_mosaic: 15      # Disable mosaic augmentation for the last N epochs (increased for stability).
+
+# --- Regularization & Augmentation (Reduced for Better Convergence) ---
+mixup: 0.1            # Reduced MixUp augmentation to allow better convergence.
+copy_paste: 0.0       # Copy-Paste is typically for segmentation, setting to 0.0 for detection test.
+# dropout: 0.05         # Add dropout for regularization. Check model structure compatibility if issues arise.
+weight_decay: 0.0005  # Reduced weight decay for better convergence.
+patience: 30          # Increased patience - allow more epochs without improvement before stopping.
+# Other augmentation defaults from Ultralytics are usually active (e.g., hsv, flip).
+# You can tune them further if needed (e.g., scale, translate).
+
+# --- Execution Settings ---
+device: '0,1,2,3,4,5,6,7'     # Use all 8 A10G GPUs.
+pretrained: True      # Start from pretrained weights (Fine-tuning).
+exist_ok: True        # Allow overwriting/appending to existing run when resuming (though resume=False here).
+amp: True             # Enable Automatic Mixed Precision (Recommended for A10G). Should be default.
+save_period: 5
+
+# --- Output Settings ---
+project: runs/detect/yolo12_cov_segm_test # wandb project
+# wdir_root: weights # skip separate weights directory
+csv_root: logs
+
+# --- Wandb Logging ---
+enable_wandb: True    # Set to True to use WandB (ensure you are logged in).
