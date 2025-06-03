@@ -1,15 +1,13 @@
-# Dataset configuration for YOLOv12 DETECTION on COV_SEGM (visible, test fraction)
+# Dataset configuration for YOLOv12 DETECTION on COV_SEGM (visible, full dataset)
 # This file defines the dataset paths and class names for BBOX detection.
-# The actual fraction of data used is controlled by the 'fraction' parameter
-# in the main training configuration YAML.
 
 # Dataset root directory (contains images/, labels/, etc.)
 path: /home/ubuntu/vibe/hub/datasets/COV_SEGM/visible/bbox
 
 # Image directories relative to 'path'
-train: images/mini_train
-val: images/val
-test: images/validation # test set is a super set of val
+train: images/train       # Full training set
+val: images/test          # Validation set, only for a special host setup
+test: images/validation  # Test set (superset of val)
 
 # Number of classes
 nc: 20

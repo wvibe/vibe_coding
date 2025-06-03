@@ -7,9 +7,9 @@ model: yolo12l.pt  # Base model weights file (YOLOv12 Large Detection)
 data: configs/yolov12/cov_segm_detect_visible_test.yaml # Path to the dataset definition yaml for the test run.
 
 # --- Training Hyperparameters ---
-epochs: 100           # Increased maximum epochs to allow more training time.
+epochs: 50           # Increased maximum epochs to allow more training time.
 imgsz: 640            # Training image size.
-batch: 192            # Batch size for 8x A10G (24GB VRAM). 192/8 = 24 images/GPU.
+batch: 160            # Batch size for 8x A10G (24GB VRAM). 192/8 = 24 images/GPU.
                       # Monitor VRAM: if usage < ~22GB, consider increasing to 256 (32/GPU).
 workers: 64           # Number of dataloader workers (e.g., 8 per GPU). Adjust based on CPU/IO.
 optimizer: SGD        # Optimizer choice. AdamW with lr0=0.0005 could be an alternative.
@@ -37,7 +37,7 @@ amp: True             # Enable Automatic Mixed Precision (Recommended for A10G).
 save_period: 5
 
 # --- Output Settings ---
-project: runs/detect/yolo12_cov_segm_test # wandb project
+project: runs/detect/cov_segm_test # wandb project
 # wdir_root: weights # skip separate weights directory
 csv_root: logs
 

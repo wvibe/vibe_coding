@@ -1,0 +1,50 @@
+# Training configuration for YOLOv12 DETECTION on FULL COV_SEGM dataset
+# Optimized for 8x A10G GPUs with full 500k+ train and 150k+ val sets
+
+# --- Base Model & Dataset ---
+model: yolo12l.pt  # Base model weights file (YOLOv12 Large Detection)
+data: configs/yolov12/cov_segm_detect_visible.yaml # Path to the dataset definition yaml for full dataset
+
+# --- Training Hyperparameters ---
+epochs: 100           # Training epochs (can be extended if needed)
+imgsz: 640            # Training image size
+batch: 160            # Increased batch size for 8x A10G (24GB VRAM). 256/8 = 32 images/GPU
+                      # Based on test run, we had good memory headroom
+workers: 64           # Increased dataloader workers (10 per GPU)
+optimizer: SGD        # SGD optimizer as tested
+lr0: 0.01             # Initial learning rate
+lrf: 0.01             # Final learning rate factor
+warmup_epochs: 5      # Increased warmup for larger dataset
+cos_lr: True          # Use cosine learning rate annealing
+fraction: 1.0         # Use 100% of the training dataset (FULL DATASET)
+close_mosaic: 20      # Increased for longer training
+
+# --- Regularization & Augmentation ---
+mixup: 0.15           # Slightly increased mixup for full dataset
+copy_paste: 0.0       # Keep at 0 for detection
+dropout: 0.0          # No dropout for now
+weight_decay: 0.0005  # Keep same weight decay
+patience: 30          # Increased patience for full dataset training
+
+# --- Execution Settings ---
+device: '0,1,2,3,4,5,6,7'     # Use all 8 A10G GPUs
+pretrained: True      # Start from pretrained weights
+exist_ok: True        # Allow resuming
+amp: True             # Enable Automatic Mixed Precision
+save_period: 10       # Save every 10 epochs for full training
+
+# --- Output Settings ---
+project: runs/detect/cov_segm
+csv_root: logs
+
+# --- Wandb Logging ---
+enable_wandb: True    # Enable WandB logging
+
+# --- Additional optimizations based on test run ---
+# The test run showed stable training with current settings
+# Consider these adjustments if needed:
+# - If OOM occurs, reduce batch to 224 (28/GPU) or 192 (24/GPU)
+# - If training plateaus, consider:
+#   - Reducing lr0 to 0.008
+#   - Using AdamW optimizer with lr0=0.001
+#   - Increasing augmentation (scale: 0.5, degrees: 10.0)
