@@ -1,0 +1,48 @@
+# ===============================================================
+#  yolo11l_adamw_bs192.yaml – Fine-tuning YOLOv11-L Detection
+#  Dataset : COV_SEGM visible (517 k train / 10 k val)
+#  Hardware: 8 × NVIDIA A10G (24 GB)  → batch 192 (24 / GPU)
+# ===============================================================
+
+# --- Base model & dataset --------------------------------------
+model: yolo11l.pt                     # COCO-pretrained YOLOv11-Large
+data:  configs/yolov11/cov_segm_detect_visible.yaml  # Train/val split
+
+# --- Core training parameters ----------------------------------
+epochs: 120                           # Upper bound; early-stop at patience
+imgsz: 640                            # Input resolution
+batch: 192                            # Global batch size
+workers: 64                           # Data-loader worker threads
+
+# --- Optimizer (AdamW) & LR schedule ---------------------------
+optimizer: AdamW
+lr0: 0.0005                           # Initial LR for AdamW @ batch192
+lrf: 0.01                             # Final LR factor under cosine decay
+cos_lr: True                          # Cosine learning-rate schedule
+warmup_epochs: 3                      # Linear warm-up
+weight_decay: 0.01                    # Decoupled weight decay
+# Note: grad_clip is hardcoded to 10.0 in Ultralytics and cannot be configured
+
+# --- Regularisation & augmentation -----------------------------
+mixup: 0.2                            # MixUp probability
+copy_paste: 0.2                       # Copy-Paste probability
+dropout: 0.05                         # Dropout applied to head layers
+freeze: 10                            # Freeze first 10 backbone layers ❶
+close_mosaic: 15                      # Disable Mosaic after epoch 15
+
+# --- Training flow control -------------------------------------
+patience: 30                          # Early stop after N epochs w/o improvement
+ema: True                             # Exponential Moving Average of weights
+amp: True                             # Automatic Mixed Precision
+save_period: 5                        # Save checkpoint every N epochs
+fraction: 1.0                         # Use the entire training set each epoch
+
+# --- Runtime settings ------------------------------------------
+device: "0,1,2,3,4,5,6,7"            # GPU indices
+pretrained: True                     # Start from pretrained weights
+exist_ok: True                       # Overwrite/run in existing directory
+
+# --- Logging & outputs -----------------------------------------
+project: runs/detect/cov_segm        # Output / WandB project name
+enable_wandb: True                   # Enable WandB logging
+csv_root: logs                       # Folder for CSV logs
