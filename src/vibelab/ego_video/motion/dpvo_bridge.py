@@ -114,6 +114,47 @@ def write_dpvo_calib(calib: dict, output_path: Path) -> None:
     output_path.write_text(line + "\n", encoding="utf-8")
 
 
+def resize_frames_for_dpvo(
+    frame_dir: Path,
+    output_dir: Path,
+    calibration: dict,
+    scale: float,
+) -> tuple[Path, dict]:
+    """Resize frames for DPVO inference and scale pinhole intrinsics to match."""
+    if scale <= 0:
+        raise ValueError(f"dpvo scale must be > 0, got {scale}")
+    if abs(scale - 1.0) < 1e-8:
+        return frame_dir, calibration
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pngs = sorted(frame_dir.glob("frame_*.png"))
+    if not pngs:
+        raise ValueError(f"No frames found in {frame_dir}")
+
+    for png in pngs:
+        img = cv2.imread(str(png))
+        if img is None:
+            continue
+        resized = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        cv2.imwrite(str(output_dir / png.name), resized)
+
+    scaled_calib = {
+        "fx": float(calibration["fx"]) * scale,
+        "fy": float(calibration["fy"]) * scale,
+        "cx": float(calibration["cx"]) * scale,
+        "cy": float(calibration["cy"]) * scale,
+    }
+    logger.info(
+        "Resized %d frames for DPVO → %s (scale=%.3f, fx=%.1f fy=%.1f)",
+        len(pngs),
+        output_dir,
+        scale,
+        scaled_calib["fx"],
+        scaled_calib["fy"],
+    )
+    return output_dir, scaled_calib
+
+
 # ---------------------------------------------------------------------------
 # DPVO inference (requires CUDA)
 # ---------------------------------------------------------------------------
@@ -235,12 +276,32 @@ def align_trajectory_to_frames(
 
     # Build expected timestamps
     if manifest_fs and manifest_fs.get("frames"):
-        expected_ts = [f.get("timestamp_sec", i / source_fps) for i, f in enumerate(manifest_fs["frames"])]
+        expected_ts_abs = np.array(
+            [f.get("timestamp_sec", i / source_fps) for i, f in enumerate(manifest_fs["frames"])],
+            dtype=np.float64,
+        )
+        expected_ts = expected_ts_abs - expected_ts_abs[0]
     else:
-        expected_ts = [i / source_fps for i in range(num_frames)]
+        expected_ts = np.array([i / source_fps for i in range(num_frames)], dtype=np.float64)
 
     tolerance = tolerance_factor / source_fps if source_fps > 0 else 1.0
-    pose_ts = np.array([p["timestamp"] for p in poses])
+    pose_ts = np.array([p["timestamp"] for p in poses], dtype=np.float64)
+
+    # DPVO's image_stream uses enumerate(...) timestamps (0, 1, 2, ...),
+    # not seconds. Normalize those to seconds so they match the frame-set
+    # manifest timestamps, which are relative to the sampled fps.
+    if len(pose_ts) > 1 and source_fps > 0:
+        pose_deltas = np.diff(pose_ts)
+        expected_deltas = np.diff(expected_ts) if len(expected_ts) > 1 else np.array([], dtype=np.float64)
+        pose_step = float(np.median(pose_deltas)) if len(pose_deltas) else 0.0
+        expected_step = float(np.median(expected_deltas)) if len(expected_deltas) else (1.0 / source_fps)
+        if abs(pose_step - 1.0) < 0.25 and expected_step < 0.75:
+            pose_ts = pose_ts / source_fps
+            logger.info(
+                "Normalized DPVO timestamps from frame indices to seconds using fps=%.3f",
+                source_fps,
+            )
+
     aligned: list[dict | None] = []
 
     for ts in expected_ts:
@@ -461,6 +522,7 @@ def estimate_dpvo_motion(
     dpvo_model_path: str = "dpvo.pth",
     dpvo_config: str = "config/default.yaml",
     stride: int = 1,
+    image_scale: float = 0.5,
 ) -> dict:
     """Full DPVO estimation pipeline. Returns motion.json dict."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -475,14 +537,28 @@ def estimate_dpvo_motion(
         undist_dir = frame_dir
         pinhole_calib = {k: calibration[k] for k in ("fx", "fy", "cx", "cy")}
 
+    # Step 1b: Resize to reduce DPVO memory footprint.
+    resized_dir = output_dir / "_dpvo_input"
+    dpvo_input_dir, dpvo_calib = resize_frames_for_dpvo(
+        undist_dir,
+        resized_dir,
+        pinhole_calib,
+        image_scale,
+    )
+
     # Step 2: Write DPVO calib
     calib_path = output_dir / "calib.txt"
-    write_dpvo_calib(pinhole_calib, calib_path)
+    write_dpvo_calib(dpvo_calib, calib_path)
 
     # Step 3: Run DPVO
-    logger.info("Running DPVO inference on %d frames (stride=%d)", num_frames, stride)
+    logger.info(
+        "Running DPVO inference on %d frames (stride=%d, image_scale=%.3f)",
+        num_frames,
+        stride,
+        image_scale,
+    )
     poses_array, tstamps = run_dpvo_inference(
-        image_dir=undist_dir,
+        image_dir=dpvo_input_dir,
         calib_path=calib_path,
         model_path=dpvo_model_path,
         config_path=dpvo_config,
@@ -522,12 +598,14 @@ def estimate_dpvo_motion(
         "method": "dpvo",
         "model": dpvo_model_path,
         "stride": stride,
+        "image_scale": image_scale,
         "source_fps": source_fps,
         "num_frames": num_frames,
         "num_poses": len(poses),
         "num_aligned": sum(1 for a in aligned if a is not None),
         "rotation_only": True,
         "calibration_pinhole": pinhole_calib,
+        "calibration_dpvo": dpvo_calib,
         "undistort_params": _UNDISTORT_PARAMS if is_fisheye else None,
         "frames": frames_meta,
     }

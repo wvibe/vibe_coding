@@ -145,6 +145,7 @@ def _cmd_estimate_dpvo(args: argparse.Namespace, frame_dir: Path, output_dir: Pa
             dpvo_model_path=args.dpvo_model,
             dpvo_config=args.dpvo_config,
             stride=args.stride,
+            image_scale=args.dpvo_scale,
         )
     except ImportError as e:
         logger.error("%s", e)
@@ -427,6 +428,12 @@ def build_parser() -> argparse.ArgumentParser:
     est.add_argument("--dpvo-model", default="dpvo.pth", help="DPVO model weights path.")
     est.add_argument("--dpvo-config", default="config/default.yaml", help="DPVO config path.")
     est.add_argument("--stride", type=int, default=1, help="Frame stride for DPVO.")
+    est.add_argument(
+        "--dpvo-scale",
+        type=float,
+        default=0.5,
+        help="Image downscale factor before DPVO inference to control memory.",
+    )
     est.add_argument("--calibration", help="Path to calibration JSON (required for dpvo).")
     est.set_defaults(func=cmd_estimate)
 

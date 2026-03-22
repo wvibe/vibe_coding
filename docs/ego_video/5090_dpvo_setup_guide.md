@@ -5,6 +5,24 @@
 - Existing `ego` conda env with Python 3.11 + PyTorch 2.9.1 + CUDA 12.9
 - `vibe_coding` repo cloned with `vibelab` installed
 
+### Current host status
+
+Already confirmed on the 5090 host:
+
+- `ego` conda env exists
+- Python `3.11.15`
+- PyTorch `2.9.1`
+- CUDA available in torch (`torch.cuda.is_available() == True`)
+- `vibelab`, `cv2`, `matplotlib`, `scipy`, `huggingface_hub`, `datasets`, `transformers` already import
+
+Still missing:
+
+- DPVO repo checkout
+- `dpvo` Python package
+- `lietorch` extension (built as part of DPVO install)
+- `torch-scatter`
+- DPVO pretrained models / weights
+
 ## Step 1: Ensure repo is up to date
 
 ```bash
@@ -19,50 +37,70 @@ pip install -e .
 
 ## Step 2: Install DPVO into existing ego env
 
-The 5090 `ego` env already has Python 3.11, PyTorch 2.9.1, CUDA 12.9, and all other dependencies. We only need to add DPVO + lietorch.
+The 5090 `ego` env already has Python 3.11, PyTorch 2.9.1, CUDA 12.9, and all other dependencies. We only need to add DPVO + lietorch + `torch-scatter`.
 
 > **Note:** DPVO officially pins PyTorch 2.3.1 + CUDA 12.1, but lietorch should compile against newer versions. If `pip install .` fails, fall back to Plan B (separate dpvo env).
 
 **Plan A: Install into existing ego env (recommended):**
 
 ```bash
-# Clone DPVO
-cd ~
+# Clone DPVO under ~/vibe, not directly in home
+mkdir -p ~/vibe
+cd ~/vibe
 git clone https://github.com/princeton-vl/DPVO.git --recursive
 cd DPVO
 
 conda activate ego
 
+# Install Python deps that DPVO expects but are not in ego by default
+pip install numba einops pypose kornia plyfile evo yacs
+
+# torch-scatter: build locally against the existing torch/cuda stack
+CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation torch-scatter
+
 # Install Eigen (required for lietorch CUDA build)
 wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 unzip eigen-3.4.0.zip -d thirdparty
 
-# Build and install DPVO (compiles lietorch CUDA kernels)
-pip install .
+# Upstream packaging gap: include loop_closure as a Python package
+touch dpvo/loop_closure/__init__.py dpvo/loop_closure/retrieval/__init__.py
 
-# Download pretrained models (~2GB)
-./download_models_and_data.sh
+# Build and install DPVO (compiles lietorch CUDA kernels)
+# Notes:
+# - --no-build-isolation is required so setup.py can see torch
+# - CPATH exposes CUDA headers so lietorch can find cuda.h
+CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation .
+
+# Download pretrained model weights only
+wget https://www.dropbox.com/s/nap0u8zslspdwm4/models.zip
+unzip -o models.zip
+# Expect: ~/vibe/DPVO/dpvo.pth
 
 # Verify
 python -c "from dpvo.dpvo import DPVO; print('DPVO OK')"
 python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; print('DPVO_AVAILABLE:', DPVO_AVAILABLE)"
 ```
 
+**Important runtime note:** for this repo's image-directory DPVO path, full-resolution `1920x1080` inputs can OOM even on the 5090. The bridge now supports explicit downscaling, and `--dpvo-scale 0.5` is the recommended default on this host.
+
 **Plan B: Separate dpvo env (if Plan A fails):**
 
 ```bash
-cd ~/DPVO
+cd ~/vibe/DPVO
 conda env create -f environment.yml   # Creates Python 3.10 + PyTorch 2.3.1
 conda activate dpvo
 wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 unzip eigen-3.4.0.zip -d thirdparty
-pip install .
-./download_models_and_data.sh
+touch dpvo/loop_closure/__init__.py dpvo/loop_closure/retrieval/__init__.py
+CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation .
+wget https://www.dropbox.com/s/nap0u8zslspdwm4/models.zip
+unzip -o models.zip
 
 # Also install vibelab + deps in dpvo env
 cd ~/vibe_coding
 pip install -e .
-pip install matplotlib scipy huggingface_hub datasets transformers
+pip install matplotlib scipy huggingface_hub datasets transformers numba einops pypose kornia plyfile evo yacs
+CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation torch-scatter
 
 python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; print(DPVO_AVAILABLE)"
 ```
@@ -138,9 +176,10 @@ for FPS in 30 10 3; do
     --calibration $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
     --output-dir "$FRAME_SET/analysis/${FPS}fps_dpvo" \
     --smoothing-radius 5 \
-    --dpvo-model ~/DPVO/dpvo.pth \
-    --dpvo-config ~/DPVO/config/default.yaml \
-    --stride 1
+    --dpvo-model ~/vibe/DPVO/dpvo.pth \
+    --dpvo-config ~/vibe/DPVO/config/default.yaml \
+    --stride 1 \
+    --dpvo-scale 0.5
 done
 ```
 
@@ -191,11 +230,15 @@ git push origin feat/ego-video-mvp
 
 | Issue | Fix |
 |-------|-----|
-| `ImportError: lietorch` | Reinstall in dpvo env: `cd ~/DPVO && pip install .` |
+| `ModuleNotFoundError: torch_scatter` | `conda activate ego && CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation torch-scatter` |
+| `ImportError: lietorch` | Reinstall in the DPVO checkout: `cd ~/vibe/DPVO && CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation .` |
+| `ModuleNotFoundError: dpvo.loop_closure` | Add package markers, then reinstall: `touch dpvo/loop_closure/__init__.py dpvo/loop_closure/retrieval/__init__.py && CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation .` |
 | `CUDA out of memory` | Reduce frame count or use `--stride 2` |
+| `CUDA out of memory` on `1920x1080` image sets | Use `--dpvo-scale 0.5` so the bridge resizes the undistorted DPVO input before inference |
+| `Trajectory alignment failed` with only `1/N` frames matched | The repo now normalizes DPVO's frame-index timestamps to seconds during alignment; make sure you're running the updated `dpvo_bridge.py` |
 | `No module named vibelab` | `cd ~/vibe_coding && pip install -e .` |
 | `HF gated access denied` | Run `huggingface-cli login` and accept terms at https://huggingface.co/datasets/builddotai/Egocentric-10K |
-| DPVO crashes silently | Check `~/DPVO/dpvo.pth` exists; run `./download_models_and_data.sh` |
+| DPVO crashes silently | Check `~/vibe/DPVO/dpvo.pth` exists; if missing, download and unzip `models.zip` in `~/vibe/DPVO` |
 
 ## Expected Output
 
