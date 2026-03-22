@@ -44,20 +44,47 @@ python -c "from dpvo.dpvo import DPVO; print('DPVO OK')"
 
 ## Step 3: Install vibe_coding in DPVO env
 
+**Environment note:** DPVO requires Python 3.10 + PyTorch 2.3.1 + CUDA 12.1 (pinned by its environment.yml). Mac uses Python 3.11 + PyTorch 2.10. These cannot be unified — use separate conda envs on each machine.
+
 ```bash
 # Back to vibe_coding
 cd ~/vibe_coding
 
-# Install vibelab package (editable)
+# Install vibelab package (editable) — into the dpvo conda env
 pip install -e .
 
-# Install additional deps needed by our pipeline
-pip install matplotlib scipy
+# Install additional deps needed by our stabilization/evaluation pipeline
+# (these are not in DPVO's environment.yml but our scripts need them)
+pip install matplotlib scipy huggingface_hub datasets transformers av ffmpeg-python
 
-# Verify
-python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; print('DPVO_AVAILABLE:', DPVO_AVAILABLE)"
-# Should print: DPVO_AVAILABLE: True
+# Verify DPVO + vibelab both work
+python -c "
+from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE
+from vibelab.ego_video.io.frame_dataset import extract_multi_rate_frames
+from vibelab.ego_video.motion.stabilization_metrics import evaluate_stabilization
+print('DPVO_AVAILABLE:', DPVO_AVAILABLE)
+print('All imports OK')
+"
+# Expected:
+#   DPVO_AVAILABLE: True
+#   All imports OK
 ```
+
+### Environment Summary (two machines, two envs)
+
+| | Mac mini (ego env) | 5090 Ubuntu (dpvo env) |
+|---|---|---|
+| Python | 3.11 | 3.10 |
+| PyTorch | 2.10 | 2.3.1 |
+| CUDA | N/A (MPS) | 12.1 |
+| lietorch | N/A | ✅ (via DPVO) |
+| vibelab | `pip install -e .` | `pip install -e .` |
+| OpenCV | 4.13 | (from DPVO env) |
+| HuggingFace | ✅ | ✅ (pip install) |
+| RAFT | torchvision built-in | torchvision built-in |
+| DPVO | ❌ (import guarded) | ✅ |
+
+**Key point:** The Python code is identical on both machines. Only the conda env differs. `--method dpvo` works on 5090; on Mac it raises a clear ImportError.
 
 ## Step 4: Prepare Data
 
