@@ -1,6 +1,12 @@
 """Data loading and video IO helpers for ego-centric video experiments."""
 
 from vibelab.ego_video.io.dataset import CameraCalibration, EgoVideoSample, load_sample_manifest
+from vibelab.ego_video.io.frame_dataset import (
+    compute_frame_indices,
+    extract_multi_rate_frames,
+    inspect_frame_set,
+    load_frame_set_manifest,
+)
 from vibelab.ego_video.io.hf_samples import (
     EGO10K_FEATURES,
     download_small_sample_set,
@@ -22,6 +28,10 @@ __all__ = [
     "EGO10K_FEATURES",
     "EgoVideoSample",
     "VideoInfo",
+    "compute_frame_indices",
+    "extract_multi_rate_frames",
+    "inspect_frame_set",
+    "load_frame_set_manifest",
     "download_small_sample_set",
     "download_worker_intrinsics",
     "export_subclip",
