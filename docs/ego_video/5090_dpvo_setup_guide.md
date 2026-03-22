@@ -1,90 +1,87 @@
 # 5090 Ubuntu — DPVO Setup & Run Guide
 
 ## Prerequisites
-- Ubuntu 20/22
-- NVIDIA GPU with CUDA 11+ (5090 with CUDA 12)
-- Conda installed
-- Git access to `wvibe/vibe_coding`
+- Ubuntu 20/22 with NVIDIA GPU (5090 confirmed)
+- Existing `ego` conda env with Python 3.11 + PyTorch 2.9.1 + CUDA 12.9
+- `vibe_coding` repo cloned with `vibelab` installed
 
-## Step 1: Clone & Setup Repo
+## Step 1: Ensure repo is up to date
 
 ```bash
-# Clone vibe_coding repo
-git clone git@github.com:wvibe/vibe_coding.git
-cd vibe_coding
+cd ~/vibe_coding
 git checkout feat/ego-video-mvp
 git pull origin feat/ego-video-mvp
+
+# Reinstall vibelab (picks up new modules)
+conda activate ego
+pip install -e .
 ```
 
-## Step 2: Install DPVO
+## Step 2: Install DPVO into existing ego env
+
+The 5090 `ego` env already has Python 3.11, PyTorch 2.9.1, CUDA 12.9, and all other dependencies. We only need to add DPVO + lietorch.
+
+> **Note:** DPVO officially pins PyTorch 2.3.1 + CUDA 12.1, but lietorch should compile against newer versions. If `pip install .` fails, fall back to Plan B (separate dpvo env).
+
+**Plan A: Install into existing ego env (recommended):**
 
 ```bash
-# Clone DPVO (outside vibe_coding)
+# Clone DPVO
 cd ~
 git clone https://github.com/princeton-vl/DPVO.git --recursive
 cd DPVO
 
-# Create conda env from DPVO's pinned environment
-conda env create -f environment.yml
-conda activate dpvo
+conda activate ego
 
-# Install Eigen (required for DPVO build)
+# Install Eigen (required for lietorch CUDA build)
 wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 unzip eigen-3.4.0.zip -d thirdparty
 
-# Build and install DPVO
+# Build and install DPVO (compiles lietorch CUDA kernels)
 pip install .
 
 # Download pretrained models (~2GB)
 ./download_models_and_data.sh
 
-# Verify installation
+# Verify
 python -c "from dpvo.dpvo import DPVO; print('DPVO OK')"
+python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; print('DPVO_AVAILABLE:', DPVO_AVAILABLE)"
 ```
 
-## Step 3: Install vibe_coding in DPVO env
-
-**Environment note:** DPVO requires Python 3.10 + PyTorch 2.3.1 + CUDA 12.1 (pinned by its environment.yml). Mac uses Python 3.11 + PyTorch 2.10. These cannot be unified — use separate conda envs on each machine.
+**Plan B: Separate dpvo env (if Plan A fails):**
 
 ```bash
-# Back to vibe_coding
+cd ~/DPVO
+conda env create -f environment.yml   # Creates Python 3.10 + PyTorch 2.3.1
+conda activate dpvo
+wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
+unzip eigen-3.4.0.zip -d thirdparty
+pip install .
+./download_models_and_data.sh
+
+# Also install vibelab + deps in dpvo env
 cd ~/vibe_coding
-
-# Install vibelab package (editable) — into the dpvo conda env
 pip install -e .
+pip install matplotlib scipy huggingface_hub datasets transformers
 
-# Install additional deps needed by our stabilization/evaluation pipeline
-# (these are not in DPVO's environment.yml but our scripts need them)
-pip install matplotlib scipy huggingface_hub datasets transformers av ffmpeg-python
-
-# Verify DPVO + vibelab both work
-python -c "
-from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE
-from vibelab.ego_video.io.frame_dataset import extract_multi_rate_frames
-from vibelab.ego_video.motion.stabilization_metrics import evaluate_stabilization
-print('DPVO_AVAILABLE:', DPVO_AVAILABLE)
-print('All imports OK')
-"
-# Expected:
-#   DPVO_AVAILABLE: True
-#   All imports OK
+python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; print(DPVO_AVAILABLE)"
 ```
 
-### Environment Summary (two machines, two envs)
+### Environment Summary (two machines)
 
-| | Mac mini (ego env) | 5090 Ubuntu (dpvo env) |
+| | Mac mini (ego env) | 5090 Ubuntu (ego env) |
 |---|---|---|
-| Python | 3.11 | 3.10 |
-| PyTorch | 2.10 | 2.3.1 |
-| CUDA | N/A (MPS) | 12.1 |
+| Python | 3.11 | 3.11 |
+| PyTorch | 2.10 (MPS) | 2.9.1 (CUDA 12.9) |
+| CUDA | N/A | 12.9 ✅ |
 | lietorch | N/A | ✅ (via DPVO) |
 | vibelab | `pip install -e .` | `pip install -e .` |
-| OpenCV | 4.13 | (from DPVO env) |
-| HuggingFace | ✅ | ✅ (pip install) |
-| RAFT | torchvision built-in | torchvision built-in |
-| DPVO | ❌ (import guarded) | ✅ |
+| OpenCV | 4.13 | 4.13 (headless) |
+| HuggingFace | ✅ | ✅ |
+| RAFT | torchvision 0.25 | torchvision 0.25 |
+| DPVO | ❌ (import guarded) | ✅ (after Step 2) |
 
-**Key point:** The Python code is identical on both machines. Only the conda env differs. `--method dpvo` works on 5090; on Mac it raises a clear ImportError.
+**Key point:** Same Python version, same code. Only difference is CUDA + DPVO.
 
 ## Step 4: Prepare Data
 
