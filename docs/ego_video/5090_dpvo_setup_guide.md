@@ -83,38 +83,50 @@ python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; prin
 
 **Key point:** Same Python version, same code. Only difference is CUDA + DPVO.
 
-## Step 4: Prepare Data
+## Step 4: Prepare Data (video → image sets)
+
+This step downloads a sample ego-video from HuggingFace and extracts multi-rate frame sets (30fps, 10fps, 3fps × 20 frames each). These frame sets are the input to all estimation methods.
 
 ```bash
-# Create data directory (same structure as Mac)
-mkdir -p ~/Data/datasets/ego_video/builddotai/frame_sets
+# Set data root (adjust to your machine's storage path)
+export DATA_ROOT=~/Data  # or /data, /home/wei/Data, etc.
+mkdir -p $DATA_ROOT/datasets/ego_video/builddotai/frame_sets
 
-# Option A: Download fresh from HuggingFace
-# (need HF login: huggingface-cli login)
+# HuggingFace login (required — Ego10K is a gated dataset)
+# Visit https://huggingface.co/datasets/builddotai/Egocentric-10K to accept terms first
+huggingface-cli login
+
+# Option A: Download + extract from HuggingFace (recommended)
 cd ~/vibe_coding
 python scripts/ego_video/prepare_frames.py download \
     --worker factory_001/worker_001 \
     --max-samples 1 \
-    --output-dir ~/Data/datasets/ego_video/builddotai/ego10k_samples
+    --output-dir $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples
 
 python scripts/ego_video/prepare_frames.py extract \
-    --video ~/Data/datasets/ego_video/builddotai/ego10k_samples/videos/factory001_worker001_00000.mp4 \
+    --video $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/videos/factory001_worker001_00000.mp4 \
     --start-sec 10 \
     --num-frames 20 \
     --fps 30,10,3 \
-    --calibration ~/Data/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
+    --calibration $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
     --sample-id factory001_worker001_00000 \
-    --output-dir ~/Data/datasets/ego_video/builddotai/frame_sets/clip_001
+    --output-dir $DATA_ROOT/datasets/ego_video/builddotai/frame_sets/clip_001
 
-# Option B: Copy frame_sets from Mac via scp/rsync (faster, ~60MB)
-# scp -r wei@mac:~/Data/datasets/ego_video/builddotai/frame_sets/clip_001 ~/Data/datasets/ego_video/builddotai/frame_sets/
+# Verify extraction
+python scripts/ego_video/prepare_frames.py inspect \
+    --frame-set $DATA_ROOT/datasets/ego_video/builddotai/frame_sets/clip_001
+# Expected: ✅ 30fps: 20/20, ✅ 10fps: 20/20, ✅ 3fps: 20/20
+
+# Option B: Copy from Mac instead (faster, ~60MB)
+# scp -r wei@mac:$DATA_ROOT/datasets/ego_video/builddotai/frame_sets/clip_001 $DATA_ROOT/datasets/ego_video/builddotai/frame_sets/
+# scp -r wei@mac:$DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples $DATA_ROOT/datasets/ego_video/builddotai/  # need intrinsics for calibration
 ```
 
 ## Step 5: Run DPVO Estimation
 
 ```bash
 cd ~/vibe_coding
-FRAME_SET=~/Data/datasets/ego_video/builddotai/frame_sets/clip_001
+FRAME_SET=$DATA_ROOT/datasets/ego_video/builddotai/frame_sets/clip_001
 
 # Run on all three frame rates
 for FPS in 30 10 3; do
@@ -123,7 +135,7 @@ for FPS in 30 10 3; do
     --frame-set "$FRAME_SET" \
     --fps $FPS \
     --method dpvo \
-    --calibration ~/Data/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
+    --calibration $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
     --output-dir "$FRAME_SET/analysis/${FPS}fps_dpvo" \
     --smoothing-radius 5 \
     --dpvo-model ~/DPVO/dpvo.pth \
