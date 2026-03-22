@@ -266,7 +266,15 @@ def cmd_stabilize(args: argparse.Namespace) -> None:
     method = trajectory_data.get("method", "affine2d")
     logger.info("Stabilizing: %s → %s (method=%s)", frame_dir, output_dir, method)
 
-    if method in ("raft", "dpvo"):
+    if method == "dpvo":
+        from vibelab.ego_video.motion.dpvo_bridge import _write_json_atomic, apply_dpvo_stabilization
+        report = apply_dpvo_stabilization(
+            frame_dir=frame_dir,
+            trajectory_data=trajectory_data,
+            output_dir=output_dir,
+            comparison_width=args.comparison_width,
+        )
+    elif method == "raft":
         from vibelab.ego_video.motion.raft_flow import _write_json_atomic, apply_raft_stabilization
         report = apply_raft_stabilization(
             frame_dir=frame_dir,
@@ -318,6 +326,15 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     method = "unknown"
     if motion_path.exists():
         method = json.loads(motion_path.read_text()).get("method", "unknown")
+
+    if method == "dpvo":
+        undist_dir = analysis_dir / "_undistorted_for_stab"
+        if undist_dir.is_dir():
+            frame_dir = undist_dir
+        else:
+            fallback_undist_dir = analysis_dir / "_undistorted"
+            if fallback_undist_dir.is_dir():
+                frame_dir = fallback_undist_dir
 
     logger.info("Evaluating: raw=%s vs stab=%s (method=%s)", frame_dir, stab_dir, method)
     report = evaluate_stabilization(

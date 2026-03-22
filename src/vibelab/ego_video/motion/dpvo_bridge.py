@@ -685,10 +685,38 @@ def apply_dpvo_stabilization(
     for w in schema_warnings:
         logger.warning("Trajectory schema: %s", w)
 
-    # Reuse RAFT stabilization logic (same warpPerspective + metrics)
+    working_frame_dir = frame_dir
+    calibration_pinhole = trajectory_data.get("calibration_pinhole")
+    undistort_params = trajectory_data.get("undistort_params")
+
+    if undistort_params is not None and calibration_pinhole is not None:
+        undist_dir = output_dir / "_undistorted_for_stab"
+        if undist_dir.is_dir():
+            working_frame_dir = undist_dir
+        else:
+            manifest_path = frame_dir.parent / "manifest.json"
+            fisheye_calib = None
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    fisheye_calib = manifest.get("calibration")
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("Failed to read %s: %s", manifest_path, exc)
+
+            if fisheye_calib:
+                undistort_frames(frame_dir, undist_dir, fisheye_calib)
+                working_frame_dir = undist_dir
+            else:
+                logger.warning(
+                    "No fisheye calibration found for %s, applying DPVO correction to raw frames",
+                    frame_dir,
+                )
+
+    # Reuse RAFT stabilization logic (same warpPerspective + metrics),
+    # but operate in undistorted pinhole space when possible.
     from vibelab.ego_video.motion.raft_flow import apply_raft_stabilization
     return apply_raft_stabilization(
-        frame_dir=frame_dir,
+        frame_dir=working_frame_dir,
         trajectory_data=trajectory_data,
         output_dir=output_dir,
         comparison_width=comparison_width,

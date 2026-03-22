@@ -83,6 +83,13 @@ python -c "from vibelab.ego_video.motion.dpvo_bridge import DPVO_AVAILABLE; prin
 
 **Important runtime note:** for this repo's image-directory DPVO path, full-resolution `1920x1080` inputs can OOM even on the 5090. The bridge now supports explicit downscaling, and `--dpvo-scale 0.5` is the recommended default on this host.
 
+For host-side sweeps, the repo also includes a lower-memory DPVO config:
+
+- [dpvo_p48.yaml](/home/wei/vibe/vibe_coding/configs/ego_video/dpvo_p48.yaml)
+  - `PATCHES_PER_FRAME: 48`
+
+This was enough to make `30fps` full-resolution (`--dpvo-scale 1.0`) run on the 5090 for the `clip_001` experiment.
+
 **Plan B: Separate dpvo env (if Plan A fails):**
 
 ```bash
@@ -183,6 +190,38 @@ for FPS in 30 10 3; do
 done
 ```
 
+### Optional parameter sweep examples
+
+If you want to probe whether DPVO pose quality is being limited by low input resolution, these worked on the 5090 host for `clip_001`:
+
+```bash
+# 30fps, higher resolution
+python scripts/ego_video/analyze_motion.py estimate \
+    --frame-set "$FRAME_SET" \
+    --fps 30 \
+    --method dpvo \
+    --calibration $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
+    --output-dir "$FRAME_SET/analysis/30fps_dpvo_s075" \
+    --smoothing-radius 5 \
+    --dpvo-model ~/vibe/DPVO/dpvo.pth \
+    --dpvo-config ~/vibe/DPVO/config/default.yaml \
+    --stride 1 \
+    --dpvo-scale 0.75
+
+# 30fps, full resolution with lower-memory config
+python scripts/ego_video/analyze_motion.py estimate \
+    --frame-set "$FRAME_SET" \
+    --fps 30 \
+    --method dpvo \
+    --calibration $DATA_ROOT/datasets/ego_video/builddotai/ego10k_samples/factory_001/workers/worker_001/intrinsics.json \
+    --output-dir "$FRAME_SET/analysis/30fps_dpvo_s100_p48" \
+    --smoothing-radius 5 \
+    --dpvo-model ~/vibe/DPVO/dpvo.pth \
+    --dpvo-config configs/ego_video/dpvo_p48.yaml \
+    --stride 1 \
+    --dpvo-scale 1.0
+```
+
 ## Step 6: Run Stabilization & Evaluation
 
 ```bash
@@ -201,6 +240,18 @@ for FPS in 30 10 3; do
     --analysis-dir "$FRAME_SET/analysis/${FPS}fps_dpvo"
 done
 ```
+
+### Current repo behavior for DPVO stabilization
+
+The repo now applies DPVO homographies in undistorted pinhole space instead of directly on raw fisheye frames.
+
+Concretely:
+
+- `stabilize` creates `analysis/.../_undistorted_for_stab` when fisheye calibration is available
+- the DPVO `H_corr` homographies are applied to those undistorted frames
+- `evaluate` compares `stabilized/` against the undistorted raw baseline for DPVO runs
+
+This fixes the earlier image-space mismatch, but on `clip_001` it was not enough by itself to make DPVO positive. The remaining work is now mostly about pose quality and parameter tuning.
 
 ## Step 7: Check Results
 
@@ -235,6 +286,9 @@ git push origin feat/ego-video-mvp
 | `ModuleNotFoundError: dpvo.loop_closure` | Add package markers, then reinstall: `touch dpvo/loop_closure/__init__.py dpvo/loop_closure/retrieval/__init__.py && CPATH=/usr/local/cuda-12.9/include pip install --no-build-isolation .` |
 | `CUDA out of memory` | Reduce frame count or use `--stride 2` |
 | `CUDA out of memory` on `1920x1080` image sets | Use `--dpvo-scale 0.5` so the bridge resizes the undistorted DPVO input before inference |
+| DPVO still underperforms after the image-space fix | Try `--dpvo-scale 0.75` or `1.0`; if that OOMs, lower `PATCHES_PER_FRAME` in the DPVO config and rerun `estimate` |
+| `--dpvo-scale 1.0` OOMs on the 5090 | Retry with `--dpvo-config configs/ego_video/dpvo_p48.yaml` |
+| `--dpvo-scale 0.75` runs at `10fps` but OOMs at `3fps` | This can still happen because DPVO memory depends on both resolution and trajectory graph size; retry with `configs/ego_video/dpvo_p48.yaml` and no concurrent GPU jobs |
 | `Trajectory alignment failed` with only `1/N` frames matched | The repo now normalizes DPVO's frame-index timestamps to seconds during alignment; make sure you're running the updated `dpvo_bridge.py` |
 | `No module named vibelab` | `cd ~/vibe_coding && pip install -e .` |
 | `HF gated access denied` | Run `huggingface-cli login` and accept terms at https://huggingface.co/datasets/builddotai/Egocentric-10K |
