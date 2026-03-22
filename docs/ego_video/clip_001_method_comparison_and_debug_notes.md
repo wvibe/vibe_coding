@@ -1,5 +1,10 @@
 # clip_001 Method Comparison And Debug Notes
 
+Related follow-up:
+
+- [cross_scene_generalization_notes.md](/home/wei/vibe/vibe_coding/docs/ego_video/cross_scene_generalization_notes.md)
+  compares the same three methods on two additional Ego10K scenes to test whether the DPVO gap is specific to `clip_001`
+
 ## Scope
 
 This note summarizes a like-for-like comparison on the same extracted frame set:
