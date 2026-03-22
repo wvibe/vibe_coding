@@ -211,7 +211,7 @@ The YOLOv3 loss function consists of three components:
 
 ## 7. Dependencies and Requirements
 
-- Python 3.12
+- Python 3.11
 - PyTorch and torchvision
 - Huggingface Datasets
 - OpenCV

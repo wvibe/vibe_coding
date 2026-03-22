@@ -8,12 +8,12 @@ alwaysApply: true
 ## Environment Management
 - **Environment management tool:** `conda`
 - **Default environment:** `vbl`
-- **Python version:** `3.12`
+- **Python version:** `3.11`
 - **Package management:** `pip`
 - **Required environment variables:** None
 
 ## Core Technologies
-- **Backend:** `Python 3.12`
+- **Backend:** `Python 3.11`
 - **ML Framework:** `PyTorch 2.6`
 - **ML Libraries:** `Hugging Face`
 - **Frontend:** `HTML`, `JavaScript`, `Gradio`

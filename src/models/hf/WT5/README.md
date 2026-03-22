@@ -12,7 +12,7 @@ The model converts the sentiment classification task into a text-to-text format:
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
 - PyTorch 2.0+
 - Transformers 4.18+
 - Datasets

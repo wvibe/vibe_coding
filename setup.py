@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from setuptools import find_packages, setup
 
 HERE = Path(__file__).parent
@@ -10,7 +11,7 @@ setup(
     author="w.vibe",
     packages=find_packages(where="src"),   # 安装 src 下的所有包
     package_dir={"": "src"},
-    python_requires=">=3.12",
+    python_requires=">=3.11",
     install_requires=[
         # ---- runtime dependencies (别人 pip install vibelab 时需要) ----
         "torch>=2.0.0",
